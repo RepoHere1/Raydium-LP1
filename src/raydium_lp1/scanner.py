@@ -689,6 +689,7 @@ def main(argv: list[str] | None = None) -> int:
                 config=config,
                 report=report,
                 rpc_health=rpc_results,
+                alerts_path=Path(config.emergency_alerts_path),
             )
             dashboard_mod.write_dashboard(data)
             print("")

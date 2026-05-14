@@ -74,11 +74,14 @@ class SolanaAdapter(NetworkAdapter):
     native_symbol: str = "SOL"
     quote_api_base: str = "https://quote-api.jup.ag/v6"
     supports_live: bool = True
-    rpc_post: Callable[[str, dict], dict] = field(default=wallet._default_rpc_post)
+    rpc_post: Callable[[str, dict], dict] | None = None
     notes: str = "Default network. Uses Jupiter for routing and Solana RPC for balances."
 
     def fetch_native_balance(self, address: str, rpc_urls: Iterable[str]) -> dict:
-        result = wallet.fetch_sol_balance(address, rpc_urls, rpc_post=self.rpc_post)
+        # Look the default poster up at call time so unittest.mock.patch on
+        # ``wallet._default_rpc_post`` works for end-to-end tests/demos.
+        caller = self.rpc_post or wallet._default_rpc_post
+        result = wallet.fetch_sol_balance(address, rpc_urls, rpc_post=caller)
         return result.to_dict()
 
     def swap_quote_url(
