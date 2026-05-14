@@ -4,8 +4,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from raydium_lp1.honeypot_guard import HoneypotGuardConfig
+from raydium_lp1.quote_only_entry import QuoteOnlyEntryConfig
 from raydium_lp1.scanner import (
     ScannerConfig,
+    apr_field_window,
     extract_pool_items,
     filter_pool,
     load_dotenv,
@@ -13,6 +16,21 @@ from raydium_lp1.scanner import (
     pool_list_url,
     write_reports,
 )
+from raydium_lp1.survival_runway import SurvivalRunwayConfig
+
+
+def _bare_config(**overrides) -> ScannerConfig:
+    """ScannerConfig with the new strategy filters disabled, for legacy filter tests."""
+    base = dict(
+        min_apr=999.99,
+        min_liquidity_usd=1_000,
+        min_volume_24h_usd=100,
+        survival_runway=SurvivalRunwayConfig(enabled=False),
+        quote_only_entry=QuoteOnlyEntryConfig(enabled=False),
+        honeypot_guard=HoneypotGuardConfig(enabled=False),
+    )
+    base.update(overrides)
+    return ScannerConfig(**base)
 
 
 class ScannerTests(unittest.TestCase):
@@ -23,8 +41,13 @@ class ScannerTests(unittest.TestCase):
     def test_default_apr_threshold_is_999_99(self):
         self.assertEqual(ScannerConfig().min_apr, 999.99)
 
+    def test_apr_field_window_mapping(self):
+        self.assertEqual(apr_field_window("apr24h"), "day")
+        self.assertEqual(apr_field_window("aprWeek"), "week")
+        self.assertEqual(apr_field_window("aprMonth"), "month")
+
     def test_candidate_passes_filters(self):
-        config = ScannerConfig(min_apr=999.99, min_liquidity_usd=1_000, min_volume_24h_usd=100)
+        config = _bare_config()
         pool = normalize_pool(
             {
                 "id": "pool-1",
@@ -36,12 +59,34 @@ class ScannerTests(unittest.TestCase):
             },
             "apr24h",
         )
-        ok, reasons = filter_pool(pool, config)
+        ok, reasons, categories = filter_pool(pool, config)
         self.assertTrue(ok)
         self.assertEqual(reasons, [])
+        self.assertEqual(categories, [])
+
+    def test_nested_day_window_payload_is_parsed(self):
+        """Current Raydium API: apr24h is None at top level; real APR lives under `day.apr`."""
+        config = _bare_config(min_apr=500.0)
+        pool = normalize_pool(
+            {
+                "id": "pool-2",
+                "apr24h": None,
+                "tvl": 2_500,
+                "day": {"apr": 1_234.5, "volume": 800, "volumeFee": 12.5},
+                "mintA": {"symbol": "SOL", "address": "sol-mint"},
+                "mintB": {"symbol": "TEST", "address": "test-mint"},
+            },
+            "apr24h",
+        )
+        self.assertAlmostEqual(pool["apr"], 1_234.5)
+        self.assertAlmostEqual(pool["volume_24h_usd"], 800)
+        self.assertAlmostEqual(pool["fee_24h_usd"], 12.5)
+        ok, _reasons, categories = filter_pool(pool, config)
+        self.assertTrue(ok)
+        self.assertEqual(categories, [])
 
     def test_low_liquidity_rejected(self):
-        config = ScannerConfig(min_apr=999.99, min_liquidity_usd=1_000, min_volume_24h_usd=100)
+        config = _bare_config()
         pool = normalize_pool(
             {
                 "id": "pool-1",
@@ -53,9 +98,70 @@ class ScannerTests(unittest.TestCase):
             },
             "apr24h",
         )
-        ok, reasons = filter_pool(pool, config)
+        ok, reasons, categories = filter_pool(pool, config)
         self.assertFalse(ok)
         self.assertIn("liquidity $10.00 below $1000.00", reasons)
+        self.assertIn("liquidity_below_threshold", categories)
+
+    def test_survival_runway_rejects_thin_pool_and_categorizes_it(self):
+        config = ScannerConfig(
+            min_apr=100.0,
+            min_liquidity_usd=10,
+            min_volume_24h_usd=10,
+            max_position_usd=25.0,
+            survival_runway=SurvivalRunwayConfig(
+                enabled=True,
+                min_tvl_multiple_of_position=200,
+                min_daily_volume_pct_of_tvl=5.0,
+                require_active_week=False,
+            ),
+            quote_only_entry=QuoteOnlyEntryConfig(enabled=False),
+            honeypot_guard=HoneypotGuardConfig(enabled=False),
+        )
+        pool = normalize_pool(
+            {
+                "id": "tiny",
+                "apr24h": 9_000,
+                "tvl": 1_000,
+                "volume24h": 500,
+                "mintA": {"symbol": "SOL", "address": "sol-mint"},
+                "mintB": {"symbol": "MEME", "address": "meme-mint"},
+            },
+            "apr24h",
+        )
+        ok, reasons, categories = filter_pool(pool, config)
+        self.assertFalse(ok)
+        self.assertIn("survival_runway_failed", categories)
+        self.assertTrue(any("survival_runway" in r for r in reasons))
+
+    def test_quote_only_entry_rejects_unknown_unknown_pair(self):
+        config = ScannerConfig(
+            min_apr=100.0,
+            min_liquidity_usd=10,
+            min_volume_24h_usd=10,
+            allowed_quote_symbols=set(),
+            survival_runway=SurvivalRunwayConfig(enabled=False),
+            quote_only_entry=QuoteOnlyEntryConfig(
+                enabled=True,
+                allowed_quote_symbols=frozenset({"SOL", "USDC", "USDT", "USD1"}),
+            ),
+            honeypot_guard=HoneypotGuardConfig(enabled=False),
+        )
+        pool = normalize_pool(
+            {
+                "id": "unknown",
+                "apr24h": 9_000,
+                "tvl": 1_000_000,
+                "volume24h": 500_000,
+                "mintA": {"symbol": "ABC", "address": "abc-mint"},
+                "mintB": {"symbol": "DEF", "address": "def-mint"},
+            },
+            "apr24h",
+        )
+        ok, reasons, categories = filter_pool(pool, config)
+        self.assertFalse(ok)
+        self.assertIn("quote_only_entry_failed", categories)
+        self.assertTrue(any("quote_only_entry" in r for r in reasons))
 
     def test_url_uses_apr_sort(self):
         config = ScannerConfig(page_size=10, apr_field="apr24h")
