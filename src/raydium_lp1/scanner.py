@@ -213,7 +213,12 @@ def nested_get(payload: dict[str, Any], *keys: str, default: Any = None) -> Any:
 
 def token_symbol(token: Any) -> str:
     if isinstance(token, dict):
-        return str(token.get("symbol") or token.get("name") or "").upper()
+        raw = str(token.get("symbol") or token.get("name") or "").upper()
+        # Raydium's API reports wrapped SOL as "WSOL". Treat it as SOL so the
+        # default ``allowed_quote_symbols=["SOL", ...]`` actually matches.
+        if raw == "WSOL":
+            return "SOL"
+        return raw
     return ""
 
 
@@ -224,37 +229,125 @@ def token_mint(token: Any) -> str:
 
 
 def pool_apr(pool: dict[str, Any], apr_field: str) -> float:
-    """Read APR from common Raydium response shapes."""
+    """Read APR from Raydium's v3 response.
 
+    The live API nests APR under ``day`` / ``week`` / ``month`` objects:
+    ``pool["day"]["apr"]`` is total APR including reward emissions, while
+    ``pool["day"]["feeApr"]`` is the trade-fee component. We add the reward
+    APRs from ``rewardApr`` when available so the number lines up with what
+    raydium.io displays in the liquidity-pools table.
+    """
+
+    period_key = "day"
+    lookup = (apr_field or "").lower()
+    if lookup in ("apr7d", "apr7", "week"):
+        period_key = "week"
+    elif lookup in ("apr30d", "apr30", "month"):
+        period_key = "month"
+
+    period_obj = pool.get(period_key)
+    if isinstance(period_obj, dict):
+        # Prefer the canonical "apr" if present; otherwise fee + rewards.
+        if "apr" in period_obj and period_obj["apr"] is not None:
+            return number(period_obj["apr"])
+        fee_apr = number(period_obj.get("feeApr"))
+        rewards = period_obj.get("rewardApr")
+        if isinstance(rewards, list):
+            fee_apr += sum(number(item) for item in rewards)
+        if fee_apr:
+            return fee_apr
+
+    # Legacy / flat shapes (still used by some older endpoints and our own
+    # mocked test fixtures).
     direct = number(pool.get(apr_field), default=-1.0)
     if direct >= 0:
         return direct
-
-    day = apr_field.removeprefix("apr")
     apr_obj = pool.get("apr")
     if isinstance(apr_obj, dict):
+        day = apr_field.removeprefix("apr")
         for key in (day, apr_field, day.lower()):
             value = number(apr_obj.get(key), default=-1.0)
             if value >= 0:
                 return value
-
     return 0.0
 
 
+def pool_volume(pool: dict[str, Any], apr_field: str) -> float:
+    """Return 24h (or selected period) USD volume from a Raydium pool."""
+
+    period_key = "day"
+    lookup = (apr_field or "").lower()
+    if lookup in ("apr7d", "apr7", "week"):
+        period_key = "week"
+    elif lookup in ("apr30d", "apr30", "month"):
+        period_key = "month"
+    period_obj = pool.get(period_key)
+    if isinstance(period_obj, dict):
+        return number(period_obj.get("volume"))
+    # Legacy flat shape used by old fixtures.
+    return number(
+        pool.get("volume24h")
+        or pool.get("volume24hUsd")
+        or pool.get("dayVolume")
+    )
+
+
+def pool_fee_24h(pool: dict[str, Any]) -> float:
+    period_obj = pool.get("day")
+    if isinstance(period_obj, dict):
+        return number(period_obj.get("volumeFee") or period_obj.get("fee"))
+    return number(pool.get("fee24h") or pool.get("fee24hUsd"))
+
+
 def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
+    """Project a Raydium v3 pool envelope into the flat dict the scanner uses.
+
+    Reads nested period objects (``day`` / ``week`` / ``month``) for APR,
+    volume and fees, and surfaces ``openTime``, ``burnPercent`` and pool
+    type so feature filters can match what raydium.io's UI exposes.
+    """
+
     mint_a = nested_get(pool, "mintA", "mint1", "baseMint", default={})
     mint_b = nested_get(pool, "mintB", "mint2", "quoteMint", default={})
+    if not isinstance(mint_a, dict):
+        mint_a = {}
+    if not isinstance(mint_b, dict):
+        mint_b = {}
+
+    pool_type = str(nested_get(pool, "type", "poolType", default="") or "")
+    pool_subtypes = pool.get("pooltype") if isinstance(pool.get("pooltype"), list) else []
+
+    open_time_raw = pool.get("openTime") or pool.get("openTimestamp") or 0
+    try:
+        open_time_sec = int(open_time_raw)
+    except (TypeError, ValueError):
+        open_time_sec = 0
+
     return {
         "id": str(nested_get(pool, "id", "poolId", "ammId", default="")),
-        "type": str(nested_get(pool, "type", "poolType", default="")),
+        "type": pool_type,
+        "subtypes": list(pool_subtypes),
+        "program_id": str(pool.get("programId") or ""),
         "apr": pool_apr(pool, apr_field),
+        "fee_apr_24h": number(
+            (pool.get("day") or {}).get("feeApr") if isinstance(pool.get("day"), dict) else 0
+        ),
         "liquidity_usd": number(nested_get(pool, "tvl", "liquidity", "liquidityUsd", default=0)),
-        "volume_24h_usd": number(nested_get(pool, "day", "volume24h", "volume24hUsd", default=0)),
-        "fee_24h_usd": number(nested_get(pool, "fee24h", "fee24hUsd", default=0)),
+        "volume_24h_usd": pool_volume(pool, apr_field),
+        "fee_24h_usd": pool_fee_24h(pool),
+        "fee_rate": number(pool.get("feeRate")),
+        "open_time": open_time_sec,
+        "burn_percent": number(pool.get("burnPercent")),
+        "launch_migrate_pool": bool(pool.get("launchMigratePool")),
+        "farm_ongoing": int(pool.get("farmOngoingCount") or 0),
         "mint_a_symbol": token_symbol(mint_a),
         "mint_b_symbol": token_symbol(mint_b),
         "mint_a": token_mint(mint_a),
         "mint_b": token_mint(mint_b),
+        "mint_a_decimals": int(mint_a.get("decimals") or 0) if isinstance(mint_a, dict) else 0,
+        "mint_b_decimals": int(mint_b.get("decimals") or 0) if isinstance(mint_b, dict) else 0,
+        "mint_a_tags": list(mint_a.get("tags") or []) if isinstance(mint_a, dict) else [],
+        "mint_b_tags": list(mint_b.get("tags") or []) if isinstance(mint_b, dict) else [],
         "raw": pool,
     }
 
