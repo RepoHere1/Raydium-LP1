@@ -52,7 +52,7 @@ class ScannerConfig:
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
         env_urls = split_env_list(os.environ.get("SOLANA_RPC_URLS", ""))
         single_env_url = os.environ.get("SOLANA_RPC_URL", "").strip()
         if single_env_url:
@@ -61,7 +61,7 @@ class ScannerConfig:
         return cls(
             min_apr=float(raw.get("min_apr", cls.min_apr)),
             apr_field=str(raw.get("apr_field", cls.apr_field)),
-            page_size=int(raw.get("page_size", cls.page_size)),
+            page_size=min(int(raw.get("page_size", cls.page_size)), 1000),
             pages=int(raw.get("pages", cls.pages)),
             pool_type=str(raw.get("pool_type", cls.pool_type)),
             sort_type=str(raw.get("sort_type", cls.sort_type)),
@@ -97,7 +97,7 @@ def load_dotenv(path: Path = DEFAULT_ENV_PATH) -> None:
 
     if not path.exists():
         return
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
