@@ -22,7 +22,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from raydium_lp1 import dashboard as dashboard_mod
-from raydium_lp1 import emergency, health, routes, strategies, wallet as wallet_mod
+from raydium_lp1 import emergency, health, networks, routes, strategies, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -63,6 +63,7 @@ class ScannerConfig:
     emergency_max_slippage_pct: float = 0.30
     position_size_sol: float = 0.1
     reserve_sol: float = 0.02
+    network: str = networks.NETWORK_SOLANA
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -113,6 +114,7 @@ class ScannerConfig:
             ),
             position_size_sol=float(raw_with_strategy.get("position_size_sol", 0.1)),
             reserve_sol=float(raw_with_strategy.get("reserve_sol", 0.02)),
+            network=networks.normalize_network(str(raw_with_strategy.get("network", "solana"))),
         )
 
 
@@ -335,9 +337,12 @@ def assess_capacity(
     result then reports ``ok=False`` and zero capacity instead of raising.
     """
 
+    adapter = networks.get_adapter(config.network)
+    network_info = adapter.to_dict()
     if wallet_config is None:
         return {
             "wallet": None,
+            "network": network_info,
             "balance": {"ok": False, "error": "no wallet configured", "sol": 0.0, "lamports": 0},
             "capacity": wallet_mod.compute_capacity(
                 0.0,
@@ -345,17 +350,36 @@ def assess_capacity(
                 reserve_sol=config.reserve_sol,
             ).to_dict(),
         }
-    balance = wallet_mod.fetch_sol_balance(
-        wallet_config.address, config.solana_rpc_urls, rpc_post=rpc_post
-    )
+    if not adapter.supports_live:
+        return {
+            "wallet": wallet_config.to_dict(),
+            "network": network_info,
+            "balance": {
+                "ok": False,
+                "error": f"{adapter.display_name} adapter is stub-only in this build",
+                "sol": 0.0,
+                "lamports": 0,
+            },
+            "capacity": wallet_mod.compute_capacity(
+                0.0,
+                position_size_sol=config.position_size_sol,
+                reserve_sol=config.reserve_sol,
+            ).to_dict(),
+        }
+    # Live path (Solana). For network adapters that aren't Solana we'd swap
+    # this for a generic balance call once they support_live.
+    if rpc_post is not None and isinstance(adapter, networks.SolanaAdapter):
+        adapter.rpc_post = rpc_post  # type: ignore[assignment]
+    balance_dict = adapter.fetch_native_balance(wallet_config.address, config.solana_rpc_urls)
     capacity = wallet_mod.compute_capacity(
-        balance.sol if balance.ok else 0.0,
+        balance_dict.get("sol", 0.0) if balance_dict.get("ok") else 0.0,
         position_size_sol=config.position_size_sol,
         reserve_sol=config.reserve_sol,
     )
     return {
         "wallet": wallet_config.to_dict(),
-        "balance": balance.to_dict(),
+        "network": network_info,
+        "balance": balance_dict,
         "capacity": capacity.to_dict(),
     }
 
@@ -376,6 +400,43 @@ def scan(
     candidates: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     scanned = 0
+
+    adapter = networks.get_adapter(config.network)
+    if not adapter.supports_live:
+        # Non-Solana adapters are scaffolded but cannot actually scan yet.
+        wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
+        return {
+            "scanned_at": datetime.now(UTC).isoformat(),
+            "mode": "dry_run",
+            "strategy": config.strategy,
+            "network": config.network,
+            "network_info": adapter.to_dict(),
+            "raydium_api_base": config.raydium_api_base,
+            "min_apr": config.min_apr,
+            "min_liquidity_usd": config.min_liquidity_usd,
+            "min_volume_24h_usd": config.min_volume_24h_usd,
+            "apr_field": config.apr_field,
+            "scanned_count": 0,
+            "candidate_count": 0,
+            "candidate_count_pre_capacity": 0,
+            "candidates_truncated": 0,
+            "rejected_count": 0,
+            "max_position_usd": config.max_position_usd,
+            "rpc_count": len(config.solana_rpc_urls),
+            "require_sell_route": config.require_sell_route,
+            "route_sources": list(config.route_sources),
+            "track_liquidity_health": config.track_liquidity_health,
+            "health_summary": {"healthy": 0, "warning": 0, "critical": 0},
+            "emergency_close_enabled": config.emergency_close_enabled,
+            "triggered_alerts": [],
+            "wallet_capacity": wallet_capacity_info,
+            "candidates": [],
+            "rejected_preview": [],
+            "notice": (
+                f"Network {adapter.display_name!r} is scaffolded but not live yet. "
+                "Switch back to network=solana to scan Raydium pools."
+            ),
+        }
 
     if sellability_checker is None and config.require_sell_route:
         sellability_checker = lambda pool: routes.check_pool_sellability(  # noqa: E731
@@ -438,6 +499,7 @@ def scan(
         "scanned_at": datetime.now(UTC).isoformat(),
         "mode": "dry_run" if config.dry_run else "trade_disabled_in_this_build",
         "strategy": config.strategy,
+        "network": config.network,
         "raydium_api_base": config.raydium_api_base,
         "min_apr": config.min_apr,
         "min_liquidity_usd": config.min_liquidity_usd,
@@ -545,6 +607,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Override the strategy preset for this run (overrides settings.json).",
     )
     parser.add_argument("--list-strategies", action="store_true", help="Print the available strategy presets and exit.")
+    parser.add_argument("--list-networks", action="store_true", help="Print the supported networks and exit.")
     parser.add_argument(
         "--wallet-override",
         type=str,
@@ -565,6 +628,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list_strategies:
         print(strategies.describe_presets())
+        return 0
+    if args.list_networks:
+        print(networks.describe_networks())
         return 0
 
     load_dotenv()

@@ -1,5 +1,6 @@
 {
   "dry_run": true,
+  "network": "solana",
   "strategy": "custom",
   "min_apr": 999.99,
   "apr_field": "apr24h",
