@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from raydium_lp1.scanner import (
     ScannerConfig,
+    apr_field_window,
     extract_pool_items,
     filter_pool,
     load_dotenv,
@@ -23,6 +24,11 @@ class ScannerTests(unittest.TestCase):
     def test_default_apr_threshold_is_999_99(self):
         self.assertEqual(ScannerConfig().min_apr, 999.99)
 
+    def test_apr_field_window_mapping(self):
+        self.assertEqual(apr_field_window("apr24h"), "day")
+        self.assertEqual(apr_field_window("aprWeek"), "week")
+        self.assertEqual(apr_field_window("aprMonth"), "month")
+
     def test_candidate_passes_filters(self):
         config = ScannerConfig(min_apr=999.99, min_liquidity_usd=1_000, min_volume_24h_usd=100)
         pool = normalize_pool(
@@ -36,9 +42,31 @@ class ScannerTests(unittest.TestCase):
             },
             "apr24h",
         )
-        ok, reasons = filter_pool(pool, config)
+        ok, reasons, categories = filter_pool(pool, config)
         self.assertTrue(ok)
         self.assertEqual(reasons, [])
+        self.assertEqual(categories, [])
+
+    def test_nested_day_window_payload_is_parsed(self):
+        """Current Raydium API: apr24h is None at top level; real APR lives under `day.apr`."""
+        config = ScannerConfig(min_apr=500.0, min_liquidity_usd=1_000, min_volume_24h_usd=100)
+        pool = normalize_pool(
+            {
+                "id": "pool-2",
+                "apr24h": None,
+                "tvl": 2_500,
+                "day": {"apr": 1_234.5, "volume": 800, "volumeFee": 12.5},
+                "mintA": {"symbol": "SOL", "address": "sol-mint"},
+                "mintB": {"symbol": "TEST", "address": "test-mint"},
+            },
+            "apr24h",
+        )
+        self.assertAlmostEqual(pool["apr"], 1_234.5)
+        self.assertAlmostEqual(pool["volume_24h_usd"], 800)
+        self.assertAlmostEqual(pool["fee_24h_usd"], 12.5)
+        ok, _reasons, categories = filter_pool(pool, config)
+        self.assertTrue(ok)
+        self.assertEqual(categories, [])
 
     def test_low_liquidity_rejected(self):
         config = ScannerConfig(min_apr=999.99, min_liquidity_usd=1_000, min_volume_24h_usd=100)
@@ -53,9 +81,10 @@ class ScannerTests(unittest.TestCase):
             },
             "apr24h",
         )
-        ok, reasons = filter_pool(pool, config)
+        ok, reasons, categories = filter_pool(pool, config)
         self.assertFalse(ok)
         self.assertIn("liquidity $10.00 below $1000.00", reasons)
+        self.assertIn("liquidity_below_threshold", categories)
 
     def test_url_uses_apr_sort(self):
         config = ScannerConfig(page_size=10, apr_field="apr24h")
