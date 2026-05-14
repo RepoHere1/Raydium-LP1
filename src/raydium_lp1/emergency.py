@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import urlencode
 
-from raydium_lp1 import health, routes
+from raydium_lp1 import health, robust_routes, routes
 
 DEFAULT_ALERTS_PATH = Path("reports/alerts.json")
 DEFAULT_MAX_SLIPPAGE_PCT = 0.30  # 30%
@@ -98,6 +98,8 @@ def build_swap_plan(
     *,
     base_symbol: str = "SOL",
     max_slippage_pct: float = DEFAULT_MAX_SLIPPAGE_PCT,
+    use_robust_routing: bool = False,
+    fetcher: Callable[[str], dict] | None = None,
 ) -> SwapPlan:
     """Construct a Jupiter swap-back plan WITHOUT executing it.
 
@@ -123,7 +125,28 @@ def build_swap_plan(
         "Execution path: GET quote -> POST /v6/swap with user wallet pubkey -> sign -> send.",
         "No signing or send is performed in this build.",
     ]
-    return SwapPlan(
+
+    best_source: str | None = None
+    best_out_amount: float | None = None
+    route_quality: dict | None = None
+    if use_robust_routing:
+        best = robust_routes.best_route(
+            token_mint,
+            output_mint,
+            amount=amount,
+            slippage_bps=slippage_bps,
+            fetcher=fetcher,
+        )
+        best_source = best.best_source
+        best_out_amount = best.best_out_amount
+        route_quality = best.quality
+        if best_source:
+            notes.append(
+                f"Best route source (via robust router): {best_source} (out={best_out_amount})."
+            )
+            notes.append(robust_routes.log_route_quality(best))
+
+    plan = SwapPlan(
         input_mint=token_mint,
         input_symbol=(token_symbol or "").upper(),
         output_mint=output_mint,
@@ -135,6 +158,9 @@ def build_swap_plan(
         dry_run=True,
         notes=notes,
     )
+    if route_quality is not None:
+        plan.notes.append(f"route_quality_metrics={route_quality}")
+    return plan
 
 
 def plan_emergency_close(
@@ -143,6 +169,8 @@ def plan_emergency_close(
     base_symbol: str = "SOL",
     max_slippage_pct: float = DEFAULT_MAX_SLIPPAGE_PCT,
     position_token_amount: int = 1_000_000,
+    use_robust_routing: bool = False,
+    fetcher: Callable[[str], dict] | None = None,
 ) -> list[SwapPlan]:
     """Build swap plans for BOTH sides of a pool position.
 
@@ -166,6 +194,8 @@ def plan_emergency_close(
                 position_token_amount,
                 base_symbol=base_symbol,
                 max_slippage_pct=max_slippage_pct,
+                use_robust_routing=use_robust_routing,
+                fetcher=fetcher,
             )
         )
     return plans
@@ -177,12 +207,16 @@ def build_alert(
     *,
     base_symbol: str = "SOL",
     max_slippage_pct: float = DEFAULT_MAX_SLIPPAGE_PCT,
+    use_robust_routing: bool = False,
+    fetcher: Callable[[str], dict] | None = None,
     now_iso: str | None = None,
 ) -> Alert:
     swap_plans = plan_emergency_close(
         pool,
         base_symbol=base_symbol,
         max_slippage_pct=max_slippage_pct,
+        use_robust_routing=use_robust_routing,
+        fetcher=fetcher,
     )
     pair = f"{pool.get('mint_a_symbol', '')}/{pool.get('mint_b_symbol', '')}"
     return Alert(
@@ -253,6 +287,8 @@ def run_emergency_pass(
     max_slippage_pct: float = DEFAULT_MAX_SLIPPAGE_PCT,
     alerts_path: Path = DEFAULT_ALERTS_PATH,
     printer: Callable[[str], None] | None = print,
+    use_robust_routing: bool = False,
+    fetcher: Callable[[str], dict] | None = None,
     now_iso: str | None = None,
 ) -> list[Alert]:
     """Iterate (pool, assessment) pairs, alert on critical ones, persist."""
@@ -266,6 +302,8 @@ def run_emergency_pass(
             assessment,
             base_symbol=base_symbol,
             max_slippage_pct=max_slippage_pct,
+            use_robust_routing=use_robust_routing,
+            fetcher=fetcher,
             now_iso=now_iso,
         )
         triggered.append(alert)

@@ -135,6 +135,7 @@ class ScannerEmergencyIntegrationTests(unittest.TestCase):
                 liquidity_history_path=str(history_path),
                 emergency_close_enabled=True,
                 emergency_alerts_path=str(alerts_path),
+                use_robust_routing=False,
             )
             with patch("raydium_lp1.scanner.fetch_json", return_value=api_response):
                 report = scan(config)

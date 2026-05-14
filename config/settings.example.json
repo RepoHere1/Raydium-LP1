@@ -18,6 +18,7 @@
   "require_pool_id": true,
   "require_sell_route": true,
   "route_sources": ["jupiter", "raydium"],
+  "use_robust_routing": true,
   "track_liquidity_health": true,
   "liquidity_history_path": "reports/liquidity_history.json",
   "emergency_close_enabled": true,

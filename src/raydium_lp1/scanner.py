@@ -22,7 +22,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from raydium_lp1 import dashboard as dashboard_mod
-from raydium_lp1 import emergency, health, networks, routes, strategies, wallet as wallet_mod
+from raydium_lp1 import emergency, health, networks, robust_routes, routes, strategies, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -64,6 +64,7 @@ class ScannerConfig:
     position_size_sol: float = 0.1
     reserve_sol: float = 0.02
     network: str = networks.NETWORK_SOLANA
+    use_robust_routing: bool = True
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -115,6 +116,7 @@ class ScannerConfig:
             position_size_sol=float(raw_with_strategy.get("position_size_sol", 0.1)),
             reserve_sol=float(raw_with_strategy.get("reserve_sol", 0.02)),
             network=networks.normalize_network(str(raw_with_strategy.get("network", "solana"))),
+            use_robust_routing=bool(raw_with_strategy.get("use_robust_routing", True)),
         )
 
 
@@ -429,6 +431,8 @@ def scan(
             "health_summary": {"healthy": 0, "warning": 0, "critical": 0},
             "emergency_close_enabled": config.emergency_close_enabled,
             "triggered_alerts": [],
+            "use_robust_routing": config.use_robust_routing,
+            "route_cache_stats": robust_routes.get_global_cache().stats(),
             "wallet_capacity": wallet_capacity_info,
             "candidates": [],
             "rejected_preview": [],
@@ -483,6 +487,7 @@ def scan(
                 base_symbol=config.emergency_base_symbol,
                 max_slippage_pct=config.emergency_max_slippage_pct,
                 alerts_path=Path(config.emergency_alerts_path),
+                use_robust_routing=config.use_robust_routing,
             )
             triggered_alerts = [alert.to_dict() for alert in alerts]
 
@@ -517,6 +522,8 @@ def scan(
         "health_summary": health_summary,
         "emergency_close_enabled": config.emergency_close_enabled,
         "triggered_alerts": triggered_alerts,
+        "use_robust_routing": config.use_robust_routing,
+        "route_cache_stats": robust_routes.get_global_cache().stats(),
         "wallet_capacity": wallet_capacity_info,
         "candidates": capped_candidates,
         "candidates_truncated": candidates_truncated,
