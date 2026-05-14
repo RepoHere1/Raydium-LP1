@@ -21,7 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from raydium_lp1 import routes, strategies
+from raydium_lp1 import health, routes, strategies
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -54,6 +54,8 @@ class ScannerConfig:
     strategy: str = strategies.STRATEGY_CUSTOM
     require_sell_route: bool = True
     route_sources: tuple[str, ...] = ("jupiter", "raydium")
+    track_liquidity_health: bool = True
+    liquidity_history_path: str = "reports/liquidity_history.json"
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -90,6 +92,10 @@ class ScannerConfig:
                 if str(s).strip()
             )
             or ("jupiter", "raydium"),
+            track_liquidity_health=bool(raw_with_strategy.get("track_liquidity_health", True)),
+            liquidity_history_path=str(
+                raw_with_strategy.get("liquidity_history_path", "reports/liquidity_history.json")
+            ),
         )
 
 
@@ -345,6 +351,14 @@ def scan(
 
             candidates.append(public_pool)
 
+    health_summary = {"healthy": 0, "warning": 0, "critical": 0}
+    if config.track_liquidity_health and candidates:
+        history_path = Path(config.liquidity_history_path)
+        assessments, _ = health.assess_pools(candidates, history_path=history_path)
+        for pool, assessment in zip(candidates, assessments):
+            pool["health"] = assessment.to_dict()
+            health_summary[assessment.score] = health_summary.get(assessment.score, 0) + 1
+
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
         "mode": "dry_run" if config.dry_run else "trade_disabled_in_this_build",
@@ -361,6 +375,8 @@ def scan(
         "rpc_count": len(config.solana_rpc_urls),
         "require_sell_route": config.require_sell_route,
         "route_sources": list(config.route_sources),
+        "track_liquidity_health": config.track_liquidity_health,
+        "health_summary": health_summary,
         "candidates": candidates,
         "rejected_preview": rejected[:10],
     }
