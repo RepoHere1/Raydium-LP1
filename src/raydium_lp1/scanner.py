@@ -61,7 +61,7 @@ class ScannerConfig:
         return cls(
             min_apr=float(raw.get("min_apr", cls.min_apr)),
             apr_field=str(raw.get("apr_field", cls.apr_field)),
-            page_size=int(raw.get("page_size", cls.page_size)),
+            page_size=min(int(raw.get("page_size", cls.page_size)), 1000),
             pages=int(raw.get("pages", cls.pages)),
             pool_type=str(raw.get("pool_type", cls.pool_type)),
             sort_type=str(raw.get("sort_type", cls.sort_type)),
