@@ -22,7 +22,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from raydium_lp1 import dashboard as dashboard_mod
-from raydium_lp1 import emergency, health, networks, robust_routes, routes, strategies, wallet as wallet_mod
+from raydium_lp1 import emergency, health, networks, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -526,6 +526,7 @@ def scan(
     sellability_checker: Any = None,
     wallet_config: wallet_mod.WalletConfig | None = None,
     rpc_post: Any = None,
+    verdict_stream: verdicts.StreamConfig | None = None,
 ) -> dict[str, Any]:
     """Run a single scan pass.
 
@@ -533,9 +534,13 @@ def scan(
     normalized pool dict and returns a :class:`routes.SellabilityResult`.
     """
 
+    from collections import Counter as _Counter
     candidates: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    rejection_counts: _Counter = _Counter()
     scanned = 0
+    reject_idx = 0
+    stream_cfg = verdict_stream if verdict_stream is not None else verdicts.make_stream_config(enabled=False)
 
     adapter = networks.get_adapter(config.network)
     if not adapter.supports_live:
@@ -570,6 +575,7 @@ def scan(
             "wallet_capacity": wallet_capacity_info,
             "candidates": [],
             "rejected_preview": [],
+            "rejection_breakdown": {},
             "notice": (
                 f"Network {adapter.display_name!r} is scaffolded but not live yet. "
                 "Switch back to network=solana to scan Raydium pools."
@@ -603,6 +609,10 @@ def scan(
             ok, reasons = filter_pool(pool, config)
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
             if not ok:
+                verdicts.emit_reject(public_pool, reasons, stream_cfg, idx=reject_idx)
+                reject_idx += 1
+                category = verdicts._classify_reason(reasons[0]) if reasons else "other"
+                rejection_counts[category] += 1
                 rejected.append({**public_pool, "reasons": reasons})
                 continue
 
@@ -611,9 +621,14 @@ def scan(
                 public_pool["sellability"] = sell.to_dict()
                 public_pool["sellability_log"] = routes.format_sellability_log(sell)
                 if not sell.ok:
-                    rejected.append({**public_pool, "reasons": list(sell.reasons)})
+                    sell_reasons = list(sell.reasons)
+                    verdicts.emit_reject(public_pool, sell_reasons, stream_cfg, idx=reject_idx)
+                    reject_idx += 1
+                    rejection_counts[verdicts._classify_reason(sell_reasons[0]) if sell_reasons else "other"] += 1
+                    rejected.append({**public_pool, "reasons": sell_reasons})
                     continue
 
+            verdicts.emit_pass(public_pool, stream_cfg)
             candidates.append(public_pool)
 
     health_summary = {"healthy": 0, "warning": 0, "critical": 0}
@@ -672,6 +687,7 @@ def scan(
         "candidates": capped_candidates,
         "candidates_truncated": candidates_truncated,
         "rejected_preview": rejected[:10],
+        "rejection_breakdown": dict(rejection_counts),
     }
 
 
@@ -760,6 +776,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list-strategies", action="store_true", help="Print the available strategy presets and exit.")
     parser.add_argument("--list-networks", action="store_true", help="Print the supported networks and exit.")
     parser.add_argument(
+        "--quiet", action="store_true",
+        help="Hide the per-pool PASS/REJECT stream (the rejection breakdown still prints).",
+    )
+    parser.add_argument(
+        "--hide-passes", action="store_true",
+        help="Hide green PASS lines, only show red REJECT decisions and the breakdown.",
+    )
+    parser.add_argument(
+        "--show-rejects", type=int, default=200,
+        help="Max number of red REJECT lines to print per scan-cycle (default 200).",
+    )
+    parser.add_argument(
         "--wallet-override",
         type=str,
         default=None,
@@ -813,13 +841,20 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"rpc_results": rpc_results}, indent=2))
 
     show_dashboard = args.dashboard and not args.no_dashboard
+    stream_cfg = verdicts.make_stream_config(
+        enabled=not args.quiet,
+        show_passes=not args.hide_passes,
+        max_rejections_shown=max(0, int(args.show_rejects)),
+    )
 
     while True:
         try:
-            report = scan(config, wallet_config=active_wallet)
+            report = scan(config, wallet_config=active_wallet, verdict_stream=stream_cfg)
         except RuntimeError as exc:
             print(f"Scan failed: {exc}", file=sys.stderr)
             return 1
+
+        verdicts.print_rejection_breakdown(report.get("rejection_breakdown") or {}, stream_cfg)
 
         if args.write_reports:
             write_reports(report)
