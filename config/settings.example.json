@@ -23,5 +23,7 @@
   "emergency_alerts_path": "reports/alerts.json",
   "emergency_base_symbol": "SOL",
   "emergency_max_slippage_pct": 0.30,
+  "position_size_sol": 0.1,
+  "reserve_sol": 0.02,
   "solana_rpc_urls": []
 }

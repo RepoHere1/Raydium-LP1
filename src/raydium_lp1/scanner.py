@@ -60,6 +60,8 @@ class ScannerConfig:
     emergency_alerts_path: str = "reports/alerts.json"
     emergency_base_symbol: str = "SOL"
     emergency_max_slippage_pct: float = 0.30
+    position_size_sol: float = 0.1
+    reserve_sol: float = 0.02
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -108,6 +110,8 @@ class ScannerConfig:
             emergency_max_slippage_pct=float(
                 raw_with_strategy.get("emergency_max_slippage_pct", 0.30)
             ),
+            position_size_sol=float(raw_with_strategy.get("position_size_sol", 0.1)),
+            reserve_sol=float(raw_with_strategy.get("reserve_sol", 0.02)),
         )
 
 
@@ -318,10 +322,49 @@ def filter_pool(pool: dict[str, Any], config: ScannerConfig) -> tuple[bool, list
     return not reasons, reasons
 
 
+def assess_capacity(
+    config: ScannerConfig,
+    wallet_config: wallet_mod.WalletConfig | None,
+    *,
+    rpc_post: Any = None,
+) -> dict[str, Any]:
+    """Return wallet/capacity info: balance, max positions, reserved SOL.
+
+    Safe to call when no wallet is configured or RPCs are unreachable; the
+    result then reports ``ok=False`` and zero capacity instead of raising.
+    """
+
+    if wallet_config is None:
+        return {
+            "wallet": None,
+            "balance": {"ok": False, "error": "no wallet configured", "sol": 0.0, "lamports": 0},
+            "capacity": wallet_mod.compute_capacity(
+                0.0,
+                position_size_sol=config.position_size_sol,
+                reserve_sol=config.reserve_sol,
+            ).to_dict(),
+        }
+    balance = wallet_mod.fetch_sol_balance(
+        wallet_config.address, config.solana_rpc_urls, rpc_post=rpc_post
+    )
+    capacity = wallet_mod.compute_capacity(
+        balance.sol if balance.ok else 0.0,
+        position_size_sol=config.position_size_sol,
+        reserve_sol=config.reserve_sol,
+    )
+    return {
+        "wallet": wallet_config.to_dict(),
+        "balance": balance.to_dict(),
+        "capacity": capacity.to_dict(),
+    }
+
+
 def scan(
     config: ScannerConfig,
     *,
     sellability_checker: Any = None,
+    wallet_config: wallet_mod.WalletConfig | None = None,
+    rpc_post: Any = None,
 ) -> dict[str, Any]:
     """Run a single scan pass.
 
@@ -381,6 +424,15 @@ def scan(
             )
             triggered_alerts = [alert.to_dict() for alert in alerts]
 
+    wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
+    max_positions = int(wallet_capacity_info["capacity"]["max_positions"]) if wallet_config is not None else None
+    if wallet_config is not None and max_positions is not None:
+        capped_candidates = candidates[:max_positions]
+        candidates_truncated = max(0, len(candidates) - len(capped_candidates))
+    else:
+        capped_candidates = candidates
+        candidates_truncated = 0
+
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
         "mode": "dry_run" if config.dry_run else "trade_disabled_in_this_build",
@@ -391,7 +443,8 @@ def scan(
         "min_volume_24h_usd": config.min_volume_24h_usd,
         "apr_field": config.apr_field,
         "scanned_count": scanned,
-        "candidate_count": len(candidates),
+        "candidate_count": len(capped_candidates),
+        "candidate_count_pre_capacity": len(candidates),
         "rejected_count": len(rejected),
         "max_position_usd": config.max_position_usd,
         "rpc_count": len(config.solana_rpc_urls),
@@ -401,7 +454,9 @@ def scan(
         "health_summary": health_summary,
         "emergency_close_enabled": config.emergency_close_enabled,
         "triggered_alerts": triggered_alerts,
-        "candidates": candidates,
+        "wallet_capacity": wallet_capacity_info,
+        "candidates": capped_candidates,
+        "candidates_truncated": candidates_truncated,
         "rejected_preview": rejected[:10],
     }
 
@@ -415,6 +470,15 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"Scanned: {report['scanned_count']} | Candidates: {report['candidate_count']} | Rejected: {report['rejected_count']}")
     print(f"Configured Solana RPCs: {report['rpc_count']}")
     print(f"Max future position size: ${report['max_position_usd']:.2f}")
+    cap = report.get("wallet_capacity", {}).get("capacity", {})
+    bal = report.get("wallet_capacity", {}).get("balance", {})
+    if cap:
+        print(
+            f"Wallet: balance {bal.get('sol', 0):.4f} SOL | position_size {cap.get('position_size_sol', 0):.4f} SOL "
+            f"-> max_positions={cap.get('max_positions', 0)} (reserved {cap.get('reserved_sol', 0):.4f} SOL)"
+        )
+        if report.get("candidates_truncated"):
+            print(f"  ...{report['candidates_truncated']} candidate(s) hidden by capacity cap")
     if not report["candidates"]:
         print("No pools passed all filters. No action taken.")
         return
@@ -521,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
 
     while True:
         try:
-            report = scan(config)
+            report = scan(config, wallet_config=active_wallet)
         except RuntimeError as exc:
             print(f"Scan failed: {exc}", file=sys.stderr)
             return 1
