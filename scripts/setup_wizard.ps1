@@ -99,6 +99,12 @@ $existingEnv = Read-EnvFile $EnvPath
 $survival = Get-Property $existing 'survival_runway'
 $quoteOnly = Get-Property $existing 'quote_only_entry'
 $honeypot = Get-Property $existing 'honeypot_guard'
+$poolAge = Get-Property $existing 'pool_age_guard'
+$mintAuth = Get-Property $existing 'mint_authority_guard'
+$lpLock = Get-Property $existing 'lp_lock_guard'
+$priceImpact = Get-Property $existing 'price_impact_guard'
+$feeFloor = Get-Property $existing 'fee_apr_floor'
+$rpcGate = Get-Property $existing 'rpc_health_gate'
 
 $minApr = [double](Ask-WithDefault "Minimum APR percent to flag" (Coalesce-Default (Get-Property $existing 'min_apr') "999.99"))
 $minLiquidity = [double](Ask-WithDefault "Minimum pool liquidity/TVL in USD" (Coalesce-Default (Get-Property $existing 'min_liquidity_usd') "1000"))
@@ -150,11 +156,58 @@ $hgHook = Ask-YesNo "  reject_if_transfer_hook_set" (Coalesce-Bool (Get-Property
 $hgPermDel = Ask-YesNo "  reject_if_permanent_delegate_set" (Coalesce-Bool (Get-Property $honeypot 'reject_if_permanent_delegate_set') $true)
 $hgFailOpen = Ask-YesNo "  fail_open_when_no_rpc (accept candidates when no RPC is configured)" (Coalesce-Bool (Get-Property $honeypot 'fail_open_when_no_rpc') $false)
 
+Write-Host ""
+Write-Host "pool_age_guard: refuse pools that are too young (or too old)" -ForegroundColor Cyan
+$pagEnabled = Ask-YesNo "Enable pool_age_guard?" (Coalesce-Bool (Get-Property $poolAge 'enabled') $true)
+$pagMinMin = [double](Ask-WithDefault "  min_age_minutes (skip pools younger than this)" (Coalesce-Default (Get-Property $poolAge 'min_age_minutes') "60"))
+$pagMaxDays = [double](Ask-WithDefault "  max_age_days (0 = no upper bound)" (Coalesce-Default (Get-Property $poolAge 'max_age_days') "0"))
+$pagFailOpen = Ask-YesNo "  fail_open_when_unknown (accept pools with unknown age)" (Coalesce-Bool (Get-Property $poolAge 'fail_open_when_unknown') $false)
+
+Write-Host ""
+Write-Host "mint_authority_guard: refuse base tokens that can still mint unlimited supply" -ForegroundColor Cyan
+$magEnabled = Ask-YesNo "Enable mint_authority_guard?" (Coalesce-Bool (Get-Property $mintAuth 'enabled') $true)
+$magReject = Ask-YesNo "  reject_if_mint_authority_set" (Coalesce-Bool (Get-Property $mintAuth 'reject_if_mint_authority_set') $true)
+$magFailOpen = Ask-YesNo "  fail_open_when_no_rpc" (Coalesce-Bool (Get-Property $mintAuth 'fail_open_when_no_rpc') $false)
+
+Write-Host ""
+Write-Host "lp_lock_guard: require LP supply burned/locked so liquidity can't be pulled" -ForegroundColor Cyan
+$llgEnabled = Ask-YesNo "Enable lp_lock_guard?" (Coalesce-Bool (Get-Property $lpLock 'enabled') $true)
+$llgMinPct = [double](Ask-WithDefault "  min_locked_or_burned_pct" (Coalesce-Default (Get-Property $lpLock 'min_locked_or_burned_pct') "90.0"))
+$llgClmm = Ask-YesNo "  apply_to_concentrated_pools (CLMM uses NFT positions, off by default)" (Coalesce-Bool (Get-Property $lpLock 'apply_to_concentrated_pools') $false)
+$llgFailOpen = Ask-YesNo "  fail_open_when_no_rpc" (Coalesce-Bool (Get-Property $lpLock 'fail_open_when_no_rpc') $false)
+
+Write-Host ""
+Write-Host "price_impact_guard: refuse pools too small to absorb a max_position_usd entry" -ForegroundColor Cyan
+$pigEnabled = Ask-YesNo "Enable price_impact_guard?" (Coalesce-Bool (Get-Property $priceImpact 'enabled') $true)
+$pigMax = [double](Ask-WithDefault "  max_impact_percent" (Coalesce-Default (Get-Property $priceImpact 'max_impact_percent') "1.0"))
+$pigQuoteFrac = [double](Ask-WithDefault "  quote_side_fraction (0.5 = standard AMM)" (Coalesce-Default (Get-Property $priceImpact 'quote_side_fraction') "0.5"))
+
+Write-Host ""
+Write-Host "fee_apr_floor: require minimum fee-only APR so we don't chase farm-reward APR" -ForegroundColor Cyan
+$fafEnabled = Ask-YesNo "Enable fee_apr_floor?" (Coalesce-Bool (Get-Property $feeFloor 'enabled') $true)
+$fafMin = [double](Ask-WithDefault "  min_fee_apr_percent" (Coalesce-Default (Get-Property $feeFloor 'min_fee_apr_percent') "30.0"))
+
+Write-Host ""
+Write-Host "rpc_health_gate: refuse to scan if no Solana RPC is actually answering" -ForegroundColor Cyan
+$rhgEnabled = Ask-YesNo "Enable rpc_health_gate?" (Coalesce-Bool (Get-Property $rpcGate 'enabled') $true)
+$rhgMin = [int](Ask-WithDefault "  min_healthy_rpcs" (Coalesce-Default (Get-Property $rpcGate 'min_healthy_rpcs') "1"))
+$rhgRequire = Ask-YesNo "  require_when_no_rpc_configured (fail even with 0 RPCs configured)" (Coalesce-Bool (Get-Property $rpcGate 'require_when_no_rpc_configured') $false)
+
 $existingFreezeWhitelist = Get-Property $honeypot 'allowed_freeze_authority_mints'
 if ($null -ne $existingFreezeWhitelist) {
     $freezeWhitelist = @($existingFreezeWhitelist | ForEach-Object { [string]$_ })
 } else {
     $freezeWhitelist = @(
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+    )
+}
+
+$existingMintAuthWhitelist = Get-Property $mintAuth 'allowed_mint_authority_mints'
+if ($null -ne $existingMintAuthWhitelist) {
+    $mintAuthWhitelist = @($existingMintAuthWhitelist | ForEach-Object { [string]$_ })
+} else {
+    $mintAuthWhitelist = @(
         "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
         "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
     )
@@ -221,6 +274,39 @@ $config = [ordered]@{
         fail_open_when_no_rpc = [bool]$hgFailOpen
         rpc_timeout_seconds = [double](Coalesce-Default (Get-Property $honeypot 'rpc_timeout_seconds') "8.0")
     }
+    pool_age_guard = [ordered]@{
+        enabled = [bool]$pagEnabled
+        min_age_minutes = $pagMinMin
+        max_age_days = $pagMaxDays
+        fail_open_when_unknown = [bool]$pagFailOpen
+    }
+    mint_authority_guard = [ordered]@{
+        enabled = [bool]$magEnabled
+        reject_if_mint_authority_set = [bool]$magReject
+        allowed_mint_authority_mints = @($mintAuthWhitelist)
+        fail_open_when_no_rpc = [bool]$magFailOpen
+    }
+    lp_lock_guard = [ordered]@{
+        enabled = [bool]$llgEnabled
+        min_locked_or_burned_pct = $llgMinPct
+        apply_to_concentrated_pools = [bool]$llgClmm
+        fail_open_when_no_rpc = [bool]$llgFailOpen
+        rpc_timeout_seconds = [double](Coalesce-Default (Get-Property $lpLock 'rpc_timeout_seconds') "8.0")
+    }
+    price_impact_guard = [ordered]@{
+        enabled = [bool]$pigEnabled
+        max_impact_percent = $pigMax
+        quote_side_fraction = $pigQuoteFrac
+    }
+    fee_apr_floor = [ordered]@{
+        enabled = [bool]$fafEnabled
+        min_fee_apr_percent = $fafMin
+    }
+    rpc_health_gate = [ordered]@{
+        enabled = [bool]$rhgEnabled
+        min_healthy_rpcs = $rhgMin
+        require_when_no_rpc_configured = [bool]$rhgRequire
+    }
 }
 
 $configDir = Split-Path -Parent $ConfigPath
@@ -236,7 +322,7 @@ $allFallbacks = ($fallbacks | Where-Object { $_ -and $_ -ne $primaryRpc } | Sele
 ) | Set-Content -Path $EnvPath -Encoding UTF8
 
 Write-Host ""
-Write-Host "Wrote $ConfigPath (min_apr=$minApr, survival_runway/quote_only_entry/honeypot_guard included)" -ForegroundColor Green
+Write-Host "Wrote $ConfigPath (min_apr=$minApr, all 9 named filters configured)" -ForegroundColor Green
 Write-Host "Wrote $EnvPath with your live RPC/API URLs" -ForegroundColor Green
 Write-Host "All values you entered are now the defaults next time you run the wizard." -ForegroundColor Green
 Write-Host ""

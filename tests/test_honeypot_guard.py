@@ -101,6 +101,7 @@ def _inspection(**overrides) -> MintInspection:
         "mint_address": "MINTaaa",
         "owner_program": TOKEN_2022_PROGRAM_ID,
         "freeze_authority_set": False,
+        "mint_authority_set": False,
         "transfer_fee_basis_points": None,
         "has_transfer_hook": False,
         "has_permanent_delegate": False,

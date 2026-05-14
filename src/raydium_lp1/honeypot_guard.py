@@ -100,6 +100,7 @@ class MintInspection:
     mint_address: str
     owner_program: str
     freeze_authority_set: bool
+    mint_authority_set: bool
     transfer_fee_basis_points: int | None
     has_transfer_hook: bool
     has_permanent_delegate: bool
@@ -121,6 +122,7 @@ def parse_mint_data(data: bytes) -> dict[str, Any]:
     """Decode an SPL/Token-2022 mint account. Robust to truncated data."""
 
     info: dict[str, Any] = {
+        "mint_authority_set": False,
         "freeze_authority_set": False,
         "decimals": 0,
         "transfer_fee_basis_points": None,
@@ -131,6 +133,8 @@ def parse_mint_data(data: bytes) -> dict[str, Any]:
     if len(data) < 82:
         return info
 
+    mint_option = int.from_bytes(data[0:4], "little", signed=False)
+    info["mint_authority_set"] = mint_option == 1
     info["decimals"] = data[44]
     freeze_option = int.from_bytes(data[46:50], "little", signed=False)
     info["freeze_authority_set"] = freeze_option == 1
@@ -214,6 +218,7 @@ def fetch_mint_inspection(rpc_url: str, mint_address: str, timeout: float = 8.0)
         mint_address=mint_address,
         owner_program=owner,
         freeze_authority_set=bool(parsed["freeze_authority_set"]),
+        mint_authority_set=bool(parsed["mint_authority_set"]),
         transfer_fee_basis_points=parsed["transfer_fee_basis_points"],
         has_transfer_hook=bool(parsed["has_transfer_hook"]),
         has_permanent_delegate=bool(parsed["has_permanent_delegate"]),
