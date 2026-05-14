@@ -17,6 +17,24 @@ The default APR filter is now **999.99%**, not ninety-nine thousand percent. You
 9. Prints what it found in beginner-friendly text or JSON.
 10. Does **not** buy, sign, use wallet keys, or open LP positions yet.
 
+## The 9 named safety / strategy filters
+
+Each is a separate module in `src/raydium_lp1/` with its own settings block
+in `config/settings.json`. Plain-English docs for every knob live in
+[`SETTINGS.md`](SETTINGS.md).
+
+| # | Module | What it asks |
+| --- | --- | --- |
+| 1 | `survival_runway` | Will the pool still be paying in 3–7 days, or is it about to dry up? |
+| 2 | `quote_only_entry` | Never swap our safe quote (SOL/USDC/USDT/USD1) into the unknown token at entry. |
+| 3 | `honeypot_guard` | Token-2022 sell-tax cap + freeze / transfer-hook / permanent-delegate vetoes. |
+| 4 | `pool_age_guard` | Reject pools that are too young to have a real track record (or too old to have alpha). |
+| 5 | `mint_authority_guard` | Reject base tokens whose mint authority can still print unlimited supply. |
+| 6 | `lp_lock_guard` | Require a high fraction of LP supply burned/locked so the creator can't pull liquidity. |
+| 7 | `price_impact_guard` | Estimate slippage on a `max_position_usd` entry; reject pools too small to absorb it. |
+| 8 | `fee_apr_floor` | Require minimum fee-only APR so we're not chasing reward-token emissions that can end. |
+| 9 | `rpc_health_gate` | Refuse to even start scanning unless at least N configured Solana RPCs answer `getHealth`. |
+
 
 
 
@@ -176,7 +194,15 @@ For now, the "settings page" is the local file:
 config\settings.json
 ```
 
-The setup wizard creates it for you. To change your APR threshold later, edit this line:
+**Plain-language guide to every setting (including the three named filters
+`survival_runway`, `quote_only_entry`, and `honeypot_guard`):**
+see [`SETTINGS.md`](SETTINGS.md).
+
+The setup wizard creates `config\settings.json` for you and now **remembers
+your previous answers as the defaults** the next time you run it, so you only
+have to retype what you want to change.
+
+To change your APR threshold later, edit this line:
 
 ```json
 "min_apr": 999.99

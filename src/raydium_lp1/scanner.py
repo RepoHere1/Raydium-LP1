@@ -21,6 +21,48 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from .fee_apr_floor import (
+    FeeAprFloorConfig,
+    estimate_fee_apr_percent,
+    evaluate_fee_apr_floor,
+)
+from .honeypot_guard import (
+    HoneypotGuardConfig,
+    MintInspection,
+    evaluate_honeypot_guard,
+)
+from .lp_lock_guard import (
+    LpLockGuardConfig,
+    LpLockInspection,
+    evaluate_lp_lock_guard,
+    inspect_lp_lock,
+)
+from .mint_authority_guard import (
+    MintAuthorityGuardConfig,
+    evaluate_mint_authority_guard,
+)
+from .pool_age_guard import (
+    PoolAgeGuardConfig,
+    evaluate_pool_age_guard,
+    pool_age_seconds,
+)
+from .price_impact_guard import (
+    PriceImpactGuardConfig,
+    estimate_price_impact_pct,
+    evaluate_price_impact_guard,
+)
+from .quote_only_entry import (
+    QuoteOnlyEntryConfig,
+    base_side,
+    evaluate_quote_only_entry,
+)
+from .rpc_health_gate import (
+    RpcHealthGateConfig,
+    RpcHealthSummary,
+    evaluate_rpc_health_gate,
+)
+from .survival_runway import SurvivalRunwayConfig, evaluate_survival_runway
+
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
 DEFAULT_CONFIG_PATH = Path("config/settings.json")
@@ -49,10 +91,19 @@ class ScannerConfig:
     dry_run: bool = True
     raydium_api_base: str = RAYDIUM_API_BASE
     solana_rpc_urls: list[str] = field(default_factory=list)
+    survival_runway: SurvivalRunwayConfig = field(default_factory=SurvivalRunwayConfig)
+    quote_only_entry: QuoteOnlyEntryConfig = field(default_factory=QuoteOnlyEntryConfig)
+    honeypot_guard: HoneypotGuardConfig = field(default_factory=HoneypotGuardConfig)
+    pool_age_guard: PoolAgeGuardConfig = field(default_factory=PoolAgeGuardConfig)
+    mint_authority_guard: MintAuthorityGuardConfig = field(default_factory=MintAuthorityGuardConfig)
+    lp_lock_guard: LpLockGuardConfig = field(default_factory=LpLockGuardConfig)
+    price_impact_guard: PriceImpactGuardConfig = field(default_factory=PriceImpactGuardConfig)
+    fee_apr_floor: FeeAprFloorConfig = field(default_factory=FeeAprFloorConfig)
+    rpc_health_gate: RpcHealthGateConfig = field(default_factory=RpcHealthGateConfig)
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
         env_urls = split_env_list(os.environ.get("SOLANA_RPC_URLS", ""))
         single_env_url = os.environ.get("SOLANA_RPC_URL", "").strip()
         if single_env_url:
@@ -61,20 +112,31 @@ class ScannerConfig:
         return cls(
             min_apr=float(raw.get("min_apr", cls.min_apr)),
             apr_field=str(raw.get("apr_field", cls.apr_field)),
-            page_size=int(raw.get("page_size", cls.page_size)),
+            page_size=min(int(raw.get("page_size", cls.page_size)), 1000),
             pages=int(raw.get("pages", cls.pages)),
             pool_type=str(raw.get("pool_type", cls.pool_type)),
             sort_type=str(raw.get("sort_type", cls.sort_type)),
             min_liquidity_usd=float(raw.get("min_liquidity_usd", cls.min_liquidity_usd)),
             min_volume_24h_usd=float(raw.get("min_volume_24h_usd", cls.min_volume_24h_usd)),
             max_position_usd=float(raw.get("max_position_usd", cls.max_position_usd)),
-            allowed_quote_symbols=set(map(str.upper, raw.get("allowed_quote_symbols", ["SOL", "USDC", "USDT"]))),
+            allowed_quote_symbols=set(
+                map(str.upper, raw.get("allowed_quote_symbols", ["SOL", "USDC", "USDT", "USD1"]))
+            ),
             blocked_token_symbols=set(map(str.upper, raw.get("blocked_token_symbols", []))),
             blocked_mints=set(raw.get("blocked_mints", [])),
             require_pool_id=bool(raw.get("require_pool_id", True)),
             dry_run=bool(raw.get("dry_run", True)),
             raydium_api_base=str(raw.get("raydium_api_base") or os.environ.get("RAYDIUM_API_BASE") or RAYDIUM_API_BASE),
             solana_rpc_urls=dedupe([*env_urls, *config_urls]),
+            survival_runway=SurvivalRunwayConfig.from_raw(raw.get("survival_runway")),
+            quote_only_entry=QuoteOnlyEntryConfig.from_raw(raw.get("quote_only_entry")),
+            honeypot_guard=HoneypotGuardConfig.from_raw(raw.get("honeypot_guard")),
+            pool_age_guard=PoolAgeGuardConfig.from_raw(raw.get("pool_age_guard")),
+            mint_authority_guard=MintAuthorityGuardConfig.from_raw(raw.get("mint_authority_guard")),
+            lp_lock_guard=LpLockGuardConfig.from_raw(raw.get("lp_lock_guard")),
+            price_impact_guard=PriceImpactGuardConfig.from_raw(raw.get("price_impact_guard")),
+            fee_apr_floor=FeeAprFloorConfig.from_raw(raw.get("fee_apr_floor")),
+            rpc_health_gate=RpcHealthGateConfig.from_raw(raw.get("rpc_health_gate")),
         )
 
 
@@ -97,7 +159,7 @@ def load_dotenv(path: Path = DEFAULT_ENV_PATH) -> None:
 
     if not path.exists():
         return
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
@@ -140,21 +202,70 @@ def token_mint(token: Any) -> str:
     return ""
 
 
+def apr_field_window(apr_field: str) -> str:
+    """Map an apr_field name to the Raydium response window dict key.
+
+    Raydium's `/pools/info/list` payload now reports APR (and matching volume/fees)
+    inside nested `day`, `week`, and `month` objects, not as flat top-level numbers.
+    """
+
+    name = apr_field.lower()
+    if "week" in name:
+        return "week"
+    if "month" in name:
+        return "month"
+    return "day"
+
+
 def pool_apr(pool: dict[str, Any], apr_field: str) -> float:
-    """Read APR from common Raydium response shapes."""
+    """Read APR across Raydium response shapes (flat or nested `day`/`week`/`month`)."""
 
     direct = number(pool.get(apr_field), default=-1.0)
     if direct >= 0:
         return direct
 
-    day = apr_field.removeprefix("apr")
+    window = apr_field_window(apr_field)
+    window_obj = pool.get(window)
+    if isinstance(window_obj, dict):
+        for key in ("apr", "feeApr"):
+            value = number(window_obj.get(key), default=-1.0)
+            if value >= 0:
+                return value
+
+    suffix = apr_field.removeprefix("apr")
     apr_obj = pool.get("apr")
     if isinstance(apr_obj, dict):
-        for key in (day, apr_field, day.lower()):
+        for key in (suffix, apr_field, suffix.lower()):
             value = number(apr_obj.get(key), default=-1.0)
             if value >= 0:
                 return value
 
+    return 0.0
+
+
+def pool_volume(pool: dict[str, Any], apr_field: str) -> float:
+    """Read 24h-window volume across flat and nested Raydium shapes."""
+
+    for key in ("volume24hUsd", "volume24h"):
+        direct = number(pool.get(key), default=-1.0)
+        if direct >= 0:
+            return direct
+    window_obj = pool.get(apr_field_window(apr_field))
+    if isinstance(window_obj, dict):
+        return number(window_obj.get("volume"), default=0.0)
+    return 0.0
+
+
+def pool_fee(pool: dict[str, Any], apr_field: str) -> float:
+    """Read 24h-window fees across flat and nested Raydium shapes."""
+
+    for key in ("fee24hUsd", "fee24h"):
+        direct = number(pool.get(key), default=-1.0)
+        if direct >= 0:
+            return direct
+    window_obj = pool.get(apr_field_window(apr_field))
+    if isinstance(window_obj, dict):
+        return number(window_obj.get("volumeFee"), default=0.0)
     return 0.0
 
 
@@ -166,8 +277,8 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
         "type": str(nested_get(pool, "type", "poolType", default="")),
         "apr": pool_apr(pool, apr_field),
         "liquidity_usd": number(nested_get(pool, "tvl", "liquidity", "liquidityUsd", default=0)),
-        "volume_24h_usd": number(nested_get(pool, "day", "volume24h", "volume24hUsd", default=0)),
-        "fee_24h_usd": number(nested_get(pool, "fee24h", "fee24hUsd", default=0)),
+        "volume_24h_usd": pool_volume(pool, apr_field),
+        "fee_24h_usd": pool_fee(pool, apr_field),
         "mint_a_symbol": token_symbol(mint_a),
         "mint_b_symbol": token_symbol(mint_b),
         "mint_a": token_mint(mint_a),
@@ -259,35 +370,98 @@ def pool_list_url(config: ScannerConfig, page: int = 1) -> str:
     return f"{config.raydium_api_base.rstrip('/')}{POOL_LIST_PATH}?{urlencode(params)}"
 
 
-def filter_pool(pool: dict[str, Any], config: ScannerConfig) -> tuple[bool, list[str]]:
+REASON_CATEGORIES: tuple[str, ...] = (
+    "missing_pool_id",
+    "apr_below_threshold",
+    "liquidity_below_threshold",
+    "volume_below_threshold",
+    "quote_symbol_not_allowed",
+    "blocked_symbol",
+    "blocked_mint",
+    "survival_runway_failed",
+    "quote_only_entry_failed",
+    "pool_age_guard_failed",
+    "price_impact_guard_failed",
+    "fee_apr_floor_failed",
+    "honeypot_guard_failed",
+    "mint_authority_guard_failed",
+    "lp_lock_guard_failed",
+)
+
+
+def filter_pool(pool: dict[str, Any], config: ScannerConfig) -> tuple[bool, list[str], list[str]]:
+    """Return (passed, human_reasons, reason_categories).
+
+    The categories are stable, machine-readable strings so the printable report can
+    summarize how many pools failed for each kind of reason without re-parsing the
+    free-form text.
+    """
+
     reasons: list[str] = []
+    categories: list[str] = []
     if config.require_pool_id and not pool["id"]:
         reasons.append("missing pool id")
+        categories.append("missing_pool_id")
     if pool["apr"] < config.min_apr:
         reasons.append(f"apr {pool['apr']:.2f} below {config.min_apr:.2f}")
+        categories.append("apr_below_threshold")
     if pool["liquidity_usd"] < config.min_liquidity_usd:
         reasons.append(f"liquidity ${pool['liquidity_usd']:.2f} below ${config.min_liquidity_usd:.2f}")
+        categories.append("liquidity_below_threshold")
     if pool["volume_24h_usd"] < config.min_volume_24h_usd:
         reasons.append(f"24h volume ${pool['volume_24h_usd']:.2f} below ${config.min_volume_24h_usd:.2f}")
+        categories.append("volume_below_threshold")
 
     symbols = {pool["mint_a_symbol"], pool["mint_b_symbol"]} - {""}
     if config.allowed_quote_symbols and symbols.isdisjoint(config.allowed_quote_symbols):
         reasons.append(f"no allowed quote symbol in {sorted(symbols)}")
+        categories.append("quote_symbol_not_allowed")
     blocked_symbols = symbols.intersection(config.blocked_token_symbols)
     if blocked_symbols:
         reasons.append(f"blocked symbol(s): {', '.join(sorted(blocked_symbols))}")
+        categories.append("blocked_symbol")
 
     mints = {pool["mint_a"], pool["mint_b"]} - {""}
     blocked_mints = mints.intersection(config.blocked_mints)
     if blocked_mints:
         reasons.append(f"blocked mint(s): {', '.join(sorted(blocked_mints))}")
+        categories.append("blocked_mint")
 
-    return not reasons, reasons
+    qoe_ok, qoe_reason = evaluate_quote_only_entry(pool, config.quote_only_entry)
+    if not qoe_ok and qoe_reason is not None:
+        reasons.append(f"quote_only_entry: {qoe_reason}")
+        categories.append("quote_only_entry_failed")
+
+    sr_ok, sr_reason = evaluate_survival_runway(pool, config.survival_runway, config.max_position_usd)
+    if not sr_ok and sr_reason is not None:
+        reasons.append(f"survival_runway: {sr_reason}")
+        categories.append("survival_runway_failed")
+
+    age_ok, age_reason = evaluate_pool_age_guard(pool, config.pool_age_guard)
+    if not age_ok and age_reason is not None:
+        reasons.append(f"pool_age_guard: {age_reason}")
+        categories.append("pool_age_guard_failed")
+
+    pi_ok, pi_reason = evaluate_price_impact_guard(
+        pool, config.price_impact_guard, config.max_position_usd
+    )
+    if not pi_ok and pi_reason is not None:
+        reasons.append(f"price_impact_guard: {pi_reason}")
+        categories.append("price_impact_guard_failed")
+
+    fapr_ok, fapr_reason = evaluate_fee_apr_floor(pool, config.fee_apr_floor)
+    if not fapr_ok and fapr_reason is not None:
+        reasons.append(f"fee_apr_floor: {fapr_reason}")
+        categories.append("fee_apr_floor_failed")
+
+    return not reasons, reasons, categories
 
 
 def scan(config: ScannerConfig) -> dict[str, Any]:
     candidates: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    all_pools: list[dict[str, Any]] = []
+    reason_counts: dict[str, int] = {key: 0 for key in REASON_CATEGORIES}
     scanned = 0
 
     for page in range(1, config.pages + 1):
@@ -296,28 +470,186 @@ def scan(config: ScannerConfig) -> dict[str, Any]:
         items = extract_pool_items(response)
         for item in items:
             scanned += 1
+            # Keep raw payload attached for survival_runway's weekly check.
             pool = normalize_pool(item, config.apr_field)
-            ok, reasons = filter_pool(pool, config)
+            ok, reasons, categories = filter_pool(pool, config)
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
+            all_pools.append(public_pool)
             if ok:
-                candidates.append(public_pool)
+                # Keep raw payload only while honeypot_guard might still need it.
+                candidates.append({**public_pool, "_raw": pool["raw"]})
             else:
-                rejected.append({**public_pool, "reasons": reasons})
+                rejected.append({**public_pool, "reasons": reasons, "reason_categories": categories})
+                for category in categories:
+                    reason_counts[category] = reason_counts.get(category, 0) + 1
+
+    honeypot_inspections: dict[str, dict[str, Any]] = {}
+    final_candidates: list[dict[str, Any]] = []
+    has_rpc_configured = bool(config.solana_rpc_urls)
+    mint_cache: dict[str, MintInspection | None] = {}
+    lp_lock_cache: dict[str, LpLockInspection | None] = {}
+    any_chain_guard_enabled = (
+        config.honeypot_guard.enabled
+        or config.mint_authority_guard.enabled
+        or config.lp_lock_guard.enabled
+    )
+    if any_chain_guard_enabled and candidates:
+        for candidate in candidates:
+            mint_address, _base_symbol = (
+                base_side(candidate, config.quote_only_entry) or ("", "")
+            )
+            failed_reasons: list[str] = []
+            failed_categories: list[str] = []
+
+            hg_ok, hg_reason, inspection = evaluate_honeypot_guard(
+                mint_address,
+                config.honeypot_guard,
+                config.solana_rpc_urls,
+                cache=mint_cache,
+            )
+            if inspection is not None:
+                honeypot_inspections[mint_address] = {
+                    "owner_program": inspection.owner_program,
+                    "is_token_2022": inspection.is_token_2022,
+                    "sell_tax_percent": inspection.sell_tax_percent,
+                    "freeze_authority_set": inspection.freeze_authority_set,
+                    "mint_authority_set": inspection.mint_authority_set,
+                    "has_transfer_hook": inspection.has_transfer_hook,
+                    "has_permanent_delegate": inspection.has_permanent_delegate,
+                }
+                candidate["honeypot_inspection"] = honeypot_inspections[mint_address]
+            if not hg_ok and config.honeypot_guard.enabled:
+                failed_reasons.append(f"honeypot_guard: {hg_reason}")
+                failed_categories.append("honeypot_guard_failed")
+
+            ma_ok, ma_reason = evaluate_mint_authority_guard(
+                inspection,
+                config.mint_authority_guard,
+                has_rpc_configured=has_rpc_configured,
+            )
+            if not ma_ok and config.mint_authority_guard.enabled:
+                failed_reasons.append(f"mint_authority_guard: {ma_reason}")
+                failed_categories.append("mint_authority_guard_failed")
+
+            lp_inspection = None
+            if config.lp_lock_guard.enabled:
+                lp_inspection = inspect_lp_lock(
+                    {"raw": candidate.get("_raw"), "type": candidate.get("type", "")},
+                    config.lp_lock_guard,
+                    config.solana_rpc_urls,
+                    cache=lp_lock_cache,
+                )
+                if lp_inspection is not None:
+                    candidate["lp_lock_inspection"] = {
+                        "lp_mint": lp_inspection.lp_mint,
+                        "burned_pct": lp_inspection.burned_pct,
+                        "source": lp_inspection.source,
+                    }
+                lp_ok, lp_reason = evaluate_lp_lock_guard(
+                    {"type": candidate.get("type", "")},
+                    lp_inspection,
+                    config.lp_lock_guard,
+                    has_rpc_configured=has_rpc_configured,
+                )
+                if not lp_ok:
+                    failed_reasons.append(f"lp_lock_guard: {lp_reason}")
+                    failed_categories.append("lp_lock_guard_failed")
+
+            candidate.pop("_raw", None)
+
+            if failed_categories:
+                candidate["reasons"] = failed_reasons
+                candidate["reason_categories"] = failed_categories
+                rejected.append(candidate)
+                for category in failed_categories:
+                    reason_counts[category] = reason_counts.get(category, 0) + 1
+            else:
+                final_candidates.append(candidate)
+    else:
+        for candidate in candidates:
+            candidate.pop("_raw", None)
+            final_candidates.append(candidate)
+
+    top_by_apr = sorted(all_pools, key=lambda p: p["apr"], reverse=True)[:5]
 
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
         "mode": "dry_run" if config.dry_run else "trade_disabled_in_this_build",
         "raydium_api_base": config.raydium_api_base,
         "min_apr": config.min_apr,
+        "min_liquidity_usd": config.min_liquidity_usd,
+        "min_volume_24h_usd": config.min_volume_24h_usd,
         "apr_field": config.apr_field,
         "scanned_count": scanned,
-        "candidate_count": len(candidates),
+        "candidate_count": len(final_candidates),
         "rejected_count": len(rejected),
+        "rejection_reason_counts": reason_counts,
         "max_position_usd": config.max_position_usd,
         "rpc_count": len(config.solana_rpc_urls),
-        "candidates": candidates,
+        "active_filters": {
+            "survival_runway": {
+                "enabled": config.survival_runway.enabled,
+                "target_survival_days": config.survival_runway.target_survival_days,
+                "min_tvl_multiple_of_position": config.survival_runway.min_tvl_multiple_of_position,
+                "min_daily_volume_pct_of_tvl": config.survival_runway.min_daily_volume_pct_of_tvl,
+            },
+            "quote_only_entry": {
+                "enabled": config.quote_only_entry.enabled,
+                "allowed_quote_symbols": sorted(config.quote_only_entry.allowed_quote_symbols),
+                "require_concentrated_pool": config.quote_only_entry.require_concentrated_pool,
+            },
+            "honeypot_guard": {
+                "enabled": config.honeypot_guard.enabled,
+                "max_sell_tax_percent": config.honeypot_guard.max_sell_tax_percent,
+                "reject_if_freeze_authority_set": config.honeypot_guard.reject_if_freeze_authority_set,
+                "reject_if_transfer_hook_set": config.honeypot_guard.reject_if_transfer_hook_set,
+                "reject_if_permanent_delegate_set": config.honeypot_guard.reject_if_permanent_delegate_set,
+                "fail_open_when_no_rpc": config.honeypot_guard.fail_open_when_no_rpc,
+            },
+            "pool_age_guard": {
+                "enabled": config.pool_age_guard.enabled,
+                "min_age_minutes": config.pool_age_guard.min_age_minutes,
+                "max_age_days": config.pool_age_guard.max_age_days,
+                "fail_open_when_unknown": config.pool_age_guard.fail_open_when_unknown,
+            },
+            "mint_authority_guard": {
+                "enabled": config.mint_authority_guard.enabled,
+                "reject_if_mint_authority_set": config.mint_authority_guard.reject_if_mint_authority_set,
+                "fail_open_when_no_rpc": config.mint_authority_guard.fail_open_when_no_rpc,
+            },
+            "lp_lock_guard": {
+                "enabled": config.lp_lock_guard.enabled,
+                "min_locked_or_burned_pct": config.lp_lock_guard.min_locked_or_burned_pct,
+                "apply_to_concentrated_pools": config.lp_lock_guard.apply_to_concentrated_pools,
+                "fail_open_when_no_rpc": config.lp_lock_guard.fail_open_when_no_rpc,
+            },
+            "price_impact_guard": {
+                "enabled": config.price_impact_guard.enabled,
+                "max_impact_percent": config.price_impact_guard.max_impact_percent,
+                "quote_side_fraction": config.price_impact_guard.quote_side_fraction,
+            },
+            "fee_apr_floor": {
+                "enabled": config.fee_apr_floor.enabled,
+                "min_fee_apr_percent": config.fee_apr_floor.min_fee_apr_percent,
+            },
+            "rpc_health_gate": {
+                "enabled": config.rpc_health_gate.enabled,
+                "min_healthy_rpcs": config.rpc_health_gate.min_healthy_rpcs,
+                "require_when_no_rpc_configured": config.rpc_health_gate.require_when_no_rpc_configured,
+            },
+        },
+        "candidates": final_candidates,
+        "top_by_apr": top_by_apr,
         "rejected_preview": rejected[:10],
     }
+
+
+def _format_pool_line(pool: dict[str, Any]) -> str:
+    pair = f"{pool['mint_a_symbol'] or '?'}/{pool['mint_b_symbol'] or '?'}"
+    return (
+        f"- {pair} | APR {pool['apr']:.2f}% | TVL ${pool['liquidity_usd']:.2f} | "
+        f"24h Vol ${pool['volume_24h_usd']:.2f} | Pool {pool['id']}"
+    )
 
 
 def print_report(report: dict[str, Any]) -> None:
@@ -325,21 +657,110 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"Time: {report['scanned_at']}")
     print(f"Mode: {report['mode']}")
     print(f"APR filter: {report['apr_field']} >= {report['min_apr']:.2f}%")
+    print(f"Liquidity filter: TVL >= ${report.get('min_liquidity_usd', 0):.2f}")
+    print(f"Volume filter:   24h vol >= ${report.get('min_volume_24h_usd', 0):.2f}")
     print(f"Scanned: {report['scanned_count']} | Candidates: {report['candidate_count']} | Rejected: {report['rejected_count']}")
     print(f"Configured Solana RPCs: {report['rpc_count']}")
     print(f"Max future position size: ${report['max_position_usd']:.2f}")
-    if not report["candidates"]:
-        print("No pools passed all filters. No action taken.")
+
+    active = report.get("active_filters") or {}
+    sr = active.get("survival_runway") or {}
+    qoe = active.get("quote_only_entry") or {}
+    hg = active.get("honeypot_guard") or {}
+    pag = active.get("pool_age_guard") or {}
+    mag = active.get("mint_authority_guard") or {}
+    llg = active.get("lp_lock_guard") or {}
+    pig = active.get("price_impact_guard") or {}
+    faf = active.get("fee_apr_floor") or {}
+    rhg = active.get("rpc_health_gate") or {}
+    if sr.get("enabled"):
+        print(
+            f"Survival runway: target {sr.get('target_survival_days')}d, "
+            f"min TVL {sr.get('min_tvl_multiple_of_position')}x position, "
+            f"min daily vol/TVL {sr.get('min_daily_volume_pct_of_tvl')}%"
+        )
+    if qoe.get("enabled"):
+        symbols = ", ".join(qoe.get("allowed_quote_symbols", []))
+        print(f"Quote-only entry: allowed quotes = {symbols}")
+    if pag.get("enabled"):
+        max_age = pag.get("max_age_days") or 0
+        cap = f", max age {max_age}d" if max_age else ""
+        print(f"Pool age guard: min age {pag.get('min_age_minutes')} min{cap}")
+    if pig.get("enabled"):
+        print(
+            f"Price impact guard: max impact {pig.get('max_impact_percent')}% "
+            f"on ${report.get('max_position_usd', 0):.2f} entry"
+        )
+    if faf.get("enabled"):
+        print(f"Fee APR floor: min fee-only APR {faf.get('min_fee_apr_percent')}%")
+    if hg.get("enabled"):
+        print(
+            f"Honeypot guard: max sell tax {hg.get('max_sell_tax_percent')}%, "
+            f"freeze-reject={hg.get('reject_if_freeze_authority_set')}, "
+            f"hook-reject={hg.get('reject_if_transfer_hook_set')}, "
+            f"perm-delegate-reject={hg.get('reject_if_permanent_delegate_set')}"
+        )
+    if mag.get("enabled"):
+        print(
+            f"Mint authority guard: reject_if_mint_authority_set="
+            f"{mag.get('reject_if_mint_authority_set')}, "
+            f"fail_open_when_no_rpc={mag.get('fail_open_when_no_rpc')}"
+        )
+    if llg.get("enabled"):
+        print(
+            f"LP lock guard: require >= {llg.get('min_locked_or_burned_pct')}% burned/locked, "
+            f"apply_to_concentrated={llg.get('apply_to_concentrated_pools')}"
+        )
+    if rhg.get("enabled"):
+        gate = report.get("rpc_health_gate") or {}
+        if gate:
+            print(
+                f"RPC health gate: {gate.get('healthy_count', 0)}/{gate.get('configured_count', 0)} "
+                f"healthy (need {gate.get('required_healthy', 0)})"
+            )
+
+    if report["candidates"]:
+        print("\nCandidates:")
+        for pool in report["candidates"]:
+            print(_format_pool_line(pool))
+            inspection = pool.get("honeypot_inspection")
+            if inspection:
+                print(
+                    "    HoneypotGuard: token-2022="
+                    f"{inspection['is_token_2022']} sell_tax={inspection['sell_tax_percent']:.2f}% "
+                    f"freeze={inspection['freeze_authority_set']} "
+                    f"mint_auth={inspection.get('mint_authority_set', False)} "
+                    f"hook={inspection['has_transfer_hook']} "
+                    f"perm_delegate={inspection['has_permanent_delegate']}"
+                )
+            lp_lock = pool.get("lp_lock_inspection")
+            if lp_lock:
+                print(
+                    f"    LpLockGuard: burned/locked={lp_lock['burned_pct']:.2f}% "
+                    f"source={lp_lock['source']}"
+                )
+        print("\nDry-run only: no buy, no wallet signing, no LP position opened.")
         return
 
-    print("\nCandidates:")
-    for pool in report["candidates"]:
-        pair = f"{pool['mint_a_symbol']}/{pool['mint_b_symbol']}"
+    print("\nNo pools passed all filters. No action taken.")
+
+    reason_counts = report.get("rejection_reason_counts") or {}
+    nonzero = [(name, count) for name, count in reason_counts.items() if count]
+    if nonzero:
+        print("\nWhy pools were rejected (a pool can fail more than one filter):")
+        for name, count in sorted(nonzero, key=lambda item: item[1], reverse=True):
+            print(f"  - {name}: {count}")
+
+    top_by_apr = report.get("top_by_apr") or []
+    if top_by_apr:
+        print("\nTop 5 pools by APR in this scan (for tuning your thresholds):")
+        for pool in top_by_apr:
+            print(_format_pool_line(pool))
         print(
-            f"- {pair} | APR {pool['apr']:.2f}% | TVL ${pool['liquidity_usd']:.2f} | "
-            f"24h Vol ${pool['volume_24h_usd']:.2f} | Pool {pool['id']}"
+            "\nTip: if everything failed `liquidity_below_threshold` or `volume_below_threshold`, "
+            "those pools are too tiny to enter safely. Lower `min_apr` or raise `pages` in "
+            "config\\settings.json to widen the search."
         )
-    print("\nDry-run only: no buy, no wallet signing, no LP position opened.")
 
 
 def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> None:
@@ -396,9 +817,26 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to run: this build is dry-run only. Set dry_run=true.", file=sys.stderr)
         return 2
 
-    if args.check_rpc:
-        rpc_results = check_rpc_urls(config.solana_rpc_urls)
-        print(json.dumps({"rpc_results": rpc_results}, indent=2))
+    rpc_check_results: list[dict[str, Any]] | None = None
+    if args.check_rpc or config.rpc_health_gate.enabled:
+        rpc_check_results = check_rpc_urls(config.solana_rpc_urls)
+        if args.check_rpc:
+            print(json.dumps({"rpc_results": rpc_check_results}, indent=2))
+
+    gate_summary = evaluate_rpc_health_gate(
+        config.rpc_health_gate,
+        rpc_check_results,
+        rpc_count=len(config.solana_rpc_urls),
+    )
+    if config.rpc_health_gate.enabled and not gate_summary.passed:
+        print(
+            "Refusing to scan: rpc_health_gate failed "
+            f"({gate_summary.healthy}/{gate_summary.total} healthy, "
+            f"need {gate_summary.required}). "
+            "Fix your Solana RPC URLs in .env or disable rpc_health_gate.",
+            file=sys.stderr,
+        )
+        return 3
 
     while True:
         try:
@@ -407,6 +845,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Scan failed: {exc}", file=sys.stderr)
             return 1
 
+        report["rpc_health_gate"] = gate_summary.as_dict()
         if args.write_reports:
             write_reports(report)
         if args.json:
