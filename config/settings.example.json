@@ -9,6 +9,8 @@
   "sort_type": "desc",
   "page_size": 100,
   "pages": 1,
+  "http_timeout_seconds": 15,
+  "page_delay_seconds": 0.25,
   "min_liquidity_usd": 1000,
   "min_volume_24h_usd": 100,
   "max_position_usd": 25,

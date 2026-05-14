@@ -52,7 +52,18 @@ $minVolume = [double](Ask-WithDefault "Minimum 24h volume in USD" "$minVolDefaul
 $maxPosition = [double](Ask-WithDefault "Future max position size in USD; scanner is still dry-run only" "25")
 $quotesRaw = Ask-WithDefault "Allowed quote symbols, comma-separated" "SOL,USDC,USDT"
 $pageSize = [int](Ask-WithDefault "Raydium page size. Raydium docs allow up to 1000" "100")
-$pages = [int](Ask-WithDefault "How many Raydium pages to scan per run" "1")
+if ($pageSize -lt 10) { $pageSize = 10 }
+if ($pageSize -gt 1000) {
+    Write-Host "  page size $pageSize exceeds Raydium's documented max; clamping to 1000." -ForegroundColor Yellow
+    $pageSize = 1000
+}
+$pages = [int](Ask-WithDefault "How many Raydium pages to scan per run (1-50; one scan-cycle hits this many HTTP requests)" "1")
+if ($pages -lt 1) { $pages = 1 }
+if ($pages -gt 50) {
+    Write-Host "  pages=$pages would issue $pages back-to-back HTTP calls and is almost certainly a typo." -ForegroundColor Yellow
+    Write-Host "  clamping to 50. Raise it again later by editing config\settings.json if you really mean it." -ForegroundColor Yellow
+    $pages = 50
+}
 $raydiumApiBase = Ask-WithDefault "Raydium live API base" "https://api-v3.raydium.io"
 $primaryRpc = Ask-WithDefault "Primary Solana RPC URL. Public default is OK; paste Helius/Chainstack/etc if you want" "https://api.mainnet-beta.solana.com"
 

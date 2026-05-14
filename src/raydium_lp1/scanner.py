@@ -31,6 +31,14 @@ FALLBACK_CONFIG_PATH = Path("config/filters.example.json")
 DEFAULT_ENV_PATH = Path(".env")
 REPORTS_DIR = Path("reports")
 
+# Hard ceiling so a typo like ``pages=5000`` in settings.json can't blow up
+# into 5000 sequential blocking HTTP requests. Users who really want to scan
+# more can bump this constant or run multiple short scans in --loop mode.
+MAX_PAGES_HARD_CEILING = 50
+MAX_PAGE_SIZE = 1000
+DEFAULT_HTTP_TIMEOUT_SECONDS = 15
+DEFAULT_PAGE_DELAY_SECONDS = 0.25
+
 
 @dataclass(frozen=True)
 class ScannerConfig:
@@ -40,6 +48,8 @@ class ScannerConfig:
     apr_field: str = "apr24h"
     page_size: int = 100
     pages: int = 1
+    http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS
+    page_delay_seconds: float = DEFAULT_PAGE_DELAY_SECONDS
     pool_type: str = "all"
     sort_type: str = "desc"
     min_liquidity_usd: float = 1_000.0
@@ -79,8 +89,10 @@ class ScannerConfig:
         return cls(
             min_apr=float(raw_with_strategy.get("min_apr", cls.min_apr)),
             apr_field=str(raw_with_strategy.get("apr_field", cls.apr_field)),
-            page_size=int(raw_with_strategy.get("page_size", cls.page_size)),
-            pages=int(raw_with_strategy.get("pages", cls.pages)),
+            page_size=_clamp_page_size(int(raw_with_strategy.get("page_size", cls.page_size))),
+            pages=_clamp_pages(int(raw_with_strategy.get("pages", cls.pages))),
+            http_timeout_seconds=max(3, int(raw_with_strategy.get("http_timeout_seconds", DEFAULT_HTTP_TIMEOUT_SECONDS))),
+            page_delay_seconds=max(0.0, float(raw_with_strategy.get("page_delay_seconds", DEFAULT_PAGE_DELAY_SECONDS))),
             pool_type=str(raw_with_strategy.get("pool_type", cls.pool_type)),
             sort_type=str(raw_with_strategy.get("sort_type", cls.sort_type)),
             min_liquidity_usd=float(raw_with_strategy.get("min_liquidity_usd", cls.min_liquidity_usd)),
@@ -118,6 +130,35 @@ class ScannerConfig:
             network=networks.normalize_network(str(raw_with_strategy.get("network", "solana"))),
             use_robust_routing=bool(raw_with_strategy.get("use_robust_routing", True)),
         )
+
+
+def _clamp_pages(requested: int) -> int:
+    """Clamp ``pages`` to a sane upper bound; warn loudly when clamped."""
+
+    if requested < 1:
+        print(f"[config] pages={requested} is invalid; using 1.", file=sys.stderr)
+        return 1
+    if requested > MAX_PAGES_HARD_CEILING:
+        print(
+            f"[config] pages={requested} would issue {requested} blocking HTTP requests per scan-cycle. "
+            f"Clamping to {MAX_PAGES_HARD_CEILING}. If you really want more, edit MAX_PAGES_HARD_CEILING "
+            f"in src/raydium_lp1/scanner.py, but you almost certainly want --loop instead.",
+            file=sys.stderr,
+        )
+        return MAX_PAGES_HARD_CEILING
+    return requested
+
+
+def _clamp_page_size(requested: int) -> int:
+    if requested < 10:
+        return 10
+    if requested > MAX_PAGE_SIZE:
+        print(
+            f"[config] page_size={requested} exceeds Raydium's documented max ({MAX_PAGE_SIZE}); clamping.",
+            file=sys.stderr,
+        )
+        return MAX_PAGE_SIZE
+    return requested
 
 
 def dedupe(values: list[str]) -> list[str]:
@@ -232,8 +273,8 @@ def extract_pool_items(response: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def fetch_json(url: str, timeout: int = 20) -> dict[str, Any]:
-    request = Request(url, headers={"accept": "application/json", "user-agent": "Raydium-LP1/0.2"})
+def fetch_json(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS) -> dict[str, Any]:
+    request = Request(url, headers={"accept": "application/json", "user-agent": "Raydium-LP1/0.6"})
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - intentional public API read
             return json.loads(response.read().decode("utf-8"))
@@ -243,7 +284,7 @@ def fetch_json(url: str, timeout: int = 20) -> dict[str, Any]:
         reason = getattr(exc, "reason", exc)
         raise RuntimeError(f"API request failed for {url}: {reason}") from exc
     except TimeoutError as exc:
-        raise RuntimeError(f"API request timed out for {url}") from exc
+        raise RuntimeError(f"API request timed out after {timeout}s for {url}") from exc
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"API returned invalid JSON for {url}: {exc}") from exc
 
@@ -451,8 +492,18 @@ def scan(
 
     for page in range(1, config.pages + 1):
         url = pool_list_url(config, page=page)
-        response = fetch_json(url)
+        # Always announce the in-flight request so users can tell a slow
+        # remote API apart from a hard hang.
+        print(
+            f"[scan] page {page}/{config.pages} (page_size={config.page_size}, "
+            f"timeout={config.http_timeout_seconds}s)...",
+            file=sys.stderr,
+            flush=True,
+        )
+        response = fetch_json(url, timeout=config.http_timeout_seconds)
         items = extract_pool_items(response)
+        if page < config.pages and config.page_delay_seconds > 0:
+            time.sleep(config.page_delay_seconds)
         for item in items:
             scanned += 1
             pool = normalize_pool(item, config.apr_field)
