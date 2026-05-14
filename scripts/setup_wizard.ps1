@@ -29,9 +29,26 @@ Write-Host "This creates your local config\settings.json and .env files."
 Write-Host "Your .env can contain private RPC/API-key URLs and is ignored by Git."
 Write-Host ""
 
-$minApr = [double](Ask-WithDefault "Minimum APR percent to flag. You said 999.99, and you can change it later" "999.99")
-$minLiquidity = [double](Ask-WithDefault "Minimum pool liquidity/TVL in USD" "1000")
-$minVolume = [double](Ask-WithDefault "Minimum 24h volume in USD" "100")
+Write-Host ""
+Write-Host "Strategy presets (you can pick a profile and skip the manual numbers):"
+Write-Host "  conservative   APR>=  50%  TVL>=`$50000  Vol>=`$10000   - boring, safer pairs"
+Write-Host "  moderate       APR>= 200%  TVL>=`$10000  Vol>=`$1000    - mid-cap yield"
+Write-Host "  aggressive     APR>= 777%  TVL>=`$500    Vol>=`$100     - high APR hunting"
+Write-Host "  degen          APR>= 500%  TVL>=`$200    Vol>=`$50      - anything that pumps"
+Write-Host "  custom         keep manual values you enter below"
+$strategy = (Ask-WithDefault "Strategy" "custom").ToLowerInvariant()
+
+switch ($strategy) {
+    "conservative" { $minAprDefault = 50;  $minLiqDefault = 50000; $minVolDefault = 10000 }
+    "moderate"     { $minAprDefault = 200; $minLiqDefault = 10000; $minVolDefault = 1000  }
+    "aggressive"   { $minAprDefault = 777; $minLiqDefault = 500;   $minVolDefault = 100   }
+    "degen"        { $minAprDefault = 500; $minLiqDefault = 200;   $minVolDefault = 50    }
+    default        { $strategy = "custom"; $minAprDefault = 999.99; $minLiqDefault = 1000; $minVolDefault = 100 }
+}
+
+$minApr = [double](Ask-WithDefault "Minimum APR percent to flag" "$minAprDefault")
+$minLiquidity = [double](Ask-WithDefault "Minimum pool liquidity/TVL in USD" "$minLiqDefault")
+$minVolume = [double](Ask-WithDefault "Minimum 24h volume in USD" "$minVolDefault")
 $maxPosition = [double](Ask-WithDefault "Future max position size in USD; scanner is still dry-run only" "25")
 $quotesRaw = Ask-WithDefault "Allowed quote symbols, comma-separated" "SOL,USDC,USDT"
 $pageSize = [int](Ask-WithDefault "Raydium page size. Raydium docs allow up to 1000" "100")
@@ -53,6 +70,7 @@ while ($true) {
 $allowedQuotes = $quotesRaw.Split(",") | ForEach-Object { $_.Trim().ToUpperInvariant() } | Where-Object { $_ }
 $config = [ordered]@{
     dry_run = $true
+    strategy = $strategy
     min_apr = $minApr
     apr_field = "apr24h"
     raydium_api_base = $raydiumApiBase

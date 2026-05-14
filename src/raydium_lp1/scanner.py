@@ -21,6 +21,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from raydium_lp1 import strategies
+
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
 DEFAULT_CONFIG_PATH = Path("config/settings.json")
@@ -49,6 +51,7 @@ class ScannerConfig:
     dry_run: bool = True
     raydium_api_base: str = RAYDIUM_API_BASE
     solana_rpc_urls: list[str] = field(default_factory=list)
+    strategy: str = strategies.STRATEGY_CUSTOM
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -58,23 +61,26 @@ class ScannerConfig:
         if single_env_url:
             env_urls.insert(0, single_env_url)
         config_urls = [str(value).strip() for value in raw.get("solana_rpc_urls", []) if str(value).strip()]
+        env_strategy = os.environ.get("RAYDIUM_LP1_STRATEGY", "").strip() or None
+        raw_with_strategy = strategies.apply_strategy(raw, env_strategy or raw.get("strategy"))
         return cls(
-            min_apr=float(raw.get("min_apr", cls.min_apr)),
-            apr_field=str(raw.get("apr_field", cls.apr_field)),
-            page_size=int(raw.get("page_size", cls.page_size)),
-            pages=int(raw.get("pages", cls.pages)),
-            pool_type=str(raw.get("pool_type", cls.pool_type)),
-            sort_type=str(raw.get("sort_type", cls.sort_type)),
-            min_liquidity_usd=float(raw.get("min_liquidity_usd", cls.min_liquidity_usd)),
-            min_volume_24h_usd=float(raw.get("min_volume_24h_usd", cls.min_volume_24h_usd)),
-            max_position_usd=float(raw.get("max_position_usd", cls.max_position_usd)),
-            allowed_quote_symbols=set(map(str.upper, raw.get("allowed_quote_symbols", ["SOL", "USDC", "USDT"]))),
-            blocked_token_symbols=set(map(str.upper, raw.get("blocked_token_symbols", []))),
-            blocked_mints=set(raw.get("blocked_mints", [])),
-            require_pool_id=bool(raw.get("require_pool_id", True)),
-            dry_run=bool(raw.get("dry_run", True)),
-            raydium_api_base=str(raw.get("raydium_api_base") or os.environ.get("RAYDIUM_API_BASE") or RAYDIUM_API_BASE),
+            min_apr=float(raw_with_strategy.get("min_apr", cls.min_apr)),
+            apr_field=str(raw_with_strategy.get("apr_field", cls.apr_field)),
+            page_size=int(raw_with_strategy.get("page_size", cls.page_size)),
+            pages=int(raw_with_strategy.get("pages", cls.pages)),
+            pool_type=str(raw_with_strategy.get("pool_type", cls.pool_type)),
+            sort_type=str(raw_with_strategy.get("sort_type", cls.sort_type)),
+            min_liquidity_usd=float(raw_with_strategy.get("min_liquidity_usd", cls.min_liquidity_usd)),
+            min_volume_24h_usd=float(raw_with_strategy.get("min_volume_24h_usd", cls.min_volume_24h_usd)),
+            max_position_usd=float(raw_with_strategy.get("max_position_usd", cls.max_position_usd)),
+            allowed_quote_symbols=set(map(str.upper, raw_with_strategy.get("allowed_quote_symbols", ["SOL", "USDC", "USDT"]))),
+            blocked_token_symbols=set(map(str.upper, raw_with_strategy.get("blocked_token_symbols", []))),
+            blocked_mints=set(raw_with_strategy.get("blocked_mints", [])),
+            require_pool_id=bool(raw_with_strategy.get("require_pool_id", True)),
+            dry_run=bool(raw_with_strategy.get("dry_run", True)),
+            raydium_api_base=str(raw_with_strategy.get("raydium_api_base") or os.environ.get("RAYDIUM_API_BASE") or RAYDIUM_API_BASE),
             solana_rpc_urls=dedupe([*env_urls, *config_urls]),
+            strategy=strategies.normalize_strategy(str(raw_with_strategy.get("strategy", strategies.STRATEGY_CUSTOM))),
         )
 
 
@@ -307,8 +313,11 @@ def scan(config: ScannerConfig) -> dict[str, Any]:
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
         "mode": "dry_run" if config.dry_run else "trade_disabled_in_this_build",
+        "strategy": config.strategy,
         "raydium_api_base": config.raydium_api_base,
         "min_apr": config.min_apr,
+        "min_liquidity_usd": config.min_liquidity_usd,
+        "min_volume_24h_usd": config.min_volume_24h_usd,
         "apr_field": config.apr_field,
         "scanned_count": scanned,
         "candidate_count": len(candidates),
@@ -324,6 +333,7 @@ def print_report(report: dict[str, Any]) -> None:
     print("Raydium-LP1 live scan")
     print(f"Time: {report['scanned_at']}")
     print(f"Mode: {report['mode']}")
+    print(f"Strategy: {report.get('strategy', 'custom')}")
     print(f"APR filter: {report['apr_field']} >= {report['min_apr']:.2f}%")
     print(f"Scanned: {report['scanned_count']} | Candidates: {report['candidate_count']} | Rejected: {report['rejected_count']}")
     print(f"Configured Solana RPCs: {report['rpc_count']}")
@@ -387,9 +397,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--interval", type=int, default=60, help="Seconds between scans in loop mode.")
     parser.add_argument("--write-reports", action="store_true", help="Write reports/latest.json and reports/candidates.csv.")
     parser.add_argument("--check-rpc", action="store_true", help="Check configured Solana RPC URLs with getHealth before scanning.")
+    parser.add_argument(
+        "--strategy",
+        choices=list(strategies.ALLOWED_STRATEGIES),
+        help="Override the strategy preset for this run (overrides settings.json).",
+    )
+    parser.add_argument("--list-strategies", action="store_true", help="Print the available strategy presets and exit.")
     args = parser.parse_args(argv)
 
+    if args.list_strategies:
+        print(strategies.describe_presets())
+        return 0
+
     load_dotenv()
+    if args.strategy:
+        os.environ["RAYDIUM_LP1_STRATEGY"] = args.strategy
     config_path = resolve_config_path(args.config)
     config = ScannerConfig.from_file(config_path)
     if not config.dry_run:
