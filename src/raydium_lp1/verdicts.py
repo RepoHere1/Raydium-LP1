@@ -1,10 +1,9 @@
 """Per-pool decision streaming for Raydium-LP1.
 
 This module emits one line per pool while ``scan()`` is iterating so the
-user can SEE pool data being processed in real time:
-
-    [PASS] SOL/MEME    APR  1500%  TVL $   8500  Vol $ 2500  pool=good-pool
-    [REJ ] SOL/RUG     APR  4000%  TVL $    800  Vol $    5  reason=...
+user can SEE pool data being processed in real time. Column headers print
+again after each Raydium API page (with ``[scan] page …``) because plain
+terminals cannot pin a header row while scrolling like a spreadsheet.
 
 Lines are green/red where the terminal supports ANSI colors (Windows 10+
 PowerShell, Linux/macOS terminals). By default lines go to **stderr** so they
@@ -53,6 +52,8 @@ class StreamConfig:
     show_passes: bool = True
     max_rejections_shown: int = 200
     stream: TextIO | None = None
+    # Widen POOL_ID column for long Raydium / mint-derived ids (still capped for layout).
+    pool_id_width: int = 56
 
     def out(self) -> TextIO:
         # Default stderr: matches scanner progress logs and avoids "silent"
@@ -64,25 +65,62 @@ def _pair(pool: dict) -> str:
     return f"{pool.get('mint_a_symbol', '?')}/{pool.get('mint_b_symbol', '?')}"
 
 
-def _summary_line(pool: dict) -> str:
+def print_verdict_column_headers(cfg: StreamConfig, *, page: int | None = None) -> None:
+    """Print a human-readable column guide (repeated each Raydium page from ``scan()``)."""
+
+    if not cfg.enabled:
+        return
+    out = cfg.out()
+    pid_w = max(32, min(64, int(cfg.pool_id_width)))
+    lead = f"Raydium page {page} — " if page is not None else ""
+    title = f"{lead}verdict columns (full POOL_ID; REASON truncated on screen — see rejections.csv for full text)"
+    if cfg.color:
+        title = f"{_DIM}{title}{_RESET}"
+    print("", file=out, flush=True)
+    print(title, file=out, flush=True)
+    hdr = (
+        f"{'VERDICT':<7} | {'PAIR_NAME':<26} | {'APR_PCT':>12} | "
+        f"{'TVL_USD':>12} | {'VOL24_USD':>12} | {'LP_BURN':>7} | "
+        f"{'POOL_ID':<{pid_w}} | REJECT_REASON"
+    )
+    sep = "-" * min(240, max(100, len(hdr)))
+    print(hdr, file=out, flush=True)
+    print(sep, file=out, flush=True)
+
+
+def _format_pool_id(raw: str, width: int) -> str:
+    if len(raw) <= width:
+        return raw.ljust(width)
+    return (raw[: max(0, width - 3)] + "...").ljust(width)
+
+
+def _verdict_table_row(verdict: str, pool: dict, reason: str | None, *, pool_id_width: int) -> str:
     apr = float(pool.get("apr") or 0)
     tvl = float(pool.get("liquidity_usd") or 0)
     vol = float(pool.get("volume_24h_usd") or 0)
     burn = pool.get("burn_percent")
-    burn_part = f" burn={int(burn)}%" if burn is not None else ""
+    burn_col = (f"{int(burn)}%".ljust(7)) if burn is not None else " ".ljust(7)
+    pair = _pair(pool)
+    if len(pair) > 26:
+        pair = pair[:23] + "..."
+    pair = pair.ljust(26)
+    pid = str(pool.get("id") or "?")
+    pid_col = _format_pool_id(pid, pool_id_width)
+    r = (reason or "").replace("\n", " ").replace("\r", "")
+    if len(r) > 120:
+        r = r[:117] + "..."
+    reason_col = r if reason is not None else ""
     return (
-        f"{_pair(pool):<22} "
-        f"APR {apr:>9,.0f}%  "
-        f"TVL ${tvl:>10,.0f}  "
-        f"Vol ${vol:>9,.0f}{burn_part}  "
-        f"pool={pool.get('id', '?')[:8]}"
+        f"{verdict:<7} | {pair} | {apr:>12.0f} | {tvl:>12.2f} | {vol:>12.2f} | {burn_col} | "
+        f"{pid_col} | {reason_col}"
     )
 
 
 def emit_pass(pool: dict, cfg: StreamConfig) -> None:
     if not cfg.enabled or not cfg.show_passes:
         return
-    line = f"[PASS] {_summary_line(pool)}"
+    pid_w = max(32, min(64, int(cfg.pool_id_width)))
+    line = _verdict_table_row("[PASS]", pool, None, pool_id_width=pid_w)
     if cfg.color:
         line = f"{_GREEN}{line}{_RESET}"
     print(line, file=cfg.out(), flush=True)
@@ -94,7 +132,8 @@ def emit_reject(pool: dict, reasons: list[str], cfg: StreamConfig, *, idx: int =
     if idx >= cfg.max_rejections_shown:
         return
     reason = reasons[0] if reasons else "unspecified"
-    line = f"[REJ ] {_summary_line(pool)}  reason={reason}"
+    pid_w = max(32, min(64, int(cfg.pool_id_width)))
+    line = _verdict_table_row("[REJ]", pool, reason, pool_id_width=pid_w)
     if cfg.color:
         line = f"{_RED}{line}{_RESET}"
     print(line, file=cfg.out(), flush=True)
@@ -111,6 +150,7 @@ def make_stream_config(
     show_passes: bool = True,
     max_rejections_shown: int = 200,
     stream: TextIO | None = None,
+    pool_id_width: int = 56,
 ) -> StreamConfig:
     target = stream if stream is not None else sys.stderr
     return StreamConfig(
@@ -119,6 +159,7 @@ def make_stream_config(
         show_passes=show_passes,
         max_rejections_shown=max_rejections_shown,
         stream=stream,
+        pool_id_width=pool_id_width,
     )
 
 

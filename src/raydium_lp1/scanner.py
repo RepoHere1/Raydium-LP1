@@ -660,6 +660,8 @@ def scan(
         )
         response = fetch_json(url, timeout=config.http_timeout_seconds)
         items = extract_pool_items(response)
+        if stream_cfg.enabled:
+            verdicts.print_verdict_column_headers(stream_cfg, page=page)
         if page < config.pages and config.page_delay_seconds > 0:
             time.sleep(config.page_delay_seconds)
         for item in items:
@@ -898,6 +900,8 @@ def write_rejections_csv(
         "scanned_at",
         "pool_id",
         "pair",
+        "mint_a",
+        "mint_b",
         "apr",
         "liquidity_usd",
         "volume_24h_usd",
@@ -916,6 +920,8 @@ def write_rejections_csv(
                     "scanned_at": scanned_at,
                     "pool_id": row.get("id", ""),
                     "pair": f"{row.get('mint_a_symbol', '')}/{row.get('mint_b_symbol', '')}",
+                    "mint_a": row.get("mint_a", ""),
+                    "mint_b": row.get("mint_b", ""),
                     "apr": row.get("apr", 0),
                     "liquidity_usd": row.get("liquidity_usd", 0),
                     "volume_24h_usd": row.get("volume_24h_usd", 0),

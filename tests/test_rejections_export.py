@@ -14,6 +14,8 @@ class RejectionsExportTests(unittest.TestCase):
                 "id": "pool-1",
                 "mint_a_symbol": "SOL",
                 "mint_b_symbol": "MEME",
+                "mint_a": "So11111111111111111111111111111111111111112",
+                "mint_b": "MemeMint1111111111111111111111111111111111",
                 "apr": 1500.0,
                 "liquidity_usd": 10.0,
                 "volume_24h_usd": 100.0,
@@ -34,7 +36,8 @@ class RejectionsExportTests(unittest.TestCase):
             with path.open(encoding="utf-8") as fh:
                 rows = list(csv.DictReader(fh))
             self.assertEqual(len(rows), 1)
-            self.assertIn("liquidity", rows[0]["first_reason"])
+            self.assertEqual(rows[0]["mint_a"], "So11111111111111111111111111111111111111112")
+            self.assertEqual(rows[0]["mint_b"], "MemeMint1111111111111111111111111111111111")
             summ = path.with_name(path.stem + ".summary.json")
             self.assertTrue(summ.exists())
             data = json.loads(summ.read_text(encoding="utf-8"))

@@ -48,9 +48,9 @@ class StreamingTests(unittest.TestCase):
             cfg,
         )
         out = stream.getvalue()
-        self.assertIn("[REJ ]", out)
+        self.assertIn("[REJ]", out)
         self.assertIn("SOL/RUG", out)
-        self.assertIn("reason=liquidity", out)
+        self.assertIn("liquidity $1.00 below $200.00", out)
         self.assertIn("\033[31m", out)  # red ANSI
 
     def test_quiet_mode_emits_nothing(self):
@@ -67,7 +67,7 @@ class StreamingTests(unittest.TestCase):
         verdicts.emit_reject({"id": "p", "mint_a_symbol": "SOL", "mint_b_symbol": "X"}, ["liquidity ..."], cfg)
         out = stream.getvalue()
         self.assertNotIn("[PASS]", out)
-        self.assertIn("[REJ ]", out)
+        self.assertIn("[REJ]", out)
 
     def test_max_rejections_caps_output(self):
         stream = io.StringIO()
@@ -78,8 +78,20 @@ class StreamingTests(unittest.TestCase):
         for i in range(10):
             verdicts.emit_reject({"id": f"p{i}", "mint_a_symbol": "SOL", "mint_b_symbol": "X"}, ["liquidity x"], cfg, idx=i)
         out = stream.getvalue()
-        self.assertEqual(out.count("[REJ ]"), 3)
+        self.assertEqual(out.count("[REJ]"), 3)
         self.assertIn("more rejects hidden", out)
+
+
+class HeaderTests(unittest.TestCase):
+    def test_column_headers_list_named_columns(self):
+        stream = io.StringIO()
+        cfg = verdicts.StreamConfig(enabled=True, color=False, stream=stream)
+        verdicts.print_verdict_column_headers(cfg, page=3)
+        out = stream.getvalue()
+        self.assertIn("PAIR_NAME", out)
+        self.assertIn("POOL_ID", out)
+        self.assertIn("REJECT_REASON", out)
+        self.assertIn("Raydium page 3", out)
 
 
 class ClassifierTests(unittest.TestCase):
@@ -126,10 +138,12 @@ class ScannerVerdictIntegrationTests(unittest.TestCase):
             report = scan(config, verdict_stream=stream_cfg)
         out = stream.getvalue()
         self.assertIn("[PASS]", out)
-        self.assertIn("[REJ ]", out)
+        self.assertIn("[REJ]", out)
         self.assertIn("SOL/MEME", out)
         self.assertIn("SOL/RUG", out)
-        # Breakdown counts should appear in the report:
+        self.assertIn("PAIR_NAME", out)
+        self.assertIn("good", out)
+        self.assertIn("bad", out)
         self.assertIn("apr_below_threshold", report["rejection_breakdown"])
 
 
