@@ -21,7 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from raydium_lp1 import emergency, health, routes, strategies
+from raydium_lp1 import emergency, health, routes, strategies, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -480,6 +480,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Override the strategy preset for this run (overrides settings.json).",
     )
     parser.add_argument("--list-strategies", action="store_true", help="Print the available strategy presets and exit.")
+    parser.add_argument(
+        "--wallet-override",
+        type=str,
+        default=None,
+        help="Use a different wallet public address for this run (does not modify .env).",
+    )
     args = parser.parse_args(argv)
 
     if args.list_strategies:
@@ -494,6 +500,20 @@ def main(argv: list[str] | None = None) -> int:
     if not config.dry_run:
         print("Refusing to run: this build is dry-run only. Set dry_run=true.", file=sys.stderr)
         return 2
+
+    try:
+        active_wallet = wallet_mod.load_wallet()
+    except wallet_mod.WalletError as exc:
+        print(f"Wallet config error: {exc}", file=sys.stderr)
+        return 2
+    if args.wallet_override:
+        try:
+            active_wallet = wallet_mod.override_wallet(args.wallet_override)
+        except wallet_mod.WalletError as exc:
+            print(f"--wallet-override rejected: {exc}", file=sys.stderr)
+            return 2
+    if active_wallet is not None:
+        print(f"Wallet: {active_wallet.address} (source={active_wallet.source})")
 
     if args.check_rpc:
         rpc_results = check_rpc_urls(config.solana_rpc_urls)
