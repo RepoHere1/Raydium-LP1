@@ -21,7 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from raydium_lp1 import health, routes, strategies
+from raydium_lp1 import emergency, health, routes, strategies
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -56,6 +56,10 @@ class ScannerConfig:
     route_sources: tuple[str, ...] = ("jupiter", "raydium")
     track_liquidity_health: bool = True
     liquidity_history_path: str = "reports/liquidity_history.json"
+    emergency_close_enabled: bool = True
+    emergency_alerts_path: str = "reports/alerts.json"
+    emergency_base_symbol: str = "SOL"
+    emergency_max_slippage_pct: float = 0.30
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -95,6 +99,14 @@ class ScannerConfig:
             track_liquidity_health=bool(raw_with_strategy.get("track_liquidity_health", True)),
             liquidity_history_path=str(
                 raw_with_strategy.get("liquidity_history_path", "reports/liquidity_history.json")
+            ),
+            emergency_close_enabled=bool(raw_with_strategy.get("emergency_close_enabled", True)),
+            emergency_alerts_path=str(
+                raw_with_strategy.get("emergency_alerts_path", "reports/alerts.json")
+            ),
+            emergency_base_symbol=str(raw_with_strategy.get("emergency_base_symbol", "SOL")),
+            emergency_max_slippage_pct=float(
+                raw_with_strategy.get("emergency_max_slippage_pct", 0.30)
             ),
         )
 
@@ -352,12 +364,22 @@ def scan(
             candidates.append(public_pool)
 
     health_summary = {"healthy": 0, "warning": 0, "critical": 0}
+    triggered_alerts: list[dict[str, Any]] = []
     if config.track_liquidity_health and candidates:
         history_path = Path(config.liquidity_history_path)
         assessments, _ = health.assess_pools(candidates, history_path=history_path)
         for pool, assessment in zip(candidates, assessments):
             pool["health"] = assessment.to_dict()
             health_summary[assessment.score] = health_summary.get(assessment.score, 0) + 1
+
+        if config.emergency_close_enabled:
+            alerts = emergency.run_emergency_pass(
+                zip(candidates, assessments),
+                base_symbol=config.emergency_base_symbol,
+                max_slippage_pct=config.emergency_max_slippage_pct,
+                alerts_path=Path(config.emergency_alerts_path),
+            )
+            triggered_alerts = [alert.to_dict() for alert in alerts]
 
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
@@ -377,6 +399,8 @@ def scan(
         "route_sources": list(config.route_sources),
         "track_liquidity_health": config.track_liquidity_health,
         "health_summary": health_summary,
+        "emergency_close_enabled": config.emergency_close_enabled,
+        "triggered_alerts": triggered_alerts,
         "candidates": candidates,
         "rejected_preview": rejected[:10],
     }
