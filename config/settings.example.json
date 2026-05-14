@@ -1,0 +1,18 @@
+{
+  "dry_run": true,
+  "min_apr": 999.99,
+  "apr_field": "apr24h",
+  "raydium_api_base": "https://api-v3.raydium.io",
+  "pool_type": "all",
+  "sort_type": "desc",
+  "page_size": 100,
+  "pages": 1,
+  "min_liquidity_usd": 1000,
+  "min_volume_24h_usd": 100,
+  "max_position_usd": 25,
+  "allowed_quote_symbols": ["SOL", "USDC", "USDT"],
+  "blocked_token_symbols": [],
+  "blocked_mints": [],
+  "require_pool_id": true,
+  "solana_rpc_urls": []
+}

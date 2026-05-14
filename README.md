@@ -1,0 +1,323 @@
+# Raydium-LP1
+
+Raydium-LP1 is a **dry-run-first** scanner for finding Raydium liquidity pools whose reported APR is high, then running those pools through local safety filters before any future trade/liquidity-opening code is allowed to act.
+
+The default APR filter is now **999.99%**, not ninety-nine thousand percent. You can change it any time in `config\settings.json` or by running the setup wizard again.
+
+## What this script does so far
+
+1. Reads live Raydium pool data from `https://api-v3.raydium.io`.
+2. Uses Raydium's pool list endpoint `/pools/info/list`.
+3. Sorts pools by `apr24h` from high to low.
+4. Keeps only pools at or above your `min_apr` setting. Default: `999.99`.
+5. Rejects pools that fail your local filters, such as low liquidity, low 24h volume, blocked tokens, or missing pool IDs.
+6. Reads local RPC/API source settings from `.env`, without committing private API keys to GitHub.
+7. Can check configured Solana RPCs with `getHealth` so you know whether your live data sources answer.
+8. Can write reports to `reports\latest.json`, timestamped JSON files, and `reports\candidates.csv`.
+9. Prints what it found in beginner-friendly text or JSON.
+10. Does **not** buy, sign, use wallet keys, or open LP positions yet.
+
+
+
+
+
+
+
+## If we need to transfer files in chunks
+
+When GitHub is empty and direct push is blocked, we can transfer the project as Base64 ZIP chunks pasted into PowerShell. After extraction, GitHub Desktop will see the files and you can commit them as `Initial Raydium-LP1 files`.
+
+Read the chunk workflow here: [`WINDOWS_FILE_MAKER_CHUNKS.md`](WINDOWS_FILE_MAKER_CHUNKS.md).
+
+## If GitHub Desktop is connected but the folder has no files
+
+GitHub Desktop can only commit files that are actually inside `C:\Users\Taylor\Raydium-LP1`. If that folder only has `.git`, GitHub Desktop is connected to an empty repo.
+
+Use the focused transfer guide here: [`WINDOWS_ZIP_TRANSFER_GUIDE.md`](WINDOWS_ZIP_TRANSFER_GUIDE.md).
+
+## If `git push` says `CONNECT tunnel failed, response 403`
+
+That proxy error means the network running the push cannot reach GitHub. When it happened here, it was this coding container's network proxy blocking GitHub, not your Windows machine and not the Raydium-LP1 code.
+
+Read the focused fix here: [`GITHUB_PUSH_PROXY_FIX.md`](GITHUB_PUSH_PROXY_FIX.md).
+
+## If GitHub cloned empty / only `.git` appears
+
+Your Windows output `warning: You appear to have cloned an empty repository` means GitHub has no project files yet. The setup wizard cannot run until the files exist in the Windows folder.
+
+Also: when copying commands from Markdown, do **not** paste the ```powershell line or the closing ``` line into PowerShell. Paste only the command lines inside the box.
+
+Read the focused fix here: [`WINDOWS_EMPTY_GITHUB_FIX.md`](WINDOWS_EMPTY_GITHUB_FIX.md).
+
+## If your Windows folder is empty
+
+If `C:\Users\Taylor\Raydium-LP1` is empty, the setup script cannot run yet because the project files are not on your PC. I am editing this repo in the coding workspace, not directly inside your Windows folder.
+
+Read the full copy/paste guide here: [`GET_CODE_INTO_WINDOWS.md`](GET_CODE_INTO_WINDOWS.md).
+
+Short version, after the code has been pushed to GitHub:
+
+```powershell
+cd C:\Users\Taylor
+if (Test-Path .\Raydium-LP1) {
+  Rename-Item .\Raydium-LP1 ("Raydium-LP1-empty-backup-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+}
+git clone https://github.com/RepoHere1/Raydium-LP1.git Raydium-LP1
+cd .\Raydium-LP1
+Get-ChildItem -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_wizard.ps1
+```
+
+## If PowerShell says `setup_wizard.ps1` is not recognized
+
+You do **not** type `node` for this project. Node.js is for JavaScript apps. Raydium-LP1 uses **PowerShell** for the Windows helper scripts and **Python** for the scanner.
+
+In PowerShell, scripts in the current folder must start with `.` and `\`. So this will fail:
+
+```powershell
+setup_wizard.ps1
+```
+
+Use this instead:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\setup_wizard.ps1
+```
+
+If Windows blocks the script, use the bypass form:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_wizard.ps1
+```
+
+Or avoid typing commands and double-click this file from File Explorer:
+
+```text
+START_HERE_SETUP.bat
+```
+
+After setup, run the scanner with:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\run_scan.ps1 -CheckRpc -WriteReports
+```
+
+Or double-click:
+
+```text
+START_HERE_SCAN.bat
+```
+
+About the code box / panel moving on the right side: that is part of the coding workspace UI, not the Raydium-LP1 project files. I cannot change that UI from this repo. The safest workaround is to use the copy/paste PowerShell blocks in this README or double-click the `START_HERE_*.bat` files.
+
+## Live data sources
+
+This project is designed to use real production data, not placeholders:
+
+- Raydium REST API: `https://api-v3.raydium.io`
+- Raydium pool list: `/pools/info/list`
+- Optional Solana RPCs in `.env`: public RPCs, Helius, Chainstack, GetBlock, dRPC, etc.
+
+Important: RPC URLs with API keys are secrets. Keep them in `.env`; do not paste them into `config\settings.json` if you plan to commit that file, and do not commit `.env`.
+
+## Easiest Windows setup: double-click or paste
+
+### Option A: double-click
+
+From File Explorer, open your project folder:
+
+```text
+C:\Users\Taylor\Raydium-LP1
+```
+
+Then double-click:
+
+```text
+START_HERE_SETUP.bat
+```
+
+That opens PowerShell, asks you questions, creates `.env`, creates `config\settings.json`, and offers to run the doctor check.
+
+After setup, you can double-click:
+
+```text
+START_HERE_SCAN.bat
+```
+
+### Option B: paste into PowerShell
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_wizard.ps1
+```
+
+Then run a scan with live Raydium data and RPC checks:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\run_scan.ps1 -CheckRpc -WriteReports
+```
+
+If PowerShell blocks `.ps1` scripts, use this:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run_scan.ps1 -CheckRpc -WriteReports
+```
+
+## Settings page / wizard
+
+For now, the "settings page" is the local file:
+
+```text
+config\settings.json
+```
+
+The setup wizard creates it for you. To change your APR threshold later, edit this line:
+
+```json
+"min_apr": 999.99
+```
+
+Or rerun the wizard:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_wizard.ps1
+```
+
+The safe example settings live in:
+
+```text
+config\filters.example.json
+config\settings.example.json
+```
+
+Your real local settings live in `config\settings.json`, which is ignored by Git.
+
+## Creating `.env` correctly
+
+The wizard is the safest way. It creates `.env` like this:
+
+```text
+RAYDIUM_API_BASE=https://api-v3.raydium.io
+SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+SOLANA_RPC_URLS=https://solana-rpc.publicnode.com,https://solana.drpc.org
+```
+
+To add private provider URLs like Helius, Chainstack, GetBlock, or dRPC, paste them when the wizard asks for RPC URLs. The script loads them from `.env` automatically.
+
+## Doctor check
+
+Run this when something feels broken:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\doctor.ps1
+```
+
+It checks the repo folder, scanner files, local settings, `.env`, Python, and Git remote branches.
+
+## Running scans
+
+Normal beginner output:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\run_scan.ps1
+```
+
+Check RPCs first and write report files:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\run_scan.ps1 -CheckRpc -WriteReports
+```
+
+Print machine-readable JSON:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\run_scan.ps1 -Json
+```
+
+Poll repeatedly every 60 seconds. Press `Ctrl+C` to stop:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\run_scan.ps1 -Loop -Interval 60 -WriteReports
+```
+
+Direct Python fallback:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+python scripts\scan_raydium_lps.py --config config\settings.json --check-rpc --write-reports
+```
+
+## Filters
+
+Defaults include:
+
+- `min_apr`: `999.99`
+- `min_liquidity_usd`: `1000`
+- `min_volume_24h_usd`: `100`
+- `allowed_quote_symbols`: `SOL`, `USDC`, `USDT`
+- `max_position_usd`: `25`
+- `dry_run`: `true`
+
+A pool must pass every configured filter to show as a candidate.
+
+## Troubleshooting the exact errors you saw
+
+### `fatal: couldn't find remote ref main`
+
+This means your GitHub repository does not currently have a branch named `main`. It usually means the repo is still empty online, or the code has not been pushed to GitHub yet.
+
+Check remote branches:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+git ls-remote --heads origin
+```
+
+If nothing prints, GitHub has no branches yet. A pull cannot work until something is pushed.
+
+### `.\run_scan.ps1 is not recognized`
+
+This means the root shortcut `run_scan.ps1` or the scanner files are not in your Windows folder yet. Check it with:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+Test-Path .\setup_wizard.ps1
+Test-Path .\run_scan.ps1
+Test-Path .\scripts\scan_raydium_lps.py
+```
+
+If either line prints `False`, your folder does not have the scanner files yet.
+
+### `py: The term 'py' is not recognized`
+
+This means the Python launcher is not installed or not on PATH. Try plain `python`:
+
+```powershell
+python --version
+python scripts\scan_raydium_lps.py --config config\settings.json
+```
+
+If `python --version` also fails, install Python 3 from <https://www.python.org/downloads/windows/>. During install, check **Add python.exe to PATH**, then open a new PowerShell window.
+
+## Safety model
+
+This project does **not** ask for a seed phrase or private key. Do not paste wallet secrets into config files, `.env`, PowerShell, chat, or GitHub.
+
+The first production-data demo should only prove that live Raydium data can be fetched, normalized, filtered, and reported. A separate, explicit step is required before adding wallet signing or LP-opening logic.
+
+## Tests
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests
+```
