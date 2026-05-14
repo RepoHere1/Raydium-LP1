@@ -21,6 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import emergency, health, routes, strategies, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
@@ -550,6 +551,16 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Use a different wallet public address for this run (does not modify .env).",
     )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Render the unified dashboard text and write reports/dashboard.json.",
+    )
+    parser.add_argument(
+        "--no-dashboard",
+        action="store_true",
+        help="Disable dashboard output even if it would otherwise run.",
+    )
     args = parser.parse_args(argv)
 
     if args.list_strategies:
@@ -579,9 +590,12 @@ def main(argv: list[str] | None = None) -> int:
     if active_wallet is not None:
         print(f"Wallet: {active_wallet.address} (source={active_wallet.source})")
 
+    rpc_results: list[dict[str, Any]] = []
     if args.check_rpc:
         rpc_results = check_rpc_urls(config.solana_rpc_urls)
         print(json.dumps({"rpc_results": rpc_results}, indent=2))
+
+    show_dashboard = args.dashboard and not args.no_dashboard
 
     while True:
         try:
@@ -596,6 +610,17 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report, indent=2, sort_keys=True))
         else:
             print_report(report)
+
+        if show_dashboard:
+            data = dashboard_mod.build_dashboard(
+                config=config,
+                report=report,
+                rpc_health=rpc_results,
+            )
+            dashboard_mod.write_dashboard(data)
+            print("")
+            dashboard_mod.print_dashboard(data)
+
         if not args.loop:
             return 0
         time.sleep(args.interval)
