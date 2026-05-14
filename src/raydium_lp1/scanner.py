@@ -65,6 +65,10 @@ class ScannerConfig:
     strategy: str = strategies.STRATEGY_CUSTOM
     require_sell_route: bool = True
     route_sources: tuple[str, ...] = ("jupiter", "raydium")
+    # Raydium UI parity: pool age and LP burn-percent filters.
+    max_pool_age_hours: float = 0.0  # 0 = disabled, otherwise only pools younger than this
+    min_pool_age_hours: float = 0.0  # avoid 'too new' pools (helps you skip pre-launch dust)
+    min_burn_percent: float = 0.0  # 0 = disabled, 100 = require fully burned LP
     track_liquidity_health: bool = True
     liquidity_history_path: str = "reports/liquidity_history.json"
     emergency_close_enabled: bool = True
@@ -113,6 +117,9 @@ class ScannerConfig:
                 if str(s).strip()
             )
             or ("jupiter", "raydium"),
+            max_pool_age_hours=float(raw_with_strategy.get("max_pool_age_hours", 0.0)),
+            min_pool_age_hours=float(raw_with_strategy.get("min_pool_age_hours", 0.0)),
+            min_burn_percent=float(raw_with_strategy.get("min_burn_percent", 0.0)),
             track_liquidity_health=bool(raw_with_strategy.get("track_liquidity_health", True)),
             liquidity_history_path=str(
                 raw_with_strategy.get("liquidity_history_path", "reports/liquidity_history.json")
@@ -457,6 +464,26 @@ def filter_pool(pool: dict[str, Any], config: ScannerConfig) -> tuple[bool, list
     blocked_mints = mints.intersection(config.blocked_mints)
     if blocked_mints:
         reasons.append(f"blocked mint(s): {', '.join(sorted(blocked_mints))}")
+
+    if config.max_pool_age_hours > 0 or config.min_pool_age_hours > 0:
+        open_time = float(pool.get("open_time") or 0)
+        if open_time > 0:
+            age_hours = max(0.0, (time.time() - open_time) / 3600.0)
+            if config.max_pool_age_hours > 0 and age_hours > config.max_pool_age_hours:
+                reasons.append(
+                    f"pool age {age_hours:.1f}h above max {config.max_pool_age_hours:.1f}h"
+                )
+            if config.min_pool_age_hours > 0 and age_hours < config.min_pool_age_hours:
+                reasons.append(
+                    f"pool age {age_hours:.1f}h below min {config.min_pool_age_hours:.1f}h"
+                )
+
+    if config.min_burn_percent > 0:
+        burn = float(pool.get("burn_percent") or 0)
+        if burn < config.min_burn_percent:
+            reasons.append(
+                f"LP burn {burn:.0f}% below min {config.min_burn_percent:.0f}%"
+            )
 
     return not reasons, reasons
 
