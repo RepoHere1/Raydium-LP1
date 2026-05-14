@@ -176,7 +176,15 @@ For now, the "settings page" is the local file:
 config\settings.json
 ```
 
-The setup wizard creates it for you. To change your APR threshold later, edit this line:
+**Plain-language guide to every setting (including the three named filters
+`survival_runway`, `quote_only_entry`, and `honeypot_guard`):**
+see [`SETTINGS.md`](SETTINGS.md).
+
+The setup wizard creates `config\settings.json` for you and now **remembers
+your previous answers as the defaults** the next time you run it, so you only
+have to retype what you want to change.
+
+To change your APR threshold later, edit this line:
 
 ```json
 "min_apr": 999.99

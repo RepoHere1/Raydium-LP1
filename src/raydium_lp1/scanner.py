@@ -21,6 +21,18 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from .honeypot_guard import (
+    HoneypotGuardConfig,
+    MintInspection,
+    evaluate_honeypot_guard,
+)
+from .quote_only_entry import (
+    QuoteOnlyEntryConfig,
+    base_side,
+    evaluate_quote_only_entry,
+)
+from .survival_runway import SurvivalRunwayConfig, evaluate_survival_runway
+
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
 DEFAULT_CONFIG_PATH = Path("config/settings.json")
@@ -49,6 +61,9 @@ class ScannerConfig:
     dry_run: bool = True
     raydium_api_base: str = RAYDIUM_API_BASE
     solana_rpc_urls: list[str] = field(default_factory=list)
+    survival_runway: SurvivalRunwayConfig = field(default_factory=SurvivalRunwayConfig)
+    quote_only_entry: QuoteOnlyEntryConfig = field(default_factory=QuoteOnlyEntryConfig)
+    honeypot_guard: HoneypotGuardConfig = field(default_factory=HoneypotGuardConfig)
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -68,13 +83,18 @@ class ScannerConfig:
             min_liquidity_usd=float(raw.get("min_liquidity_usd", cls.min_liquidity_usd)),
             min_volume_24h_usd=float(raw.get("min_volume_24h_usd", cls.min_volume_24h_usd)),
             max_position_usd=float(raw.get("max_position_usd", cls.max_position_usd)),
-            allowed_quote_symbols=set(map(str.upper, raw.get("allowed_quote_symbols", ["SOL", "USDC", "USDT"]))),
+            allowed_quote_symbols=set(
+                map(str.upper, raw.get("allowed_quote_symbols", ["SOL", "USDC", "USDT", "USD1"]))
+            ),
             blocked_token_symbols=set(map(str.upper, raw.get("blocked_token_symbols", []))),
             blocked_mints=set(raw.get("blocked_mints", [])),
             require_pool_id=bool(raw.get("require_pool_id", True)),
             dry_run=bool(raw.get("dry_run", True)),
             raydium_api_base=str(raw.get("raydium_api_base") or os.environ.get("RAYDIUM_API_BASE") or RAYDIUM_API_BASE),
             solana_rpc_urls=dedupe([*env_urls, *config_urls]),
+            survival_runway=SurvivalRunwayConfig.from_raw(raw.get("survival_runway")),
+            quote_only_entry=QuoteOnlyEntryConfig.from_raw(raw.get("quote_only_entry")),
+            honeypot_guard=HoneypotGuardConfig.from_raw(raw.get("honeypot_guard")),
         )
 
 
@@ -316,6 +336,9 @@ REASON_CATEGORIES: tuple[str, ...] = (
     "quote_symbol_not_allowed",
     "blocked_symbol",
     "blocked_mint",
+    "survival_runway_failed",
+    "quote_only_entry_failed",
+    "honeypot_guard_failed",
 )
 
 
@@ -357,6 +380,16 @@ def filter_pool(pool: dict[str, Any], config: ScannerConfig) -> tuple[bool, list
         reasons.append(f"blocked mint(s): {', '.join(sorted(blocked_mints))}")
         categories.append("blocked_mint")
 
+    qoe_ok, qoe_reason = evaluate_quote_only_entry(pool, config.quote_only_entry)
+    if not qoe_ok and qoe_reason is not None:
+        reasons.append(f"quote_only_entry: {qoe_reason}")
+        categories.append("quote_only_entry_failed")
+
+    sr_ok, sr_reason = evaluate_survival_runway(pool, config.survival_runway, config.max_position_usd)
+    if not sr_ok and sr_reason is not None:
+        reasons.append(f"survival_runway: {sr_reason}")
+        categories.append("survival_runway_failed")
+
     return not reasons, reasons, categories
 
 
@@ -373,16 +406,55 @@ def scan(config: ScannerConfig) -> dict[str, Any]:
         items = extract_pool_items(response)
         for item in items:
             scanned += 1
+            # Keep raw payload attached for survival_runway's weekly check.
             pool = normalize_pool(item, config.apr_field)
             ok, reasons, categories = filter_pool(pool, config)
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
             all_pools.append(public_pool)
             if ok:
-                candidates.append(public_pool)
+                # Keep raw payload only while honeypot_guard might still need it.
+                candidates.append({**public_pool, "_raw": pool["raw"]})
             else:
                 rejected.append({**public_pool, "reasons": reasons, "reason_categories": categories})
                 for category in categories:
                     reason_counts[category] = reason_counts.get(category, 0) + 1
+
+    honeypot_inspections: dict[str, dict[str, Any]] = {}
+    final_candidates: list[dict[str, Any]] = []
+    if config.honeypot_guard.enabled and candidates:
+        cache: dict[str, MintInspection | None] = {}
+        for candidate in candidates:
+            mint_address, _base_symbol = (
+                base_side(candidate, config.quote_only_entry) or ("", "")
+            )
+            ok, reason, inspection = evaluate_honeypot_guard(
+                mint_address,
+                config.honeypot_guard,
+                config.solana_rpc_urls,
+                cache=cache,
+            )
+            candidate.pop("_raw", None)
+            if inspection is not None:
+                honeypot_inspections[mint_address] = {
+                    "owner_program": inspection.owner_program,
+                    "is_token_2022": inspection.is_token_2022,
+                    "sell_tax_percent": inspection.sell_tax_percent,
+                    "freeze_authority_set": inspection.freeze_authority_set,
+                    "has_transfer_hook": inspection.has_transfer_hook,
+                    "has_permanent_delegate": inspection.has_permanent_delegate,
+                }
+                candidate["honeypot_inspection"] = honeypot_inspections[mint_address]
+            if ok:
+                final_candidates.append(candidate)
+            else:
+                candidate["reasons"] = [f"honeypot_guard: {reason}"]
+                candidate["reason_categories"] = ["honeypot_guard_failed"]
+                rejected.append(candidate)
+                reason_counts["honeypot_guard_failed"] += 1
+    else:
+        for candidate in candidates:
+            candidate.pop("_raw", None)
+            final_candidates.append(candidate)
 
     top_by_apr = sorted(all_pools, key=lambda p: p["apr"], reverse=True)[:5]
 
@@ -395,12 +467,33 @@ def scan(config: ScannerConfig) -> dict[str, Any]:
         "min_volume_24h_usd": config.min_volume_24h_usd,
         "apr_field": config.apr_field,
         "scanned_count": scanned,
-        "candidate_count": len(candidates),
+        "candidate_count": len(final_candidates),
         "rejected_count": len(rejected),
         "rejection_reason_counts": reason_counts,
         "max_position_usd": config.max_position_usd,
         "rpc_count": len(config.solana_rpc_urls),
-        "candidates": candidates,
+        "active_filters": {
+            "survival_runway": {
+                "enabled": config.survival_runway.enabled,
+                "target_survival_days": config.survival_runway.target_survival_days,
+                "min_tvl_multiple_of_position": config.survival_runway.min_tvl_multiple_of_position,
+                "min_daily_volume_pct_of_tvl": config.survival_runway.min_daily_volume_pct_of_tvl,
+            },
+            "quote_only_entry": {
+                "enabled": config.quote_only_entry.enabled,
+                "allowed_quote_symbols": sorted(config.quote_only_entry.allowed_quote_symbols),
+                "require_concentrated_pool": config.quote_only_entry.require_concentrated_pool,
+            },
+            "honeypot_guard": {
+                "enabled": config.honeypot_guard.enabled,
+                "max_sell_tax_percent": config.honeypot_guard.max_sell_tax_percent,
+                "reject_if_freeze_authority_set": config.honeypot_guard.reject_if_freeze_authority_set,
+                "reject_if_transfer_hook_set": config.honeypot_guard.reject_if_transfer_hook_set,
+                "reject_if_permanent_delegate_set": config.honeypot_guard.reject_if_permanent_delegate_set,
+                "fail_open_when_no_rpc": config.honeypot_guard.fail_open_when_no_rpc,
+            },
+        },
+        "candidates": final_candidates,
         "top_by_apr": top_by_apr,
         "rejected_preview": rejected[:10],
     }
@@ -425,10 +518,40 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"Configured Solana RPCs: {report['rpc_count']}")
     print(f"Max future position size: ${report['max_position_usd']:.2f}")
 
+    active = report.get("active_filters") or {}
+    sr = active.get("survival_runway") or {}
+    qoe = active.get("quote_only_entry") or {}
+    hg = active.get("honeypot_guard") or {}
+    if sr.get("enabled"):
+        print(
+            f"Survival runway: target {sr.get('target_survival_days')}d, "
+            f"min TVL {sr.get('min_tvl_multiple_of_position')}x position, "
+            f"min daily vol/TVL {sr.get('min_daily_volume_pct_of_tvl')}%"
+        )
+    if qoe.get("enabled"):
+        symbols = ", ".join(qoe.get("allowed_quote_symbols", []))
+        print(f"Quote-only entry: allowed quotes = {symbols}")
+    if hg.get("enabled"):
+        print(
+            f"Honeypot guard: max sell tax {hg.get('max_sell_tax_percent')}%, "
+            f"freeze-reject={hg.get('reject_if_freeze_authority_set')}, "
+            f"hook-reject={hg.get('reject_if_transfer_hook_set')}, "
+            f"perm-delegate-reject={hg.get('reject_if_permanent_delegate_set')}"
+        )
+
     if report["candidates"]:
         print("\nCandidates:")
         for pool in report["candidates"]:
             print(_format_pool_line(pool))
+            inspection = pool.get("honeypot_inspection")
+            if inspection:
+                print(
+                    "    HoneypotGuard: token-2022="
+                    f"{inspection['is_token_2022']} sell_tax={inspection['sell_tax_percent']:.2f}% "
+                    f"freeze={inspection['freeze_authority_set']} "
+                    f"hook={inspection['has_transfer_hook']} "
+                    f"perm_delegate={inspection['has_permanent_delegate']}"
+                )
         print("\nDry-run only: no buy, no wallet signing, no LP position opened.")
         return
 

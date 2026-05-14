@@ -10,9 +10,41 @@
   "min_liquidity_usd": 1000,
   "min_volume_24h_usd": 100,
   "max_position_usd": 25,
-  "allowed_quote_symbols": ["SOL", "USDC", "USDT"],
+  "allowed_quote_symbols": ["SOL", "USDC", "USDT", "USD1"],
   "blocked_token_symbols": [],
   "blocked_mints": [],
   "require_pool_id": true,
-  "solana_rpc_urls": []
+  "solana_rpc_urls": [],
+
+  "_comment_survival_runway": "How long the pool must look like it can keep paying. See SETTINGS.md.",
+  "survival_runway": {
+    "enabled": true,
+    "target_survival_days": 5,
+    "min_tvl_multiple_of_position": 200,
+    "min_daily_volume_pct_of_tvl": 5.0,
+    "require_active_week": true
+  },
+
+  "_comment_quote_only_entry": "Never buy the unknown token at entry. Only deposit your safe quotes.",
+  "quote_only_entry": {
+    "enabled": true,
+    "allowed_quote_symbols": ["SOL", "USDC", "USDT", "USD1"],
+    "require_concentrated_pool": false,
+    "allow_quote_quote_pools": true
+  },
+
+  "_comment_honeypot_guard": "Refuse pools whose base token has sell-tax / freeze / transfer-hook traps.",
+  "honeypot_guard": {
+    "enabled": true,
+    "max_sell_tax_percent": 30.0,
+    "reject_if_freeze_authority_set": true,
+    "reject_if_transfer_hook_set": true,
+    "reject_if_permanent_delegate_set": true,
+    "allowed_freeze_authority_mints": [
+      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+    ],
+    "fail_open_when_no_rpc": false,
+    "rpc_timeout_seconds": 8.0
+  }
 }
