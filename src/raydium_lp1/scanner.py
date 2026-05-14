@@ -67,7 +67,7 @@ class ScannerConfig:
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
         env_urls = split_env_list(os.environ.get("SOLANA_RPC_URLS", ""))
         single_env_url = os.environ.get("SOLANA_RPC_URL", "").strip()
         if single_env_url:
@@ -117,7 +117,7 @@ def load_dotenv(path: Path = DEFAULT_ENV_PATH) -> None:
 
     if not path.exists():
         return
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
