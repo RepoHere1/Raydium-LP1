@@ -1,4 +1,5 @@
 import io
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +16,12 @@ def _pool(pid="p", apr=1500, tvl=5000, vol=1000, sym_b="MEME"):
         "mintA": {"symbol": "SOL", "address": "solmint"},
         "mintB": {"symbol": sym_b, "address": f"mint-{pid}"},
     }
+
+
+class StreamConfigTests(unittest.TestCase):
+    def test_default_out_stream_is_stderr(self):
+        cfg = verdicts.make_stream_config(enabled=True, max_rejections_shown=5)
+        self.assertIs(cfg.out(), sys.stderr)
 
 
 class StreamingTests(unittest.TestCase):

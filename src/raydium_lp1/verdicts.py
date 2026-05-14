@@ -7,8 +7,10 @@ user can SEE pool data being processed in real time:
     [REJ ] SOL/RUG     APR  4000%  TVL $    800  Vol $    5  reason=...
 
 Lines are green/red where the terminal supports ANSI colors (Windows 10+
-PowerShell, Linux/macOS terminals). Use ``--quiet`` on the scanner to
-suppress the per-pool stream; the rejection breakdown still prints.
+PowerShell, Linux/macOS terminals). By default lines go to **stderr** so they
+stay with ``[scan] page …`` progress (some Windows hosts buffer or separate
+``stdout``). Use ``--quiet`` to suppress the stream; ``--verdict-stdout`` sends
+it back to stdout for piping. The rejection breakdown uses the same stream.
 
 The breakdown counts rejected pools by first-listed reason so the user
 can dial in their filters ("oh, 24800 pools fell to the APR filter — I
@@ -53,7 +55,9 @@ class StreamConfig:
     stream: TextIO | None = None
 
     def out(self) -> TextIO:
-        return self.stream if self.stream is not None else sys.stdout
+        # Default stderr: matches scanner progress logs and avoids "silent"
+        # runs when stdout is redirected or line-buffered differently (Windows).
+        return self.stream if self.stream is not None else sys.stderr
 
 
 def _pair(pool: dict) -> str:
@@ -108,7 +112,7 @@ def make_stream_config(
     max_rejections_shown: int = 200,
     stream: TextIO | None = None,
 ) -> StreamConfig:
-    target = stream if stream is not None else sys.stdout
+    target = stream if stream is not None else sys.stderr
     return StreamConfig(
         enabled=enabled,
         color=_supports_color(target),

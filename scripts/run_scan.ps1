@@ -6,7 +6,8 @@ param(
     [switch]$CheckRpc,
     [switch]$WriteReports,
     [switch]$WriteRejections,
-    [int]$ShowRejects = 200
+    [int]$ShowRejects = 200,
+    [switch]$VerdictStdout
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +15,9 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
+
+# Flush Python prints immediately (helps long scans show [REJ] lines live on Windows).
+$env:PYTHONUNBUFFERED = "1"
 
 if (-not (Test-Path $Config)) {
     if (Test-Path "config\filters.example.json") {
@@ -57,6 +61,9 @@ if ($WriteReports) {
 }
 if ($WriteRejections) {
     $scannerArgs += "--write-rejections"
+}
+if ($VerdictStdout) {
+    $scannerArgs += "--verdict-stdout"
 }
 $scannerArgs += @("--show-rejects", "$ShowRejects")
 

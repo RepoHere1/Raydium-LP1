@@ -735,6 +735,11 @@ def scan(
             reason_histogram=dict(reason_histogram.most_common(500)),
             breakdown=dict(rejection_counts),
         )
+        print(
+            f"[scan] wrote {len(rejected)} rejection row(s) -> {rejections_csv_written}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
@@ -770,6 +775,46 @@ def scan(
     }
 
 
+def print_reject_dial_in_hints(report: dict[str, Any]) -> None:
+    """Echo reject reasons to stderr so they stay visible next to ``[scan]`` lines.
+
+    On some Windows setups ``stdout`` is line-buffered or detached from the
+    console view the user watches during long scans; stderr matches progress.
+    """
+
+    rej = int(report.get("rejected_count") or 0)
+    if rej <= 0:
+        return
+    out = sys.stderr
+    hist = report.get("rejection_reason_histogram") or {}
+    bd = report.get("rejection_breakdown") or {}
+    print("", file=out, flush=True)
+    print(f"[reject-help] {rej} pool(s) rejected — why + how to tune:", file=out, flush=True)
+    if not bd and not hist:
+        print(
+            "  [WARN] Report has no rejection_breakdown/histogram; use a current Raydium-LP1 build.",
+            file=out,
+            flush=True,
+        )
+    if hist:
+        print("  Top first-reason strings (sample):", file=out, flush=True)
+        for reason, n in list(hist.items())[:12]:
+            short = reason if len(reason) <= 110 else reason[:107] + "..."
+            print(f"    {n:>6}  {short}", file=out, flush=True)
+    if report.get("rejections_csv"):
+        csv_path = Path(report["rejections_csv"])
+        summ = csv_path.with_name(csv_path.stem + ".summary.json")
+        print(f"  Per-pool CSV: {csv_path}", file=out, flush=True)
+        if summ.exists():
+            print(f"  Summary JSON: {summ}", file=out, flush=True)
+    else:
+        print(
+            '  Full export: run with --write-rejections or set "write_rejections": true in settings.json',
+            file=out,
+            flush=True,
+        )
+
+
 def print_report(report: dict[str, Any]) -> None:
     print("Raydium-LP1 live scan")
     print(f"Time: {report['scanned_at']}")
@@ -790,25 +835,7 @@ def print_report(report: dict[str, Any]) -> None:
             print(f"  ...{report['candidates_truncated']} candidate(s) hidden by capacity cap")
     if not report["candidates"]:
         print("No pools passed all filters. No action taken.")
-        rej = int(report.get("rejected_count") or 0)
-        if rej > 0:
-            hist = report.get("rejection_reason_histogram") or {}
-            if hist:
-                print(f"  ({rej} rejected — top first-reason strings:)")
-                for reason, n in list(hist.items())[:12]:
-                    short = reason if len(reason) <= 110 else reason[:107] + "..."
-                    print(f"    {n:>6}  {short}")
-            if report.get("rejections_csv"):
-                csv_path = Path(report["rejections_csv"])
-                summ = csv_path.with_name(csv_path.stem + ".summary.json")
-                print(f"  Full per-pool reject log (open in Excel): {csv_path}")
-                if summ.exists():
-                    print(f"  Category + histogram summary: {summ}")
-            else:
-                print(
-                    '  Tip: set "write_rejections": true in config/settings.json '
-                    "or run with --write-rejections to export every row to reports/rejections.csv."
-                )
+        print_reject_dial_in_hints(report)
         return
 
     print("\nCandidates:")
@@ -941,7 +968,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list-networks", action="store_true", help="Print the supported networks and exit.")
     parser.add_argument(
         "--quiet", action="store_true",
-        help="Hide the per-pool PASS/REJECT stream (the rejection breakdown still prints).",
+        help="Hide the per-pool PASS/REJECT stream (category breakdown still prints to stderr).",
+    )
+    parser.add_argument(
+        "--verdict-stdout",
+        action="store_true",
+        help="Send PASS/REJECT lines and rejection breakdown to stdout (default is stderr).",
     )
     parser.add_argument(
         "--hide-passes", action="store_true",
@@ -1013,10 +1045,12 @@ def main(argv: list[str] | None = None) -> int:
     cap = int(args.show_rejects)
     if cap <= 0:
         cap = 10**7
+    verdict_stream = sys.stdout if args.verdict_stdout else None
     stream_cfg = verdicts.make_stream_config(
         enabled=not args.quiet and not args.json,
         show_passes=not args.hide_passes,
         max_rejections_shown=cap,
+        stream=verdict_stream,
     )
     wr_override = True if args.write_rejections else None
 
