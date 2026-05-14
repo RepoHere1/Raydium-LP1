@@ -15,5 +15,7 @@
   "blocked_token_symbols": [],
   "blocked_mints": [],
   "require_pool_id": true,
+  "require_sell_route": true,
+  "route_sources": ["jupiter", "raydium"],
   "solana_rpc_urls": []
 }

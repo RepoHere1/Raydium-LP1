@@ -21,7 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from raydium_lp1 import strategies
+from raydium_lp1 import routes, strategies
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -52,6 +52,8 @@ class ScannerConfig:
     raydium_api_base: str = RAYDIUM_API_BASE
     solana_rpc_urls: list[str] = field(default_factory=list)
     strategy: str = strategies.STRATEGY_CUSTOM
+    require_sell_route: bool = True
+    route_sources: tuple[str, ...] = ("jupiter", "raydium")
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -81,6 +83,13 @@ class ScannerConfig:
             raydium_api_base=str(raw_with_strategy.get("raydium_api_base") or os.environ.get("RAYDIUM_API_BASE") or RAYDIUM_API_BASE),
             solana_rpc_urls=dedupe([*env_urls, *config_urls]),
             strategy=strategies.normalize_strategy(str(raw_with_strategy.get("strategy", strategies.STRATEGY_CUSTOM))),
+            require_sell_route=bool(raw_with_strategy.get("require_sell_route", True)),
+            route_sources=tuple(
+                str(s).strip().lower()
+                for s in raw_with_strategy.get("route_sources", ["jupiter", "raydium"])
+                if str(s).strip()
+            )
+            or ("jupiter", "raydium"),
         )
 
 
@@ -291,10 +300,27 @@ def filter_pool(pool: dict[str, Any], config: ScannerConfig) -> tuple[bool, list
     return not reasons, reasons
 
 
-def scan(config: ScannerConfig) -> dict[str, Any]:
+def scan(
+    config: ScannerConfig,
+    *,
+    sellability_checker: Any = None,
+) -> dict[str, Any]:
+    """Run a single scan pass.
+
+    ``sellability_checker`` is overridable for tests. It receives the
+    normalized pool dict and returns a :class:`routes.SellabilityResult`.
+    """
+
     candidates: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     scanned = 0
+
+    if sellability_checker is None and config.require_sell_route:
+        sellability_checker = lambda pool: routes.check_pool_sellability(  # noqa: E731
+            pool,
+            base_symbols=tuple(s.upper() for s in sorted(config.allowed_quote_symbols)),
+            sources=config.route_sources,
+        )
 
     for page in range(1, config.pages + 1):
         url = pool_list_url(config, page=page)
@@ -305,10 +331,19 @@ def scan(config: ScannerConfig) -> dict[str, Any]:
             pool = normalize_pool(item, config.apr_field)
             ok, reasons = filter_pool(pool, config)
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
-            if ok:
-                candidates.append(public_pool)
-            else:
+            if not ok:
                 rejected.append({**public_pool, "reasons": reasons})
+                continue
+
+            if sellability_checker is not None:
+                sell = sellability_checker(public_pool)
+                public_pool["sellability"] = sell.to_dict()
+                public_pool["sellability_log"] = routes.format_sellability_log(sell)
+                if not sell.ok:
+                    rejected.append({**public_pool, "reasons": list(sell.reasons)})
+                    continue
+
+            candidates.append(public_pool)
 
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
@@ -324,6 +359,8 @@ def scan(config: ScannerConfig) -> dict[str, Any]:
         "rejected_count": len(rejected),
         "max_position_usd": config.max_position_usd,
         "rpc_count": len(config.solana_rpc_urls),
+        "require_sell_route": config.require_sell_route,
+        "route_sources": list(config.route_sources),
         "candidates": candidates,
         "rejected_preview": rejected[:10],
     }
