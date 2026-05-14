@@ -74,6 +74,15 @@ class BurnPercentTests(unittest.TestCase):
         self.assertTrue(ok)
 
 
+class HardExitTvlTests(unittest.TestCase):
+    def test_hard_exit_floor_rejects_thin_pool(self):
+        pool = _live_pool(tvl=40)
+        config = ScannerConfig(min_apr=100, hard_exit_min_tvl_usd=100.0)
+        ok, reasons = filter_pool(pool, config)
+        self.assertFalse(ok)
+        self.assertTrue(any("HARD reject" in r and "exit-safety" in r for r in reasons))
+
+
 class ConfigFromFileTests(unittest.TestCase):
     def test_new_keys_load_from_settings(self):
         import json

@@ -22,6 +22,24 @@ class RouteCheckerTests(unittest.TestCase):
         self.assertEqual(out["source"], "jupiter")
         self.assertEqual(out["out_amount"], 12345)
 
+    def test_jupiter_rejects_high_price_impact(self):
+        def fetch_impact(_url: str) -> dict:
+            return {
+                "outAmount": "999999",
+                "routePlan": [{"swapInfo": {"label": "x"}}],
+                "priceImpactPct": "45.5",
+            }
+
+        out = routes.check_jupiter_route(
+            "AnyMint",
+            routes.USDC_MINT,
+            fetcher=fetch_impact,
+            max_price_impact_pct=30.0,
+        )
+        self.assertFalse(out["ok"])
+        self.assertTrue(out.get("impact_reject"))
+        self.assertIn("45.5", str(out.get("error", "")))
+
     def test_jupiter_route_blocked_when_error(self):
         out = routes.check_jupiter_route("BLOCKMINT", routes.USDC_MINT, fetcher=_fake_fetch)
         self.assertFalse(out["ok"])
@@ -85,6 +103,32 @@ class RouteCheckerTests(unittest.TestCase):
         self.assertIn("sellability", log)
         self.assertIn("jupiter", log)
         self.assertIn("raydium", log)
+
+
+class SellabilityImpactTests(unittest.TestCase):
+    def test_pool_reports_jupiter_impact_reject(self):
+        def fetch_high(_url: str) -> dict:
+            return {
+                "outAmount": "99999",
+                "routePlan": [{"x": 1}],
+                "priceImpactPct": "88.2",
+            }
+
+        pool = {
+            "mint_a": routes.WSOL_MINT,
+            "mint_a_symbol": "SOL",
+            "mint_b": "MEME1111111111111111111111111111111111",
+            "mint_b_symbol": "MEME",
+        }
+        res = routes.check_pool_sellability(
+            pool,
+            base_symbols=("USDC",),
+            sources=("jupiter",),
+            fetcher=fetch_high,
+            max_route_price_impact_pct=30.0,
+        )
+        self.assertFalse(res.ok)
+        self.assertTrue(any("88.2" in r or "price impact" in r.lower() for r in res.reasons))
 
 
 class ScannerSellabilityIntegrationTests(unittest.TestCase):

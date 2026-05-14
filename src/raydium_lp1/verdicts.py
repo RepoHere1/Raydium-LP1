@@ -122,6 +122,10 @@ def _classify_reason(reason: str) -> str:
     """Map an individual reason to a small set of categories for the breakdown."""
 
     r = reason.lower()
+    if r.startswith("hard reject") or "exit-safety line" in r:
+        return "hard_exit_red_line"
+    if "price impact" in r or ("jupiter" in r and "impact" in r):
+        return "price_impact_too_high"
     if r.startswith("apr "):
         return "apr_below_threshold"
     if r.startswith("liquidity "):

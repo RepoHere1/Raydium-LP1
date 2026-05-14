@@ -4,7 +4,9 @@ param(
     [switch]$Loop,
     [int]$Interval = 60,
     [switch]$CheckRpc,
-    [switch]$WriteReports
+    [switch]$WriteReports,
+    [switch]$WriteRejections,
+    [int]$ShowRejects = 200
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +55,10 @@ if ($CheckRpc) {
 if ($WriteReports) {
     $scannerArgs += "--write-reports"
 }
+if ($WriteRejections) {
+    $scannerArgs += "--write-rejections"
+}
+$scannerArgs += @("--show-rejects", "$ShowRejects")
 
 & $pythonExe @pythonPrefixArgs @scannerArgs
 exit $LASTEXITCODE

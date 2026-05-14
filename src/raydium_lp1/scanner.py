@@ -79,6 +79,15 @@ class ScannerConfig:
     reserve_sol: float = 0.02
     network: str = networks.NETWORK_SOLANA
     use_robust_routing: bool = True
+    # Exit-safety: reject Jupiter quotes whose reported price impact exceeds this
+    # (percent). 0 disables. Default 30 matches emergency_max_slippage_pct cap.
+    max_route_price_impact_pct: float = 30.0
+    # HARD reject when TVL is below this USD floor (0 = off). Use alongside
+    # min_liquidity_usd for a clear "red line" message in CSV / stream.
+    hard_exit_min_tvl_usd: float = 0.0
+    # Write every reject row to CSV (pair, metrics, full reason text).
+    write_rejections: bool = False
+    rejections_csv_path: str = "reports/rejections.csv"
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -136,6 +145,10 @@ class ScannerConfig:
             reserve_sol=float(raw_with_strategy.get("reserve_sol", 0.02)),
             network=networks.normalize_network(str(raw_with_strategy.get("network", "solana"))),
             use_robust_routing=bool(raw_with_strategy.get("use_robust_routing", True)),
+            max_route_price_impact_pct=float(raw_with_strategy.get("max_route_price_impact_pct", 30.0)),
+            hard_exit_min_tvl_usd=float(raw_with_strategy.get("hard_exit_min_tvl_usd", 0.0)),
+            write_rejections=bool(raw_with_strategy.get("write_rejections", False)),
+            rejections_csv_path=str(raw_with_strategy.get("rejections_csv_path", "reports/rejections.csv")),
         )
 
 
@@ -446,6 +459,13 @@ def filter_pool(pool: dict[str, Any], config: ScannerConfig) -> tuple[bool, list
     reasons: list[str] = []
     if config.require_pool_id and not pool["id"]:
         reasons.append("missing pool id")
+
+    if config.hard_exit_min_tvl_usd > 0 and pool["liquidity_usd"] < config.hard_exit_min_tvl_usd:
+        reasons.append(
+            f"HARD reject: TVL ${pool['liquidity_usd']:.2f} below exit-safety line "
+            f"${config.hard_exit_min_tvl_usd:.2f} (too shallow to count on selling back to SOL)"
+        )
+
     if pool["apr"] < config.min_apr:
         reasons.append(f"apr {pool['apr']:.2f} below {config.min_apr:.2f}")
     if pool["liquidity_usd"] < config.min_liquidity_usd:
@@ -554,17 +574,21 @@ def scan(
     wallet_config: wallet_mod.WalletConfig | None = None,
     rpc_post: Any = None,
     verdict_stream: verdicts.StreamConfig | None = None,
+    write_rejections_override: bool | None = None,
 ) -> dict[str, Any]:
     """Run a single scan pass.
 
     ``sellability_checker`` is overridable for tests. It receives the
     normalized pool dict and returns a :class:`routes.SellabilityResult`.
+    ``write_rejections_override`` when set (non-``None``) forces rejection CSV
+    on/off for this run regardless of ``config.write_rejections``.
     """
 
     from collections import Counter as _Counter
     candidates: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     rejection_counts: _Counter = _Counter()
+    reason_histogram: _Counter = _Counter()
     scanned = 0
     reject_idx = 0
     stream_cfg = verdict_stream if verdict_stream is not None else verdicts.make_stream_config(enabled=False)
@@ -603,6 +627,8 @@ def scan(
             "candidates": [],
             "rejected_preview": [],
             "rejection_breakdown": {},
+            "rejection_reason_histogram": {},
+            "rejections_csv": None,
             "notice": (
                 f"Network {adapter.display_name!r} is scaffolded but not live yet. "
                 "Switch back to network=solana to scan Raydium pools."
@@ -610,11 +636,17 @@ def scan(
         }
 
     if sellability_checker is None and config.require_sell_route:
-        sellability_checker = lambda pool: routes.check_pool_sellability(  # noqa: E731
-            pool,
-            base_symbols=tuple(s.upper() for s in sorted(config.allowed_quote_symbols)),
-            sources=config.route_sources,
-        )
+        max_impact = config.max_route_price_impact_pct if config.max_route_price_impact_pct > 0 else 0.0
+
+        def _sell_check(p: dict) -> routes.SellabilityResult:
+            return routes.check_pool_sellability(
+                p,
+                base_symbols=tuple(s.upper() for s in sorted(config.allowed_quote_symbols)),
+                sources=config.route_sources,
+                max_route_price_impact_pct=max_impact,
+            )
+
+        sellability_checker = _sell_check
 
     for page in range(1, config.pages + 1):
         url = pool_list_url(config, page=page)
@@ -640,6 +672,9 @@ def scan(
                 reject_idx += 1
                 category = verdicts._classify_reason(reasons[0]) if reasons else "other"
                 rejection_counts[category] += 1
+                if reasons:
+                    key = reasons[0][:200]
+                    reason_histogram[key] += 1
                 rejected.append({**public_pool, "reasons": reasons})
                 continue
 
@@ -652,6 +687,8 @@ def scan(
                     verdicts.emit_reject(public_pool, sell_reasons, stream_cfg, idx=reject_idx)
                     reject_idx += 1
                     rejection_counts[verdicts._classify_reason(sell_reasons[0]) if sell_reasons else "other"] += 1
+                    if sell_reasons:
+                        reason_histogram[sell_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": sell_reasons})
                     continue
 
@@ -686,6 +723,19 @@ def scan(
         capped_candidates = candidates
         candidates_truncated = 0
 
+    do_write_rejections = (
+        config.write_rejections if write_rejections_override is None else write_rejections_override
+    )
+    rejections_csv_written: str | None = None
+    if do_write_rejections and rejected:
+        rejections_csv_written = write_rejections_csv(
+            rejected,
+            scanned_at=datetime.now(UTC).isoformat(),
+            path=Path(config.rejections_csv_path),
+            reason_histogram=dict(reason_histogram.most_common(500)),
+            breakdown=dict(rejection_counts),
+        )
+
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
         "mode": "dry_run" if config.dry_run else "trade_disabled_in_this_build",
@@ -715,6 +765,8 @@ def scan(
         "candidates_truncated": candidates_truncated,
         "rejected_preview": rejected[:10],
         "rejection_breakdown": dict(rejection_counts),
+        "rejection_reason_histogram": dict(reason_histogram.most_common(50)),
+        "rejections_csv": rejections_csv_written,
     }
 
 
@@ -738,6 +790,25 @@ def print_report(report: dict[str, Any]) -> None:
             print(f"  ...{report['candidates_truncated']} candidate(s) hidden by capacity cap")
     if not report["candidates"]:
         print("No pools passed all filters. No action taken.")
+        rej = int(report.get("rejected_count") or 0)
+        if rej > 0:
+            hist = report.get("rejection_reason_histogram") or {}
+            if hist:
+                print(f"  ({rej} rejected — top first-reason strings:)")
+                for reason, n in list(hist.items())[:12]:
+                    short = reason if len(reason) <= 110 else reason[:107] + "..."
+                    print(f"    {n:>6}  {short}")
+            if report.get("rejections_csv"):
+                csv_path = Path(report["rejections_csv"])
+                summ = csv_path.with_name(csv_path.stem + ".summary.json")
+                print(f"  Full per-pool reject log (open in Excel): {csv_path}")
+                if summ.exists():
+                    print(f"  Category + histogram summary: {summ}")
+            else:
+                print(
+                    '  Tip: set "write_rejections": true in config/settings.json '
+                    "or run with --write-rejections to export every row to reports/rejections.csv."
+                )
         return
 
     print("\nCandidates:")
@@ -779,6 +850,72 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
             )
 
 
+def write_rejections_csv(
+    rejected: list[dict[str, Any]],
+    *,
+    scanned_at: str,
+    path: Path,
+    reason_histogram: dict[str, int],
+    breakdown: dict[str, int],
+) -> str:
+    """Write one CSV row per rejected pool plus a small JSON sidecar summary.
+
+    Open in Excel / VS Code to sort and filter by ``first_reason`` while you
+    tune ``settings.json``. The JSON file lists the top exact reasons and the
+    category breakdown.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path = path.with_suffix(".summary.json")
+    fieldnames = [
+        "scanned_at",
+        "pool_id",
+        "pair",
+        "apr",
+        "liquidity_usd",
+        "volume_24h_usd",
+        "burn_percent",
+        "first_reason",
+        "all_reasons",
+        "sellability_log",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in rejected:
+            reasons = row.get("reasons") or []
+            writer.writerow(
+                {
+                    "scanned_at": scanned_at,
+                    "pool_id": row.get("id", ""),
+                    "pair": f"{row.get('mint_a_symbol', '')}/{row.get('mint_b_symbol', '')}",
+                    "apr": row.get("apr", 0),
+                    "liquidity_usd": row.get("liquidity_usd", 0),
+                    "volume_24h_usd": row.get("volume_24h_usd", 0),
+                    "burn_percent": row.get("burn_percent", ""),
+                    "first_reason": reasons[0] if reasons else "",
+                    "all_reasons": " | ".join(reasons),
+                    "sellability_log": row.get("sellability_log", ""),
+                }
+            )
+    summary_path.write_text(
+        json.dumps(
+            {
+                "scanned_at": scanned_at,
+                "rejected_count": len(rejected),
+                "breakdown_by_category": breakdown,
+                "top_exact_first_reasons": reason_histogram,
+                "csv": str(path.resolve()),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return str(path.resolve())
+
+
 def resolve_config_path(path: Path) -> Path:
     if path.exists():
         return path
@@ -812,7 +949,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--show-rejects", type=int, default=200,
-        help="Max number of red REJECT lines to print per scan-cycle (default 200).",
+        help="Max red REJECT lines per scan (0 or negative = unlimited; can flood the terminal).",
+    )
+    parser.add_argument(
+        "--write-rejections",
+        action="store_true",
+        help="Write reports/rejections.csv (+ .summary.json) with every pool and its reject reason(s).",
     )
     parser.add_argument(
         "--wallet-override",
@@ -868,15 +1010,24 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"rpc_results": rpc_results}, indent=2))
 
     show_dashboard = args.dashboard and not args.no_dashboard
+    cap = int(args.show_rejects)
+    if cap <= 0:
+        cap = 10**7
     stream_cfg = verdicts.make_stream_config(
-        enabled=not args.quiet,
+        enabled=not args.quiet and not args.json,
         show_passes=not args.hide_passes,
-        max_rejections_shown=max(0, int(args.show_rejects)),
+        max_rejections_shown=cap,
     )
+    wr_override = True if args.write_rejections else None
 
     while True:
         try:
-            report = scan(config, wallet_config=active_wallet, verdict_stream=stream_cfg)
+            report = scan(
+                config,
+                wallet_config=active_wallet,
+                verdict_stream=stream_cfg,
+                write_rejections_override=wr_override,
+            )
         except RuntimeError as exc:
             print(f"Scan failed: {exc}", file=sys.stderr)
             return 1

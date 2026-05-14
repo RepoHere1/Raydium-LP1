@@ -102,6 +102,32 @@ def _truthy_route(payload: object) -> bool:
     return False
 
 
+def _extract_price_impact_pct(payload: dict) -> float | None:
+    """Return Jupiter-style price impact in percent, if the API included it.
+
+    When absent (older mocks, Raydium-only paths), returns ``None`` so callers
+    do not treat unknown impact as a failure.
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    candidates: list[object] = []
+    for key in ("priceImpactPct", "priceImpactPctApprox", "priceImpact"):
+        candidates.append(payload.get(key))
+    data = payload.get("data")
+    if isinstance(data, dict):
+        for key in ("priceImpactPct", "priceImpactPctApprox", "priceImpact"):
+            candidates.append(data.get(key))
+    for value in candidates:
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _extract_out_amount(payload: dict) -> float | None:
     """Best-effort: pull an outAmount-like number for ranking sources."""
 
@@ -132,6 +158,7 @@ def check_jupiter_route(
     amount: int = DEFAULT_PROBE_AMOUNT,
     slippage_bps: int = 3000,
     fetcher: HttpFetcher | None = None,
+    max_price_impact_pct: float | None = None,
 ) -> dict[str, object]:
     """Probe Jupiter v6 ``/quote`` for ``token_mint -> target_mint``."""
 
@@ -150,12 +177,28 @@ def check_jupiter_route(
     except RuntimeError as exc:
         return {"source": "jupiter", "ok": False, "error": str(exc), "url": url}
     ok = _truthy_route(payload)
-    return {
+    impact = _extract_price_impact_pct(payload) if isinstance(payload, dict) else None
+    record: dict[str, object] = {
         "source": "jupiter",
         "ok": ok,
-        "out_amount": _extract_out_amount(payload),
+        "out_amount": _extract_out_amount(payload) if isinstance(payload, dict) else None,
+        "price_impact_pct": impact,
         "url": url,
     }
+    if (
+        ok
+        and max_price_impact_pct is not None
+        and max_price_impact_pct > 0
+        and impact is not None
+        and impact > max_price_impact_pct
+    ):
+        record["ok"] = False
+        record["impact_reject"] = True
+        record["error"] = (
+            f"Jupiter price impact {impact:.2f}% exceeds max {max_price_impact_pct:.2f}% "
+            "(exit would be unsafe at your slippage cap)"
+        )
+    return record
 
 
 def check_raydium_route(
@@ -165,6 +208,7 @@ def check_raydium_route(
     amount: int = DEFAULT_PROBE_AMOUNT,
     slippage_bps: int = 3000,
     fetcher: HttpFetcher | None = None,
+    max_price_impact_pct: float | None = None,
 ) -> dict[str, object]:
     """Probe Raydium's swap-quote API for ``token_mint -> target_mint``."""
 
@@ -203,6 +247,7 @@ def check_sell_route(
     base_symbols: Sequence[str] = ("SOL", "USDC", "USDT"),
     sources: Iterable[str] = ("jupiter", "raydium"),
     fetcher: HttpFetcher | None = None,
+    max_route_price_impact_pct: float = 0.0,
 ) -> RouteCheck:
     """Try every base + every source until we find a priced route.
 
@@ -246,7 +291,10 @@ def check_sell_route(
             checker = ROUTE_SOURCES.get(source_name)
             if checker is None:
                 continue
-            record = checker(token_mint, target_mint, fetcher=fetcher)
+            extra: dict[str, object] = {}
+            if source_name == "jupiter" and max_route_price_impact_pct > 0:
+                extra["max_price_impact_pct"] = max_route_price_impact_pct
+            record = checker(token_mint, target_mint, fetcher=fetcher, **extra)
             record["target_symbol"] = base_symbol.upper()
             records.append(record)
             if record.get("ok") and (
@@ -287,12 +335,20 @@ class SellabilityResult:
         }
 
 
+def _impact_failure_message(check: RouteCheck, label: str) -> str | None:
+    for record in check.sources:
+        if record.get("impact_reject") and record.get("error"):
+            return f"{label}: {record['error']}"
+    return None
+
+
 def check_pool_sellability(
     pool: dict,
     *,
     base_symbols: Sequence[str] = ("SOL", "USDC", "USDT"),
     sources: Iterable[str] = ("jupiter", "raydium"),
     fetcher: HttpFetcher | None = None,
+    max_route_price_impact_pct: float = 0.0,
 ) -> SellabilityResult:
     """Run :func:`check_sell_route` for both tokens in a normalized pool."""
 
@@ -302,6 +358,7 @@ def check_pool_sellability(
         base_symbols=base_symbols,
         sources=sources,
         fetcher=fetcher,
+        max_route_price_impact_pct=max_route_price_impact_pct,
     )
     token_b = check_sell_route(
         pool.get("mint_b", ""),
@@ -309,12 +366,21 @@ def check_pool_sellability(
         base_symbols=base_symbols,
         sources=sources,
         fetcher=fetcher,
+        max_route_price_impact_pct=max_route_price_impact_pct,
     )
     reasons: list[str] = []
     if not token_a.ok:
-        reasons.append(f"no sell route for token A ({token_a.token_symbol or token_a.token_mint[:8]})")
+        msg = _impact_failure_message(token_a, "token A")
+        if msg:
+            reasons.append(msg)
+        else:
+            reasons.append(f"no sell route for token A ({token_a.token_symbol or token_a.token_mint[:8]})")
     if not token_b.ok:
-        reasons.append(f"no sell route for token B ({token_b.token_symbol or token_b.token_mint[:8]})")
+        msg = _impact_failure_message(token_b, "token B")
+        if msg:
+            reasons.append(msg)
+        else:
+            reasons.append(f"no sell route for token B ({token_b.token_symbol or token_b.token_mint[:8]})")
     return SellabilityResult(
         ok=not reasons,
         reasons=reasons,
