@@ -187,9 +187,9 @@ When Raydium pages are **`apr*` sorted** (default), the first pools are ultra-hi
 
 1. Add **`"pool_sort_field": "volume24h"`** (or `"liquidity"`) in `config\settings.json` — new in this build; wizard asks for it.
 2. **`"hard_exit_min_tvl_usd": 0`** turns off the exit-safety hard line (riskier); or lower (e.g. **200**) to match `aggressive` appetite.
-3. **`"pages": 5`–`10`** only helps a little on APR-sorted lists; sort change matters more.
-4. **`min_apr`**: very high floors + APR-sorted pages = almost only dust; consider **100–200** if you need a longer watch list (still dry-run).
-5. **Wallet `0` SOL** → **`max_positions=0`** only **caps** how many candidates print after filters; it does not create the TVL rejects you listed.
+3. **`"pages": 5`–`10`** only helps a little on APR-sorted lists; **changing `pool_sort_field` matters more** than brute-forcing more APR-sorted pages.
+4. **`min_apr`**: keep it at **300% or higher** if you are not willing to watch lower-APR pools. For “more breathing room” vs dust, prefer **`pool_sort_field`** and **`pages`** (and momentum preset tuning) rather than lowering APR below that floor.
+5. **Wallet balance** (live RPC in dry-run): **`max_positions=0`** is **planning-only** in dry-run — the full pass list still prints; it does **not** explain TVL rejects. Capacity **capping** applies when you run with **`dry_run: false`** (when enabled in your build).
 
 ## Live data sources
 
