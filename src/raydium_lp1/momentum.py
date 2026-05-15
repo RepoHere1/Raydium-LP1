@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from raydium_lp1 import momentum_detective
+
 HOLD_1D_HOURS = 24.0
 HOLD_1W_HOURS = 168.0
 
@@ -37,6 +39,7 @@ class MomentumConfig:
     sweet_min_pool_age_hours: float = 6.0
     sweet_max_pool_age_hours: float = 168.0
     min_tvl_usd: float = 0.0  # 0 = use scanner min_liquidity_usd only
+    detective_enabled: bool = True
 
 
 @dataclass
@@ -51,10 +54,13 @@ class MomentumAssessment:
     volume_accel: float = 0.0
     fee_24h_usd: float = 0.0
     pool_age_hours: float | None = None
+    combined_score: float = 0.0
+    detective: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "score": round(self.score, 1),
+            "combined_score": round(self.combined_score, 1),
             "tier": self.tier,
             "signals": list(self.signals),
             "exit_watch": self.exit_watch,
@@ -65,6 +71,9 @@ class MomentumAssessment:
             "fee_24h_usd": round(self.fee_24h_usd, 2),
             "pool_age_hours": self.pool_age_hours,
         }
+        if self.detective is not None:
+            out["detective"] = dict(self.detective)
+        return out
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -106,6 +115,8 @@ def assess_momentum(
     cfg: MomentumConfig,
     *,
     health: Mapping[str, Any] | None = None,
+    history: Mapping[str, Any] | None = None,
+    market_pulse: Mapping[str, set[str]] | None = None,
     now: float | None = None,
 ) -> MomentumAssessment:
     """Score one normalized pool dict using live Raydium fields."""
@@ -228,9 +239,8 @@ def assess_momentum(
     score = _clamp(score, 0.0, 100.0)
 
     tier = TIER_WATCH
-    if score >= 72 and vol_tvl >= cfg.min_volume_tvl_ratio and apr >= 200:
-        tier = TIER_HOT
-    elif score >= 55:
+    rank_score = score
+    if score >= 55:
         tier = TIER_ENTER
     elif score < 35:
         tier = TIER_WATCH
@@ -240,6 +250,28 @@ def assess_momentum(
         exit_reasons.append("health warning — consider exit if TVL/volume slip")
 
     exit_watch = bool(exit_reasons) or tier == TIER_EXIT
+
+    detective_dict: dict[str, Any] | None = None
+    combined = score
+    if cfg.detective_enabled:
+        det = momentum_detective.run_detective(
+            pool,
+            health=health,
+            history=history,
+            market_pulse=market_pulse,
+            now=now,
+        )
+        detective_dict = det.to_dict()
+        combined = min(100.0, score * 0.55 + det.detective_score * 0.30 + det.inflow_bias * 0.15)
+        rank_score = combined
+        signals.extend(det.sniff_tags[:6])
+        if det.inflow_bias >= 55 and tier == TIER_WATCH and score >= 45:
+            tier = TIER_ENTER
+
+    if rank_score >= 72 and vol_tvl >= cfg.min_volume_tvl_ratio and apr >= 200:
+        tier = TIER_HOT
+    elif rank_score >= 55 and tier == TIER_WATCH:
+        tier = TIER_ENTER
 
     return MomentumAssessment(
         score=score,
@@ -252,6 +284,8 @@ def assess_momentum(
         volume_accel=accel,
         fee_24h_usd=fee24,
         pool_age_hours=age_h,
+        combined_score=combined,
+        detective=detective_dict,
     )
 
 
@@ -267,6 +301,7 @@ def momentum_config_from_scanner(config: Any) -> MomentumConfig:
         sweet_min_pool_age_hours=float(getattr(config, "momentum_sweet_min_pool_age_hours", 6.0)),
         sweet_max_pool_age_hours=float(getattr(config, "momentum_sweet_max_pool_age_hours", 168.0)),
         min_tvl_usd=float(getattr(config, "momentum_min_tvl_usd", 0.0)),
+        detective_enabled=bool(getattr(config, "momentum_detective_enabled", True)),
     )
 
 
@@ -281,9 +316,10 @@ def gate_candidate(
         return True, []
     if assessment.tier == TIER_EXIT:
         return False, list(assessment.exit_reasons) or ["momentum exit_now"]
-    if assessment.score < cfg.min_score:
+    use_score = assessment.combined_score if assessment.combined_score > 0 else assessment.score
+    if use_score < cfg.min_score:
         return False, [
-            f"momentum score {assessment.score:.0f} below min {cfg.min_score:.0f} "
+            f"momentum combined {use_score:.0f} below min {cfg.min_score:.0f} "
             f"(vol/tvl={assessment.volume_tvl_ratio:.2f}, accel={assessment.volume_accel:.2f})"
         ]
     return True, []

@@ -62,9 +62,31 @@ class DashboardBuildTests(unittest.TestCase):
         data = dashboard.build_dashboard(config=config, report=self._report(),
                                          alerts_path=Path("/nonexistent/none.json"))
         text = dashboard.render_dashboard_text(data)
-        for section in ("Settings", "Wallet & capacity", "Open positions", "Recent alerts", "RPC health", "Last scan"):
+        for section in ("Settings", "Wallet & capacity", "Momentum sniffer", "Open positions", "Recent alerts", "RPC health", "Last scan"):
             self.assertIn(section, text)
         self.assertIn("SOL/TKN", text)
+
+    def test_dashboard_shows_momentum_hot_rows(self):
+        report = self._report()
+        report["momentum_hot_top"] = [
+            {
+                "pair": "SOL/TEST",
+                "combined_score": 88,
+                "tvl_usd": 12000,
+                "volume_24h_usd": 45000,
+                "apr": 1200,
+                "tier": "hot",
+                "sniff_tags": ["buyer_flow_ok"],
+            }
+        ]
+        data = dashboard.build_dashboard(
+            config=ScannerConfig(momentum_enabled=True, momentum_top_hot=25),
+            report=report,
+            alerts_path=Path("/nonexistent/none.json"),
+        )
+        text = dashboard.render_dashboard_text(data)
+        self.assertIn("SOL/TEST", text)
+        self.assertIn("CMB=", text)
 
     def test_write_dashboard_creates_json(self):
         with tempfile.TemporaryDirectory() as tmp:

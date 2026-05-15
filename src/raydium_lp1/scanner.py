@@ -24,7 +24,7 @@ from urllib.request import Request, urlopen
 from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
-from raydium_lp1 import emergency, health, momentum, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1 import emergency, health, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -104,6 +104,9 @@ class ScannerConfig:
     momentum_sweet_max_pool_age_hours: float = 168.0
     momentum_min_tvl_usd: float = 0.0
     sort_candidates_by_momentum: bool = True
+    momentum_top_hot: int = 25
+    momentum_detective_enabled: bool = True
+    momentum_probe_market_lists: bool = True
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -185,6 +188,9 @@ class ScannerConfig:
             ),
             momentum_min_tvl_usd=float(raw_with_strategy.get("momentum_min_tvl_usd", 0.0)),
             sort_candidates_by_momentum=bool(raw_with_strategy.get("sort_candidates_by_momentum", True)),
+            momentum_top_hot=max(1, int(raw_with_strategy.get("momentum_top_hot", 25))),
+            momentum_detective_enabled=bool(raw_with_strategy.get("momentum_detective_enabled", True)),
+            momentum_probe_market_lists=bool(raw_with_strategy.get("momentum_probe_market_lists", True)),
         )
 
 
@@ -650,6 +656,8 @@ def scan(
     scanned = 0
     reject_idx = 0
     on_chain_owner_cache: dict[str, str | None] = {}
+    market_pulse: dict[str, set[str]] = {}
+    momentum_hot_top: list[dict[str, Any]] = []
     stream_cfg = verdict_stream if verdict_stream is not None else verdicts.make_stream_config(enabled=False)
     if verdict_stream is not None and verdict_stream.enabled:
         verdict_stream.row_emit_count = 0
@@ -815,25 +823,82 @@ def scan(
             pool["health"] = assessment.to_dict()
             health_summary[assessment.score] = health_summary.get(assessment.score, 0) + 1
 
+    if config.momentum_enabled and config.momentum_probe_market_lists:
+        try:
+            market_pulse = momentum_detective.fetch_market_pulse(
+                config.raydium_api_base,
+                page_size=50,
+                fetch_json=fetch_json,
+                timeout=config.http_timeout_seconds,
+            )
+            print(
+                f"[scan] momentum sniffer: probed Raydium leaderboards "
+                f"(vol/apr/tvl) — {sum(len(v) for v in market_pulse.values())} pool ids",
+                file=sys.stderr,
+                flush=True,
+            )
+        except RuntimeError as exc:
+            print(f"[scan] momentum market probe skipped: {exc}", file=sys.stderr, flush=True)
+
+    liq_history: dict[str, Any] = {}
+    if config.momentum_enabled and config.track_liquidity_health:
+        liq_history = health.load_history(Path(config.liquidity_history_path))
+
+    momentum_hot_top: list[dict[str, Any]] = []
     if config.momentum_enabled and candidates:
         mom_cfg = momentum.momentum_config_from_scanner(config)
         for pool in candidates:
             pool["momentum"] = momentum.assess_momentum(
-                pool, mom_cfg, health=pool.get("health")
+                pool,
+                mom_cfg,
+                health=pool.get("health"),
+                history=liq_history,
+                market_pulse=market_pulse,
             ).to_dict()
         if config.sort_candidates_by_momentum:
             candidates.sort(
-                key=lambda p: float((p.get("momentum") or {}).get("score") or 0),
+                key=lambda p: float((p.get("momentum") or {}).get("combined_score")
+                                    or (p.get("momentum") or {}).get("score") or 0),
                 reverse=True,
             )
-        hot = [p for p in candidates if (p.get("momentum") or {}).get("tier") == momentum.TIER_HOT]
-        if hot:
+        momentum_hot_top = momentum_detective.build_hot_leaderboard(
+            candidates, top_n=config.momentum_top_hot
+        )
+        if momentum_hot_top:
+            top = momentum_hot_top[0]
             print(
-                f"[scan] momentum: {len(hot)} HOT pool(s) (top score "
-                f"{(hot[0].get('momentum') or {}).get('score', 0):.0f}) — see candidates / dashboard",
+                f"[scan] momentum TOP {len(momentum_hot_top)}: "
+                f"{top.get('pair')} combined={top.get('combined_score')} "
+                f"— reports/momentum_sniffer.json + dashboard",
                 file=sys.stderr,
                 flush=True,
             )
+        try:
+            REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+            sniffer_path = REPORTS_DIR / "momentum_sniffer.json"
+            sniffer_path.write_text(
+                json.dumps(
+                    {
+                        "scanned_at": datetime.now(UTC).isoformat(),
+                        "market_pulse_sizes": {k: len(v) for k, v in market_pulse.items()},
+                        "momentum_hot_top": momentum_hot_top,
+                        "all_scored_candidates": [
+                            {
+                                "pool_id": p.get("id"),
+                                "pair": f"{p.get('mint_a_symbol')}/{p.get('mint_b_symbol')}",
+                                "momentum": p.get("momentum"),
+                            }
+                            for p in candidates[:100]
+                        ],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     if config.track_liquidity_health and candidates and config.emergency_close_enabled:
         alerts = emergency.run_emergency_pass(
@@ -917,6 +982,8 @@ def scan(
         "momentum_enabled": config.momentum_enabled,
         "min_momentum_score": config.min_momentum_score,
         "momentum_hold_hours": config.momentum_hold_hours,
+        "momentum_hot_top": momentum_hot_top,
+        "momentum_market_pulse_sizes": {k: len(v) for k, v in market_pulse.items()},
     }
 
 

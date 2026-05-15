@@ -83,8 +83,10 @@ def _pair(pool: dict) -> str:
 
 def _momentum_col(pool: dict) -> str:
     mom = pool.get("momentum")
-    if isinstance(mom, dict) and mom.get("score") is not None:
-        return f"{float(mom['score']):>3.0f}"
+    if isinstance(mom, dict):
+        val = mom.get("combined_score", mom.get("score"))
+        if val is not None:
+            return f"{float(val):>3.0f}"
     return "  -"
 
 

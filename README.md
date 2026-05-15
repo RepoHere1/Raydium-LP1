@@ -192,11 +192,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_wizard.ps1
 The safe example settings live in:
 
 ```text
-config\filters.example.json
-config\settings.example.json
+config\settings.example.json          # full template (every key)
+config\settings.momentum.example.json # fee-rush / momentum preset (TVL $5k, MOM 55, etc.)
+config\filters.example.json           # legacy alternate example
 ```
 
-Your real local settings live in `config\settings.json`, which is ignored by Git.
+Your **live** config is only on your PC: `config\settings.json` (ignored by Git). The scanner does **not** read the `.example` files unless you pass `--config` to them.
+
+See **docs/CONFIG.md**. To apply the momentum preset on Windows:
+
+```powershell
+.\scripts\sync_settings.ps1 -ApplyMomentumTemplate
+```
 
 ## Creating `.env` correctly
 

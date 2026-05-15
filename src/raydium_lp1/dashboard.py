@@ -29,6 +29,7 @@ class DashboardData:
     settings: dict
     wallet_capacity: dict
     open_positions: list[dict]
+    momentum_hot_top: list[dict]
     recent_alerts: list[dict]
     rpc_health: list[dict]
     last_scan: dict
@@ -39,6 +40,7 @@ class DashboardData:
             "settings": dict(self.settings),
             "wallet_capacity": dict(self.wallet_capacity),
             "open_positions": list(self.open_positions),
+            "momentum_hot_top": list(self.momentum_hot_top),
             "recent_alerts": list(self.recent_alerts),
             "rpc_health": list(self.rpc_health),
             "last_scan": dict(self.last_scan),
@@ -77,6 +79,11 @@ def build_dashboard(
         "emergency_close_enabled": getattr(config, "emergency_close_enabled", True),
         "emergency_max_slippage_pct": getattr(config, "emergency_max_slippage_pct", 0.30),
         "network": getattr(config, "network", "solana"),
+        "momentum_enabled": getattr(config, "momentum_enabled", False),
+        "min_momentum_score": getattr(config, "min_momentum_score", 0),
+        "momentum_hold_hours": getattr(config, "momentum_hold_hours", 24),
+        "momentum_top_hot": getattr(config, "momentum_top_hot", 25),
+        "hard_exit_min_tvl_usd": getattr(config, "hard_exit_min_tvl_usd", 0),
     }
 
     wallet_capacity = dict(report.get("wallet_capacity") or {})
@@ -124,6 +131,7 @@ def build_dashboard(
         settings=settings,
         wallet_capacity=wallet_capacity,
         open_positions=positions,
+        momentum_hot_top=list(report.get("momentum_hot_top") or []),
         recent_alerts=recent_alerts,
         rpc_health=list(rpc_health or []),
         last_scan=last_scan,
@@ -199,6 +207,26 @@ def render_dashboard_text(data: DashboardData) -> str:
         f"| reserved={capacity.get('reserved_sol', 0):.4f} SOL "
         f"| max_positions={capacity.get('max_positions', 0)}"
     )
+
+    lines.append("")
+    top_n = int(settings.get("momentum_top_hot") or 25)
+    lines.append(f"Momentum sniffer — TOP {top_n} HOT (fee-rush targets, live Raydium data):")
+    if not data.momentum_hot_top:
+        lines.append("  (none this cycle — enable strategy=momentum or lower min_momentum_score)")
+    for rank, row in enumerate(data.momentum_hot_top[:top_n], start=1):
+        tags = ", ".join((row.get("sniff_tags") or [])[:4])
+        lines.append(
+            f"  {rank:>2}. {row.get('pair', '?'):<18} "
+            f"CMB={float(row.get('combined_score') or 0):>5.0f} "
+            f"TVL ${float(row.get('tvl_usd') or 0):>9,.0f} "
+            f"VOL ${float(row.get('volume_24h_usd') or 0):>9,.0f} "
+            f"APR {float(row.get('apr') or 0):>8.0f}% "
+            f"{row.get('tier', '')}"
+        )
+        if tags:
+            lines.append(f"       sniff: {tags}")
+        if row.get("exit_watch"):
+            lines.append("       !! exit_watch")
 
     lines.append("")
     lines.append(f"Open positions (dry-run): {len(data.open_positions)}")

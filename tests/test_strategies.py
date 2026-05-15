@@ -44,7 +44,7 @@ class StrategyPresetTests(unittest.TestCase):
     def test_momentum_preset_thresholds(self):
         preset = strategies.get_preset("momentum")
         assert preset is not None
-        self.assertEqual(preset.min_liquidity_usd, 2000)
+        self.assertEqual(preset.min_liquidity_usd, 5000)
 
     def test_fee_rush_alias_normalizes_to_momentum(self):
         self.assertEqual(strategies.normalize_strategy("fee_rush"), "momentum")

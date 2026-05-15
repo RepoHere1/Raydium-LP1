@@ -36,5 +36,35 @@ Write-Host "Git remote branches:" -ForegroundColor Cyan
 git ls-remote --heads origin 2>$null
 
 Write-Host ""
+Write-Host "Settings on Git vs your PC:" -ForegroundColor Cyan
+Write-Host "  Git:    config\settings.example.json + config\settings.momentum.example.json"
+Write-Host "  Local:  config\settings.json  <-- scanner reads THIS (not in Git)"
+Write-Host ""
+
+if (Test-Path $Config) {
+    try {
+        $cfg = Get-Content $Config -Raw | ConvertFrom-Json
+        $momKeys = @(
+            "strategy", "min_liquidity_usd", "hard_exit_min_tvl_usd",
+            "momentum_enabled", "min_momentum_score", "momentum_hold_hours",
+            "momentum_min_volume_tvl_ratio", "momentum_top_hot"
+        )
+        Write-Host "Momentum-related values in $Config :" -ForegroundColor DarkGray
+        foreach ($k in $momKeys) {
+            if ($cfg.PSObject.Properties[$k]) {
+                Write-Host "  $k = $($cfg.$k)"
+            } else {
+                Write-Host "  $k = (missing — run .\scripts\sync_settings.ps1)" -ForegroundColor Yellow
+            }
+        }
+    } catch {
+        Write-Host "  (could not parse $Config)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  Run: .\scripts\sync_settings.ps1 -ApplyMomentumTemplate" -ForegroundColor Yellow
+}
+
+Write-Host ""
 Write-Host "If BAD appears for Local settings or Local .env, run:" -ForegroundColor Cyan
 Write-Host ".\scripts\setup_wizard.ps1"
+Write-Host ".\scripts\sync_settings.ps1 -ApplyMomentumTemplate"

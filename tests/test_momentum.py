@@ -76,7 +76,7 @@ class StrategyMomentumTests(unittest.TestCase):
         merged = strategies.apply_strategy({"dry_run": True}, "momentum")
         self.assertEqual(merged["strategy"], "momentum")
         self.assertTrue(merged.get("momentum_enabled"))
-        self.assertEqual(merged["min_liquidity_usd"], 2000)
+        self.assertEqual(merged["min_liquidity_usd"], 5000)
 
 
 if __name__ == "__main__":

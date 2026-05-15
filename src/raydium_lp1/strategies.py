@@ -30,17 +30,22 @@ ALLOWED_STRATEGIES = (
 # Extra settings applied when strategy=momentum (fee-rush / short-hold LP hunting).
 MOMENTUM_STRATEGY_EXTRAS: dict[str, object] = {
     "momentum_enabled": True,
-    "min_momentum_score": 50.0,
+    "min_momentum_score": 55.0,
     "require_momentum_score": False,
     "momentum_hold_hours": 24.0,
     "momentum_min_volume_tvl_ratio": 0.5,
     "momentum_sweet_min_pool_age_hours": 6.0,
     "momentum_sweet_max_pool_age_hours": 168.0,
-    "momentum_min_tvl_usd": 2000.0,
+    "momentum_min_tvl_usd": 5000.0,
+    "min_liquidity_usd": 5000.0,
+    "hard_exit_min_tvl_usd": 1000.0,
+    "momentum_top_hot": 25,
+    "momentum_detective_enabled": True,
+    "momentum_probe_market_lists": True,
     "sort_candidates_by_momentum": True,
     "max_pool_age_hours": 168.0,
     "min_pool_age_hours": 6.0,
-    "hard_exit_min_tvl_usd": 500.0,
+    "pages": 3,
 }
 
 
@@ -94,7 +99,7 @@ STRATEGY_PRESETS: dict[str, StrategyPreset] = {
     STRATEGY_MOMENTUM: StrategyPreset(
         name=STRATEGY_MOMENTUM,
         min_apr=300.0,
-        min_liquidity_usd=2_000.0,
+        min_liquidity_usd=5_000.0,
         min_volume_24h_usd=500.0,
         description=(
             "Real TVL + buyer flow: rank pools by live vol/TVL, acceleration, APR; "
