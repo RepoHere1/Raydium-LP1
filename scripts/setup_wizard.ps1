@@ -23,36 +23,146 @@ function Ask-YesNo {
     return $answer.Trim().ToLowerInvariant().StartsWith("y")
 }
 
+function Read-EnvDefaults {
+    param([string]$Path)
+    $result = @{ "RAYDIUM_API_BASE" = $null; "SOLANA_RPC_URL" = $null; "SOLANA_RPC_URLS" = $null }
+    if (-not (Test-Path $Path)) { return $result }
+    foreach ($line in (Get-Content $Path -Encoding UTF8)) {
+        $line = $line.Trim()
+        if ($line -eq "" -or $line.StartsWith("#") -or -not $line.Contains("=")) { continue }
+        $idx = $line.IndexOf("=")
+        $key = $line.Substring(0, $idx).Trim()
+        $value = $line.Substring($idx + 1).Trim().Trim("'", '"')
+        if ($result.ContainsKey($key)) { $result[$key] = $value }
+    }
+    return $result
+}
+
+function Read-ConfigDefaults {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return $null }
+    try {
+        return (Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json)
+    } catch {
+        Write-Host "  (could not parse existing $Path; ignoring saved values)" -ForegroundColor Yellow
+        return $null
+    }
+}
+
+# Pre-load anything the user already had so the prompts use it as defaults.
+$envDefaults = Read-EnvDefaults -Path $EnvPath
+$configDefaults = Read-ConfigDefaults -Path $ConfigPath
+
+function Get-Default {
+    param($Object, [string]$PropertyName, $Fallback)
+    if ($null -eq $Object) { return $Fallback }
+    $prop = $Object.PSObject.Properties[$PropertyName]
+    if ($null -eq $prop -or $null -eq $prop.Value -or "$($prop.Value)".Trim() -eq "") {
+        return $Fallback
+    }
+    return $prop.Value
+}
+
 Write-Host ""
 Write-Host "Raydium-LP1 setup wizard" -ForegroundColor Cyan
 Write-Host "This creates your local config\settings.json and .env files."
 Write-Host "Your .env can contain private RPC/API-key URLs and is ignored by Git."
 Write-Host ""
 
-$minApr = [double](Ask-WithDefault "Minimum APR percent to flag. You said 999.99, and you can change it later" "999.99")
-$minLiquidity = [double](Ask-WithDefault "Minimum pool liquidity/TVL in USD" "1000")
-$minVolume = [double](Ask-WithDefault "Minimum 24h volume in USD" "100")
-$maxPosition = [double](Ask-WithDefault "Future max position size in USD; scanner is still dry-run only" "25")
-$quotesRaw = Ask-WithDefault "Allowed quote symbols, comma-separated" "SOL,USDC,USDT"
-$pageSize = [int](Ask-WithDefault "Raydium page size. Raydium docs allow up to 1000" "100")
-$pages = [int](Ask-WithDefault "How many Raydium pages to scan per run" "1")
-$raydiumApiBase = Ask-WithDefault "Raydium live API base" "https://api-v3.raydium.io"
-$primaryRpc = Ask-WithDefault "Primary Solana RPC URL. Public default is OK; paste Helius/Chainstack/etc if you want" "https://api.mainnet-beta.solana.com"
+if ($null -ne $configDefaults -or $null -ne $envDefaults["SOLANA_RPC_URL"]) {
+    Write-Host "Found existing settings; using them as defaults. Press Enter to keep, or type a new value." -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+Write-Host "Strategy presets (you can pick a profile and skip the manual numbers):"
+Write-Host "  conservative   APR>=  50%  TVL>=`$50000  Vol>=`$10000   - boring, safer pairs"
+Write-Host "  moderate       APR>= 200%  TVL>=`$10000  Vol>=`$1000    - mid-cap yield"
+Write-Host "  aggressive     APR>= 777%  TVL>=`$500    Vol>=`$100     - high APR hunting"
+Write-Host "  degen          APR>= 500%  TVL>=`$200    Vol>=`$50      - anything that pumps"
+Write-Host "  custom         keep manual values you enter below"
+$savedStrategy = "$(Get-Default $configDefaults 'strategy' 'custom')"
+$strategy = (Ask-WithDefault "Strategy" $savedStrategy).ToLowerInvariant()
+
+switch ($strategy) {
+    "conservative" { $minAprDefault = 50;  $minLiqDefault = 50000; $minVolDefault = 10000 }
+    "moderate"     { $minAprDefault = 200; $minLiqDefault = 10000; $minVolDefault = 1000  }
+    "aggressive"   { $minAprDefault = 777; $minLiqDefault = 500;   $minVolDefault = 100   }
+    "degen"        { $minAprDefault = 500; $minLiqDefault = 200;   $minVolDefault = 50    }
+    default        { $strategy = "custom"; $minAprDefault = 999.99; $minLiqDefault = 1000; $minVolDefault = 100 }
+}
+# Remembered values still win over preset numbers when present.
+$minAprDefault       = Get-Default $configDefaults "min_apr"           $minAprDefault
+$minLiqDefault       = Get-Default $configDefaults "min_liquidity_usd" $minLiqDefault
+$minVolDefault       = Get-Default $configDefaults "min_volume_24h_usd" $minVolDefault
+$maxPositionDefault  = Get-Default $configDefaults "max_position_usd"  25
+$pageSizeDefault     = Get-Default $configDefaults "page_size"         100
+$pagesDefault        = Get-Default $configDefaults "pages"             1
+
+$minApr = [double](Ask-WithDefault "Minimum APR percent to flag" "$minAprDefault")
+$minLiquidity = [double](Ask-WithDefault "Minimum pool liquidity/TVL in USD" "$minLiqDefault")
+$minVolume = [double](Ask-WithDefault "Minimum 24h volume in USD" "$minVolDefault")
+$maxPosition = [double](Ask-WithDefault "Future max position size in USD; scanner is still dry-run only" "$maxPositionDefault")
+
+# Allowed-quotes: prefer the previously-saved array, else fall back to wide default.
+if ($null -ne $configDefaults -and $configDefaults.PSObject.Properties["allowed_quote_symbols"]) {
+    $quotesDefault = ($configDefaults.allowed_quote_symbols -join ",")
+} else { $quotesDefault = "SOL,USDC,USDT" }
+$quotesRaw = Ask-WithDefault "Allowed quote symbols, comma-separated" $quotesDefault
+
+$pageSize = [int](Ask-WithDefault "Raydium page size. Raydium docs allow up to 1000" "$pageSizeDefault")
+if ($pageSize -lt 10) { $pageSize = 10 }
+if ($pageSize -gt 1000) {
+    Write-Host "  page size $pageSize exceeds Raydium's documented max; clamping to 1000." -ForegroundColor Yellow
+    $pageSize = 1000
+}
+$pages = [int](Ask-WithDefault "How many Raydium pages to scan per run (1-50; one scan-cycle hits this many HTTP requests)" "$pagesDefault")
+if ($pages -lt 1) { $pages = 1 }
+if ($pages -gt 50) {
+    Write-Host "  pages=$pages would issue $pages back-to-back HTTP calls and is almost certainly a typo." -ForegroundColor Yellow
+    Write-Host "  clamping to 50. Raise it again later by editing config\settings.json if you really mean it." -ForegroundColor Yellow
+    $pages = 50
+}
+
+$raydiumApiBaseDefault = if ($envDefaults["RAYDIUM_API_BASE"]) { $envDefaults["RAYDIUM_API_BASE"] } else { "https://api-v3.raydium.io" }
+$raydiumApiBase = Ask-WithDefault "Raydium live API base" $raydiumApiBaseDefault
+
+$primaryRpcDefault = if ($envDefaults["SOLANA_RPC_URL"]) { $envDefaults["SOLANA_RPC_URL"] } else { "https://api.mainnet-beta.solana.com" }
+$primaryRpc = Ask-WithDefault "Primary Solana RPC URL. Public default is OK; paste Helius/Chainstack/etc if you want" $primaryRpcDefault
 
 $fallbacks = New-Object System.Collections.Generic.List[string]
-$fallbacks.Add("https://solana-rpc.publicnode.com")
-$fallbacks.Add("https://solana.drpc.org")
+if ($envDefaults["SOLANA_RPC_URLS"]) {
+    foreach ($entry in $envDefaults["SOLANA_RPC_URLS"].Split(",")) {
+        $entry = $entry.Trim()
+        if ($entry -and $entry -ne $primaryRpc) { $fallbacks.Add($entry) }
+    }
+}
+if ($fallbacks.Count -eq 0) {
+    $fallbacks.Add("https://solana-rpc.publicnode.com")
+    $fallbacks.Add("https://solana.drpc.org")
+}
+
 Write-Host ""
-Write-Host "Add backup RPC URLs. Paste one URL at a time. Press Enter on a blank line when done."
+Write-Host "Backup RPC URLs already saved:" -ForegroundColor DarkGray
+foreach ($entry in $fallbacks) { Write-Host "  - $entry" -ForegroundColor DarkGray }
+Write-Host "Press Enter to keep all of them, type 'clear' to drop them, or paste extras one at a time."
+$clearedThisRun = $false
 while ($true) {
-    $rpc = Read-Host "Backup RPC URL"
+    $rpc = Read-Host "Add backup RPC URL (Enter to finish)"
     if ([string]::IsNullOrWhiteSpace($rpc)) { break }
-    $fallbacks.Add($rpc.Trim())
+    $rpcTrim = $rpc.Trim()
+    if ($rpcTrim.ToLowerInvariant() -eq "clear") {
+        $fallbacks.Clear()
+        $clearedThisRun = $true
+        Write-Host "  cleared." -ForegroundColor Yellow
+        continue
+    }
+    if (-not $fallbacks.Contains($rpcTrim)) { $fallbacks.Add($rpcTrim) }
 }
 
 $allowedQuotes = $quotesRaw.Split(",") | ForEach-Object { $_.Trim().ToUpperInvariant() } | Where-Object { $_ }
 $config = [ordered]@{
     dry_run = $true
+    strategy = $strategy
     min_apr = $minApr
     apr_field = "apr24h"
     raydium_api_base = $raydiumApiBase
@@ -67,7 +177,7 @@ $config = [ordered]@{
     blocked_token_symbols = @()
     blocked_mints = @()
     require_pool_id = $true
-    solana_rpc_urls = @()
+    solana_rpc_urls = @(@($primaryRpc) + $fallbacks | Where-Object { $_ } | Select-Object -Unique)
 }
 
 $configDir = Split-Path -Parent $ConfigPath
@@ -83,8 +193,8 @@ $allFallbacks = ($fallbacks | Where-Object { $_ -and $_ -ne $primaryRpc }) -join
 ) | Set-Content -Path $EnvPath -Encoding UTF8
 
 Write-Host ""
-Write-Host "Created $ConfigPath with min_apr=$minApr" -ForegroundColor Green
-Write-Host "Created $EnvPath with your live RPC/API URLs" -ForegroundColor Green
+Write-Host "Created $ConfigPath with min_apr=$minApr, strategy=$strategy" -ForegroundColor Green
+Write-Host "Saved $($fallbacks.Count + 1) RPC URL(s) to both $ConfigPath and $EnvPath" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next paste/run:" -ForegroundColor Cyan
 Write-Host ".\scripts\doctor.ps1"

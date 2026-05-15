@@ -4,7 +4,14 @@ param(
     [switch]$Loop,
     [int]$Interval = 60,
     [switch]$CheckRpc,
-    [switch]$WriteReports
+    [switch]$WriteReports,
+    [switch]$WriteRejections,
+    [int]$ShowRejects = 200,
+    [switch]$VerdictStdout,
+    [string]$VerdictLog = "",
+    [switch]$NoVerdictLog,
+    [int]$VerdictHeaderEvery = 25,
+    [switch]$SpawnWatcher
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,6 +19,9 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
+
+# Flush Python prints immediately (helps long scans show [REJ] lines live on Windows).
+$env:PYTHONUNBUFFERED = "1"
 
 if (-not (Test-Path $Config)) {
     if (Test-Path "config\filters.example.json") {
@@ -40,6 +50,22 @@ if (-not (Test-Path "scripts\scan_raydium_lps.py")) {
     throw "Missing scripts\scan_raydium_lps.py. Your folder does not have the scanner files yet. Pull/copy the Raydium-LP1 files first."
 }
 
+if ($SpawnWatcher) {
+    $watchPs1 = Join-Path $RepoRoot "scripts\watch_verdict.ps1"
+    if (-not (Test-Path -LiteralPath $watchPs1)) {
+        throw "Missing scripts\watch_verdict.ps1. Git pull the latest Raydium-LP1, or copy watch_verdict.ps1 into your scripts folder."
+    }
+    $shell = "powershell.exe"
+    if (Get-Command pwsh -ErrorAction SilentlyContinue) {
+        $shell = "pwsh.exe"
+    }
+    Start-Process -FilePath $shell -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $watchPs1
+    ) -WorkingDirectory $RepoRoot
+    Start-Sleep -Milliseconds 600
+    Write-Host "Spawned log watcher in a new window ($shell). Use -Loop on this run so Window 1 keeps writing the log." -ForegroundColor Cyan
+}
+
 $scannerArgs = @("scripts\scan_raydium_lps.py", "--config", $Config)
 if ($Json) {
     $scannerArgs += "--json"
@@ -53,6 +79,22 @@ if ($CheckRpc) {
 if ($WriteReports) {
     $scannerArgs += "--write-reports"
 }
+if ($WriteRejections) {
+    $scannerArgs += "--write-rejections"
+}
+if ($VerdictStdout) {
+    $scannerArgs += "--verdict-stdout"
+}
+if ($VerdictLog) {
+    $scannerArgs += @("--verdict-log", $VerdictLog)
+}
+if ($NoVerdictLog) {
+    $scannerArgs += "--no-verdict-log"
+}
+if ($VerdictHeaderEvery -ne 25) {
+    $scannerArgs += @("--verdict-header-every", "$VerdictHeaderEvery")
+}
+$scannerArgs += @("--show-rejects", "$ShowRejects")
 
 & $pythonExe @pythonPrefixArgs @scannerArgs
 exit $LASTEXITCODE
