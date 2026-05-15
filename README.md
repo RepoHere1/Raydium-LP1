@@ -113,6 +113,17 @@ START_HERE_SCAN.bat
 
 About the code box / panel moving on the right side: that is part of the coding workspace UI, not the Raydium-LP1 project files. I cannot change that UI from this repo. The safest workaround is to use the copy/paste PowerShell blocks in this README or double-click the `START_HERE_*.bat` files.
 
+## Scanner exits instantly with `JSONDecodeError` around line 26
+
+Your `config\settings.json` has invalid JSON (often a missing comma). `git pull`, then restore a known-good file:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+git pull origin main
+.\scripts\repair_settings.ps1 -ApplyMomentumTemplate
+.\scripts\run_scan.ps1 -Loop -SpawnWatcher -WriteRejections
+```
+
 ## Live data sources
 
 This project is designed to use real production data, not placeholders:

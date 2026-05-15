@@ -75,7 +75,8 @@ if (Test-Path $Config) {
 }
 
 Write-Host ""
-Write-Host "If BAD appears for Local settings or Local .env, run:" -ForegroundColor Cyan
-Write-Host ".\scripts\repair_settings.ps1 -ApplyMomentumTemplate"
-Write-Host ".\scripts\setup_wizard.ps1"
-Write-Host ".\scripts\sync_settings.ps1 -ApplyMomentumTemplate"
+Write-Host "If BAD appears for Local settings or Local .env, run (in order):" -ForegroundColor Cyan
+Write-Host "  git pull   # ensures run_scan validates JSON before spawn + watcher"
+Write-Host "  .\scripts\repair_settings.ps1 -ApplyMomentumTemplate   # fixes broken settings.json"
+Write-Host "  .\scripts\doctor.ps1"
+Write-Host "  .\scripts\setup_wizard.ps1   # optional full re-setup"
