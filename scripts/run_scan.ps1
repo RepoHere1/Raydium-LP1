@@ -10,7 +10,8 @@ param(
     [switch]$VerdictStdout,
     [string]$VerdictLog = "",
     [switch]$NoVerdictLog,
-    [int]$VerdictHeaderEvery = 25
+    [int]$VerdictHeaderEvery = 25,
+    [switch]$SpawnWatcher
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,6 +48,22 @@ if ($pythonCommand) {
 
 if (-not (Test-Path "scripts\scan_raydium_lps.py")) {
     throw "Missing scripts\scan_raydium_lps.py. Your folder does not have the scanner files yet. Pull/copy the Raydium-LP1 files first."
+}
+
+if ($SpawnWatcher) {
+    $watchPs1 = Join-Path $RepoRoot "scripts\watch_verdict.ps1"
+    if (-not (Test-Path -LiteralPath $watchPs1)) {
+        throw "Missing scripts\watch_verdict.ps1. Git pull the latest Raydium-LP1, or copy watch_verdict.ps1 into your scripts folder."
+    }
+    $shell = "powershell.exe"
+    if (Get-Command pwsh -ErrorAction SilentlyContinue) {
+        $shell = "pwsh.exe"
+    }
+    Start-Process -FilePath $shell -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $watchPs1
+    ) -WorkingDirectory $RepoRoot
+    Start-Sleep -Milliseconds 600
+    Write-Host "Spawned log watcher in a new window ($shell). Use -Loop on this run so Window 1 keeps writing the log." -ForegroundColor Cyan
 }
 
 $scannerArgs = @("scripts\scan_raydium_lps.py", "--config", $Config)

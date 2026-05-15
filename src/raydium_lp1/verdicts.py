@@ -2,8 +2,9 @@
 
 This module emits one line per pool while ``scan()`` is iterating so the
 user can SEE pool data being processed in real time. Column headers print
-again after each Raydium API page (with ``[scan] page …``) because plain
-terminals cannot pin a header row while scrolling like a spreadsheet.
+again after each Raydium API page (with ``[scan] page …``) and the same header
+repeats every ``header_repeat_rows`` data rows so column labels stay aligned
+with ``[PASS]`` / ``[REJ]`` lines in plain terminals.
 
 Lines are green/red where the terminal supports ANSI colors (Windows 10+
 PowerShell, Linux/macOS terminals). By default lines go to **stderr** so they
@@ -64,7 +65,7 @@ class StreamConfig:
     pool_id_width: int = 56
     # Append plain-text copies of verdict lines here (read in another window while scan runs).
     verdict_log_path: str | None = None
-    # Re-print a one-line column reminder every N data rows (0 = off). Terminals cannot pin a header.
+    # Re-print the full table header (same column widths as data) every N rows (0 = off).
     header_repeat_rows: int = 25
     row_emit_count: int = field(default=0, repr=False)
 
@@ -114,24 +115,35 @@ def _println_verdict(cfg: StreamConfig, line: str) -> None:
     _append_verdict_log(cfg, line)
 
 
-def print_verdict_column_headers(cfg: StreamConfig, *, page: int | None = None) -> None:
-    """Print a human-readable column guide (repeated each Raydium page from ``scan()``)."""
+def verdict_table_header_and_sep(cfg: StreamConfig) -> tuple[str, str]:
+    """Return the same header and underline used for page headers and row reminders.
 
-    if not cfg.enabled:
-        return
+    Keeping this in one place guarantees periodic ``print_verdict_column_reminder``
+    output lines up with ``_verdict_table_row`` / ``print_verdict_column_headers``.
+    """
+
     pid_w = max(32, min(64, int(cfg.pool_id_width)))
-    lead = f"Raydium page {page} — " if page is not None else ""
-    title = f"{lead}verdict columns (full POOL_ID; REASON truncated on screen — see rejections.csv for full text)"
-    if cfg.color:
-        title = f"{_DIM}{title}{_RESET}"
-    _println_verdict(cfg, "")
-    _println_verdict(cfg, title)
     hdr = (
         f"{'VERDICT':<7} | {'PAIR_NAME':<26} | {'APR_PCT':>12} | "
         f"{'TVL_USD':>12} | {'VOL24_USD':>12} | {'LP_BURN':>7} | "
         f"{'POOL_ID':<{pid_w}} | REJECT_REASON"
     )
     sep = "-" * min(240, max(100, len(hdr)))
+    return hdr, sep
+
+
+def print_verdict_column_headers(cfg: StreamConfig, *, page: int | None = None) -> None:
+    """Print a human-readable column guide (repeated each Raydium page from ``scan()``)."""
+
+    if not cfg.enabled:
+        return
+    lead = f"Raydium page {page} — " if page is not None else ""
+    title = f"{lead}verdict columns (full POOL_ID; REASON truncated on screen — see rejections.csv for full text)"
+    if cfg.color:
+        title = f"{_DIM}{title}{_RESET}"
+    _println_verdict(cfg, "")
+    _println_verdict(cfg, title)
+    hdr, sep = verdict_table_header_and_sep(cfg)
     _println_verdict(cfg, hdr)
     _println_verdict(cfg, sep)
 
@@ -165,17 +177,22 @@ def _verdict_table_row(verdict: str, pool: dict, reason: str | None, *, pool_id_
 
 
 def print_verdict_column_reminder(cfg: StreamConfig) -> None:
-    """Short repeat of column names (every N rows) — not a full table header."""
+    """Repeat the full column header row (same widths as data) every N rows."""
 
     if not cfg.enabled:
         return
-    msg = (
-        "[columns] VERDICT | PAIR_NAME | APR_PCT | TVL_USD | VOL24_USD | LP_BURN | "
-        "POOL_ID | REJECT_REASON"
+    hdr, sep = verdict_table_header_and_sep(cfg)
+    n = max(1, int(cfg.header_repeat_rows))
+    note = (
+        f"[repeat header every {n} data rows] same columns as [PASS]/[REJ] lines "
+        "(POOL_ID width matches pool_id_width in StreamConfig)"
     )
     if cfg.color:
-        msg = f"{_DIM}{msg}{_RESET}"
-    _println_verdict(cfg, msg)
+        note = f"{_DIM}{note}{_RESET}"
+    _println_verdict(cfg, "")
+    _println_verdict(cfg, note)
+    _println_verdict(cfg, hdr)
+    _println_verdict(cfg, sep)
 
 
 def _maybe_repeat_header_row(cfg: StreamConfig) -> None:

@@ -1047,7 +1047,8 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=25,
         metavar="N",
-        help="Re-print a one-line column reminder every N PASS/REJECT rows on stderr (0 disables).",
+        help="Re-print the full verdict table header (same widths as data rows) every N "
+        "PASS/REJECT rows on stderr (0 disables).",
     )
     parser.add_argument(
         "--wallet-override",

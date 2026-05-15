@@ -93,6 +93,23 @@ class HeaderTests(unittest.TestCase):
         self.assertIn("REJECT_REASON", out)
         self.assertIn("Raydium page 3", out)
 
+    def test_reminder_header_matches_page_header_row(self):
+        stream = io.StringIO()
+        cfg = verdicts.StreamConfig(
+            enabled=True, color=False, stream=stream, pool_id_width=56, header_repeat_rows=99
+        )
+        verdicts.print_verdict_column_headers(cfg, page=1)
+        full = stream.getvalue()
+        stream.seek(0)
+        stream.truncate(0)
+        verdicts.print_verdict_column_reminder(cfg)
+        reminder = stream.getvalue()
+        hdr_lines_full = [ln for ln in full.splitlines() if ln.startswith("VERDICT")]
+        hdr_lines_rem = [ln for ln in reminder.splitlines() if ln.startswith("VERDICT")]
+        self.assertEqual(len(hdr_lines_full), 1)
+        self.assertEqual(len(hdr_lines_rem), 1)
+        self.assertEqual(hdr_lines_full[0], hdr_lines_rem[0])
+
 
 class HeaderRepeatTests(unittest.TestCase):
     def test_repeat_injected_every_n_rows(self):
@@ -110,7 +127,7 @@ class HeaderRepeatTests(unittest.TestCase):
                 },
                 cfg,
             )
-        self.assertGreaterEqual(stream.getvalue().count("[columns]"), 2)
+        self.assertGreaterEqual(stream.getvalue().count("[repeat header every"), 2)
 
 
 class AnsiTests(unittest.TestCase):
