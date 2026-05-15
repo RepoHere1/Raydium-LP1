@@ -19,18 +19,24 @@ Show-Check "Repo folder" (Test-Path ".git") (Get-Location).Path
 Show-Check "Scanner script" (Test-Path "scripts\scan_raydium_lps.py") "scripts\scan_raydium_lps.py"
 Show-Check "Run helper" (Test-Path "scripts\run_scan.ps1") "scripts\run_scan.ps1"
 
-$mergeMarkers = @(
-    Get-ChildItem -LiteralPath "scripts" -Filter "*.ps1" -File -ErrorAction SilentlyContinue |
-        Select-String -Pattern '^<<<<<<<' |
-        Select-Object -First 5
-)
+$conflictFiles = @()
+$conflictFiles += @(Get-ChildItem -LiteralPath "scripts" -Filter "*.ps1" -File -ErrorAction SilentlyContinue)
+$conflictFiles += @(Get-ChildItem -LiteralPath "src" -Recurse -Filter "*.py" -File -ErrorAction SilentlyContinue)
+$mergeMarkers = @()
+foreach ($file in $conflictFiles) {
+    $hits = @(Select-String -LiteralPath $file.FullName -Pattern '^<<<<<<<' -ErrorAction SilentlyContinue)
+    if ($hits.Count -gt 0) {
+        $mergeMarkers += $hits
+    }
+}
 if (-not $mergeMarkers -or $mergeMarkers.Count -eq 0) {
-    Show-Check "Scripts (Git merge leftovers)" $true "none"
+    Show-Check "Sources (Git merge leftovers)" $true "none in scripts/*.ps1 + src/**/*.py"
 } else {
     $m = $mergeMarkers[0]
-    $leaf = Split-Path -Leaf $m.Path
-    Show-Check "Scripts (Git merge leftovers)" $false "$($m.Path):$($m.LineNumber) has merge marker — run: git fetch origin main ; git checkout origin/main -- scripts/$leaf"
-}Show-Check "Local settings" (Test-Path $Config) $Config
+    $rel = ($m.Path -replace [regex]::Escape($RepoRoot + [System.IO.Path]::DirectorySeparatorChar), "").Replace('\', '/')
+    Show-Check "Sources (Git merge leftovers)" $false "${rel}:$($m.LineNumber) has marker — .\scripts\reset_to_main.ps1 or: git checkout origin/main -- $rel"
+}
+Show-Check "Local settings" (Test-Path $Config) $Config
 Show-Check "Local .env" (Test-Path ".env") ".env"
 
 $python = Get-Command py -ErrorAction SilentlyContinue
@@ -88,7 +94,8 @@ if (Test-Path $Config) {
 
 Write-Host ""
 Write-Host "If BAD appears for Local settings or Local .env, run (in order):" -ForegroundColor Cyan
-Write-Host "  git pull   # ensures run_scan validates JSON before spawn + watcher"
-Write-Host "  .\scripts\repair_settings.ps1 -ApplyMomentumTemplate   # fixes broken settings.json"
+Write-Host "  git pull origin main   # track main; avoid random cursor/* unless you intend that branch"
+Write-Host "  .\scripts\repair_settings.ps1 -ApplyMomentumTemplate   # broken settings.json"
+Write-Host "  .\scripts\reset_to_main.ps1   # Python SyntaxError on <<<<<<< or unmerged files after bad git pull"
 Write-Host "  .\scripts\doctor.ps1"
 Write-Host "  .\scripts\setup_wizard.ps1   # optional full re-setup"

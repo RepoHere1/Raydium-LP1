@@ -134,7 +134,36 @@ git fetch origin main
 git checkout origin/main -- scripts/run_scan.ps1
 ```
 
-Or reset all helpers: `git checkout origin/main -- scripts/`. `./scripts/doctor.ps1` also flags stray `<<<<<<<` lines under `scripts/`.
+Or reset the whole tracked tree when many files broke (usual after merging the wrong branch):
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+git fetch origin
+.\scripts\reset_to_main.ps1
+```
+
+(Type `RESET` when prompted.)
+
+## Prefer `origin/main`; avoid random `pull origin cursor/*` unless you intend to test a branch.
+
+Feature branches (`cursor/...`) can be stale or incompatible with each other; **your daily scanner should track `main`:**
+
+```powershell
+git fetch origin
+git pull origin main
+```
+
+Pulling something like `git pull origin cursor/verdict-watcher-sync-dee0` mid-session can leave **unmerged files** and **`<<<<<<<`** markers inside `.py` files (then Python reports `SyntaxError` on that line).
+
+If Git says **unmerged files** and you only want GitHub’s current app:
+
+```powershell
+git merge --abort   # only if a merge is in progress
+git fetch origin
+git reset --hard origin/main
+```
+
+(same effect as `reset_to_main.ps1`.)
 
 ## Live data sources
 
