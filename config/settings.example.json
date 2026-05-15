@@ -36,6 +36,7 @@
   "emergency_max_slippage_pct": 0.30,
   "position_size_sol": 0.1,
   "reserve_sol": 0.02,
+  "estimate_priority_fee_sol": 0.00002,
   "dashboard_path": "reports/dashboard.json",
   "solana_rpc_urls": []
 }

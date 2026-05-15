@@ -8,6 +8,7 @@ from raydium_lp1.scanner import (
     ScannerConfig,
     extract_pool_items,
     filter_pool,
+    hot_reload_scanner_config,
     load_dotenv,
     normalize_pool,
     pool_list_url,
@@ -99,6 +100,32 @@ class ScannerTests(unittest.TestCase):
             write_reports(report, Path(tempdir))
             self.assertTrue((Path(tempdir) / "latest.json").exists())
             self.assertTrue((Path(tempdir) / "candidates.csv").exists())
+
+
+    def test_hot_reload_picks_up_json_edit(self):
+        import json
+        import time
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            p = Path(tempdir) / "settings.json"
+            raw = {
+                "dry_run": True,
+                "network": "solana",
+                "solana_rpc_urls": [],
+                "min_apr": 500.0,
+                "min_liquidity_usd": 200.0,
+                "min_volume_24h_usd": 50.0,
+            }
+            p.write_text(json.dumps(raw), encoding="utf-8")
+            ScannerConfig.from_file(p)
+            anchor = [p.stat().st_mtime]
+            self.assertIsNone(hot_reload_scanner_config(p, anchor))
+            time.sleep(0.05)
+            raw["min_liquidity_usd"] = 50.0
+            p.write_text(json.dumps(raw), encoding="utf-8")
+            cfg1 = hot_reload_scanner_config(p, anchor)
+            self.assertIsNotNone(cfg1)
+            self.assertEqual(cfg1.min_liquidity_usd, 50.0)
 
 
 if __name__ == "__main__":

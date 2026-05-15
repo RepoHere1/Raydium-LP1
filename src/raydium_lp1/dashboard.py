@@ -76,6 +76,7 @@ def build_dashboard(
         "route_sources": list(getattr(config, "route_sources", ())),
         "emergency_close_enabled": getattr(config, "emergency_close_enabled", True),
         "emergency_max_slippage_pct": getattr(config, "emergency_max_slippage_pct", 0.30),
+        "estimate_priority_fee_sol": getattr(config, "estimate_priority_fee_sol", 0.00002),
         "network": getattr(config, "network", "solana"),
     }
 
@@ -96,6 +97,7 @@ def build_dashboard(
                     "health": h.get("score", "healthy"),
                     "health_reasons": h.get("reasons", []),
                     "dry_run": True,
+                    "shadow_exit_pnl": candidate.get("shadow_exit_pnl"),
                 }
             )
 
@@ -202,6 +204,16 @@ def render_dashboard_text(data: DashboardData) -> str:
             f"health={position.get('health', 'healthy'):<8} "
             f"pool={position.get('pool_id', '?')}"
         )
+        sh = position.get("shadow_exit_pnl") if isinstance(position.get("shadow_exit_pnl"), dict) else {}
+        net = sh.get("pnl_sol_net_model")
+        if isinstance(net, (int, float)):
+            lines.append(
+                f"      shadow NET(model) SOL {float(net):+.6f}  "
+                f"(entry_assumption {sh.get('entry_assumption_sol')} - priority_reserve "
+                f"{sh.get('priority_fee_reserve_sol')}; methodology=probe quotes, not LP remove)"
+            )
+        elif sh:
+            lines.append(f"      shadow exit model: {sh.get('status', '?')} (see shadow_exit_pnl in JSON)")
         for reason in position.get("health_reasons", []) or []:
             lines.append(f"      ! {reason}")
 

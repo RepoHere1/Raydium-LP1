@@ -23,7 +23,7 @@ from urllib.request import Request, urlopen
 
 from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import dial_in_analyst
-from raydium_lp1 import emergency, health, networks, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1 import emergency, health, networks, pnl_estimate, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -80,6 +80,8 @@ class ScannerConfig:
     reserve_sol: float = 0.02
     network: str = networks.NETWORK_SOLANA
     use_robust_routing: bool = True
+    # Shadow PnL: SOL reserved for priority fees in modeled NET (not full gas modeling).
+    estimate_priority_fee_sol: float = 0.00002
     # Exit-safety: reject Jupiter quotes whose reported price impact exceeds this
     # (percent). 0 disables. Default 30 matches emergency_max_slippage_pct cap.
     max_route_price_impact_pct: float = 30.0
@@ -146,6 +148,7 @@ class ScannerConfig:
             reserve_sol=float(raw_with_strategy.get("reserve_sol", 0.02)),
             network=networks.normalize_network(str(raw_with_strategy.get("network", "solana"))),
             use_robust_routing=bool(raw_with_strategy.get("use_robust_routing", True)),
+            estimate_priority_fee_sol=float(raw_with_strategy.get("estimate_priority_fee_sol", 0.00002)),
             max_route_price_impact_pct=float(raw_with_strategy.get("max_route_price_impact_pct", 30.0)),
             hard_exit_min_tvl_usd=float(raw_with_strategy.get("hard_exit_min_tvl_usd", 0.0)),
             write_rejections=bool(raw_with_strategy.get("write_rejections", False)),
@@ -746,6 +749,13 @@ def scan(
             flush=True,
         )
 
+    for pool in capped_candidates:
+        pool["shadow_exit_pnl"] = pnl_estimate.build_shadow_activity_for_pool(
+            pool,
+            entry_assumption_sol=config.position_size_sol,
+            priority_fee_reserve_sol=config.estimate_priority_fee_sol,
+        )
+
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
         "mode": "dry_run" if config.dry_run else "trade_disabled_in_this_build",
@@ -859,6 +869,22 @@ def print_report(report: dict[str, Any]) -> None:
             f"{pair} | {float(pool['apr']):>10.2f} | {float(pool['liquidity_usd']):>12.2f} | "
             f"{float(pool['volume_24h_usd']):>14.2f} | {pool['id']}"
         )
+    print(
+        "\nShadow exit / NET(model) SOL — Jupiter/Raydium probe quotes only; "
+        "not remove-liquidity, IL, or full fee stack (see shadow_exit_pnl.methodology in JSON)."
+    )
+    for pool in report["candidates"]:
+        sh = pool.get("shadow_exit_pnl") or {}
+        net = sh.get("pnl_sol_net_model")
+        pair = f"{pool['mint_a_symbol']}/{pool['mint_b_symbol']}"
+        if isinstance(net, (int, float)):
+            print(
+                f"  {pair}: NET(model) {float(net):+.6f} SOL "
+                f"(entry_assumption_sol={sh.get('entry_assumption_sol')}, "
+                f"priority_fee_reserve_sol={sh.get('priority_fee_reserve_sol')})"
+            )
+        else:
+            print(f"  {pair}: NET(model) n/a — {sh.get('status', 'unknown')}")
     print("\nDry-run only: no buy, no wallet signing, no LP position opened.")
 
 
@@ -876,6 +902,22 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
     if isinstance(diag, dict):
         latest_diagnosis.write_text(
             json.dumps(diag, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    shadow_rows = [p.get("shadow_exit_pnl") for p in report.get("candidates") or [] if isinstance(p.get("shadow_exit_pnl"), dict)]
+    if shadow_rows:
+        activity_path = reports_dir / "position_activity.json"
+        activity_path.write_text(
+            json.dumps(
+                {
+                    "scanned_at": report.get("scanned_at"),
+                    "shadow_positions": shadow_rows,
+                    "note": "Dry-run shadow only; NET uses estimate_priority_fee_sol from settings.",
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
             encoding="utf-8",
         )
     with latest_csv.open("w", newline="", encoding="utf-8") as handle:
@@ -976,6 +1018,23 @@ def resolve_config_path(path: Path) -> Path:
     return path
 
 
+def hot_reload_scanner_config(path: Path, last_mtime: list[float]) -> ScannerConfig | None:
+    """If ``path``'s ``st_mtime`` changed since ``last_mtime[0]``, return a new :class:`ScannerConfig`.
+
+    ``last_mtime`` must be a one-element list primed with ``[path.stat().st_mtime]`` right after
+    the initial :meth:`ScannerConfig.from_file` load.
+    """
+
+    try:
+        m = path.stat().st_mtime
+    except OSError:
+        return None
+    if m == last_mtime[0]:
+        return None
+    last_mtime[0] = m
+    return ScannerConfig.from_file(path)
+
+
 def _init_verdict_mirror_log(vpath: Path) -> str:
     """Create or truncate the verdict mirror log and return its absolute path."""
 
@@ -996,8 +1055,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Scan live Raydium LPs for extreme APR candidates.")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Path to scanner JSON config.")
     parser.add_argument("--json", action="store_true", help="Print the scan report as JSON.")
-    parser.add_argument("--loop", action="store_true", help="Keep scanning until stopped.")
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Keep scanning until stopped. While looping, settings are re-loaded whenever the "
+        "--config JSON file is saved (mtime change); use --no-config-hot-reload to freeze the first load.",
+    )
     parser.add_argument("--interval", type=int, default=60, help="Seconds between scans in loop mode.")
+    parser.add_argument(
+        "--no-config-hot-reload",
+        action="store_true",
+        help="In --loop, keep the first-loaded settings for every pass (do not re-read when the JSON changes).",
+    )
     parser.add_argument("--write-reports", action="store_true", help="Write reports/latest.json and reports/candidates.csv.")
     parser.add_argument("--check-rpc", action="store_true", help="Check configured Solana RPC URLs with getHealth before scanning.")
     parser.add_argument(
@@ -1043,6 +1112,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Do not write reports/verdict_stream.log (only applies when --verdict-log is not set).",
     )
     parser.add_argument(
+        "--verdict-log-plain",
+        action="store_true",
+        help="Strip ANSI escapes from the verdict mirror log (default keeps colors for Windows Terminal).",
+    )
+    parser.add_argument(
         "--verdict-header-every",
         type=int,
         default=25,
@@ -1076,6 +1150,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     load_dotenv()
+    live_flag = (os.environ.get("RAYDIUM_LP1_LIVE_TRADING", "") or "").strip().lower()
+    if live_flag in ("1", "true", "yes"):
+        print(
+            "[scan] RAYDIUM_LP1_LIVE_TRADING is set in .env — this build still does not sign on-chain swaps; "
+            "keep dry_run=true in settings until audited live execution ships.",
+            file=sys.stderr,
+            flush=True,
+        )
     if args.strategy:
         os.environ["RAYDIUM_LP1_STRATEGY"] = args.strategy
     config_path = resolve_config_path(args.config)
@@ -1083,6 +1165,8 @@ def main(argv: list[str] | None = None) -> int:
     if not config.dry_run:
         print("Refusing to run: this build is dry-run only. Set dry_run=true.", file=sys.stderr)
         return 2
+
+    config_mtime_anchor: list[float] = [config_path.stat().st_mtime]
 
     try:
         active_wallet = wallet_mod.load_wallet()
@@ -1137,6 +1221,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     verdict_stream = sys.stdout if args.verdict_stdout else None
+    strip_log = bool(args.verdict_log_plain) or (os.environ.get("RAYDIUM_LP1_VERDICT_LOG_PLAIN", "").strip() in ("1", "true", "yes"))
     stream_cfg = verdicts.make_stream_config(
         enabled=not args.quiet and not args.json,
         show_passes=not args.hide_passes,
@@ -1144,10 +1229,26 @@ def main(argv: list[str] | None = None) -> int:
         stream=verdict_stream,
         verdict_log_path=verdict_log_resolved,
         header_repeat_rows=int(args.verdict_header_every),
+        verdict_log_strip_ansi=strip_log,
     )
     wr_override = True if args.write_rejections else None
 
     while True:
+        if args.loop and not args.no_config_hot_reload:
+            new_cfg = hot_reload_scanner_config(config_path, config_mtime_anchor)
+            if new_cfg is not None:
+                if not new_cfg.dry_run:
+                    print(
+                        "Refusing to continue: dry_run=false after config reload. This build is dry-run only.",
+                        file=sys.stderr,
+                    )
+                    return 2
+                config = new_cfg
+                print(
+                    f"[scan] hot-reloaded {config_path} (edit saved; next pass uses new thresholds)",
+                    file=sys.stderr,
+                    flush=True,
+                )
         try:
             report = scan(
                 config,

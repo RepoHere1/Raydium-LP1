@@ -1,15 +1,11 @@
-# Tail reports/verdict_stream.log (plain-text mirror of PASS/REJECT stderr table).
+# Tail reports/verdict_stream.log (mirror of PASS/REJECT stream).
 #
-# Window 1 (keep running):  .\scripts\run_scan.ps1 -Loop -Interval 120
+# Window 1 (keep running):  .\scripts\run_scan.ps1 -Loop -SpawnWatcher
 # Window 2 (this file):     .\scripts\watch_verdict.ps1
 #   Or from CMD:            scripts\watch_verdict.cmd
-#   Or one-liner:           pwsh -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\Raydium-LP1\scripts\watch_verdict.ps1"
 #
-# Why "not recognized"? Usually the script file is missing (git pull) or you ran
-#   watch_verdict.ps1   without .\   — PowerShell requires .\script.ps1 for local scripts.
-#
-# Get-Content -Wait can return when the scanner truncates the log at startup; this
-# script loops forever and reconnects so Window 2 stays useful across restarts.
+# Colors: lines containing ESC (ANSI) pass through; otherwise [PASS]/[REJ]/[scan] are colorized.
+# Use Windows Terminal + pwsh 7 for best ANSI rendering when the log file keeps color escapes.
 
 param(
     [string]$LogPath = "",
@@ -26,6 +22,28 @@ if (-not $LogPath) {
 }
 
 $abs = [System.IO.Path]::GetFullPath($LogPath)
+
+function Write-VerdictColoredLine([string]$line) {
+    if ($null -eq $line) { return }
+    if ($line.IndexOf([char]0x1b) -ge 0) {
+        Write-Host $line
+        return
+    }
+    if ($line -match '\[PASS\]') {
+        Write-Host $line -ForegroundColor Green
+    } elseif ($line -match '\[REJ\]') {
+        Write-Host $line -ForegroundColor Red
+    } elseif ($line -match '^\[scan\]') {
+        Write-Host $line -ForegroundColor Cyan
+    } elseif ($line -match '^(Raydium page|VERDICT \||\[repeat header|^-{10,})') {
+        Write-Host $line -ForegroundColor DarkCyan
+    } elseif ($line -match 'objective-engine|Setting pressure|Rejected breakdown') {
+        Write-Host $line -ForegroundColor Yellow
+    } else {
+        Write-Host $line
+    }
+}
+
 Write-Host ""
 Write-Host "Verdict log tail (Ctrl+C to exit this window):" -ForegroundColor Cyan
 Write-Host "  $abs" -ForegroundColor Cyan
@@ -48,7 +66,7 @@ while ($true) {
 
     Write-Host "$(Get-Date -Format o)  Following new lines (-Wait). If the scanner restarts, we reconnect..." -ForegroundColor Green
     try {
-        Get-Content -LiteralPath $abs -Wait -Tail $Tail -ErrorAction Stop
+        Get-Content -LiteralPath $abs -Wait -Tail $Tail -ErrorAction Stop | ForEach-Object { Write-VerdictColoredLine $_ }
     } catch {
         Write-Host "$(Get-Date -Format o)  Tail ended: $($_.Exception.Message)" -ForegroundColor Yellow
     }
