@@ -152,6 +152,57 @@ def fetch_raydium_pool_by_id(
     return first if isinstance(first, dict) else None
 
 
+def prefetch_account_owners(
+    pubkeys: list[str],
+    rpc_urls: list[str],
+    *,
+    owner_cache: dict[str, str | None],
+    rpc_post: RpcPost | None = None,
+    chunk_size: int = 100,
+) -> None:
+    """Batch-fill ``owner_cache`` via ``getMultipleAccounts`` (one RPC per chunk)."""
+
+    pending = [pk for pk in pubkeys if pk and pk not in owner_cache]
+    if not pending:
+        return
+    urls = [u for u in rpc_urls if u.strip()] or [DEFAULT_PUBLIC_RPC]
+
+    def _post(url: str, keys: list[str]) -> dict[str, Any]:
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getMultipleAccounts",
+            "params": [keys, {"encoding": "base64"}],
+        }
+        if rpc_post is not None:
+            return rpc_post(url, body)
+        request = Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=12) as resp:  # noqa: S310
+            return json.loads(resp.read().decode("utf-8"))
+
+    for start in range(0, len(pending), chunk_size):
+        chunk = pending[start : start + chunk_size]
+        for url in urls:
+            try:
+                response = _post(url, chunk)
+            except (OSError, json.JSONDecodeError, RuntimeError, KeyError):
+                continue
+            values = (response.get("result") or {}).get("value")
+            if not isinstance(values, list):
+                continue
+            for pk, entry in zip(chunk, values):
+                if entry is None:
+                    owner_cache[pk] = None
+                else:
+                    owner_cache[pk] = str(entry.get("owner") or "")
+            break
+
+
 def get_account_owner(
     pubkey: str,
     rpc_url: str,

@@ -20,6 +20,15 @@ CLMM_POOL = {
     "mint_b_symbol": "USDC",
 }
 
+# User-reported "wallet" — live mainnet: Raydium CPMM dust pool (~$0.01 TVL).
+DUST_CPMM_POOL = {
+    "id": "HPaFuQ8m3BTLGGGwX59JuyLPdQ1aWuXs3KJKk7mivDKC",
+    "program_id": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+    "mint_a_symbol": "SOL",
+    "mint_b_symbol": "SITCOM",
+    "liquidity_usd": 0.01,
+}
+
 FAKE_WALLET = {
     "id": "7G3w8f9FakeWallet1111111111111111111111111111",
     "program_id": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
@@ -99,10 +108,12 @@ class ValidatePoolTests(unittest.TestCase):
                 return CPMM_POOL["program_id"]
             if pubkey == CLMM_POOL["id"]:
                 return CLMM_POOL["program_id"]
+            if pubkey == DUST_CPMM_POOL["id"]:
+                return DUST_CPMM_POOL["program_id"]
             return "11111111111111111111111111111111"
 
         with patch.object(pool_verify, "get_account_owner", side_effect=fake_owner):
-            for pool in (CPMM_POOL, CLMM_POOL):
+            for pool in (CPMM_POOL, CLMM_POOL, DUST_CPMM_POOL):
                 v = pool_verify.validate_pool(
                     pool,
                     api_base="https://api-v3.raydium.io",

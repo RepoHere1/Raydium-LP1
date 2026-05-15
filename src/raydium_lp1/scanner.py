@@ -22,6 +22,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from raydium_lp1 import dashboard as dashboard_mod
+from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
 from raydium_lp1 import emergency, health, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
 
@@ -691,11 +692,44 @@ def scan(
             verdicts.print_verdict_column_headers(stream_cfg, page=page)
         if page < config.pages and config.page_delay_seconds > 0:
             time.sleep(config.page_delay_seconds)
-        for item in items:
+        page_pools = [normalize_pool(item, config.apr_field) for item in items]
+        if config.verify_pool_on_chain:
+            pool_verify.prefetch_account_owners(
+                [str(p.get("id") or "") for p in page_pools if p.get("id")],
+                config.solana_rpc_urls,
+                owner_cache=on_chain_owner_cache,
+                rpc_post=rpc_post,
+            )
+        for pool in page_pools:
             scanned += 1
-            pool = normalize_pool(item, config.apr_field)
-            ok, reasons = filter_pool(pool, config)
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
+            if (
+                config.require_verified_raydium_pool
+                or config.verify_pool_on_chain
+                or config.verify_pool_raydium_api
+            ):
+                verification = pool_verify.validate_pool(
+                    public_pool,
+                    api_base=config.raydium_api_base,
+                    rpc_urls=config.solana_rpc_urls,
+                    verify_on_chain=config.verify_pool_on_chain,
+                    verify_raydium_api=config.verify_pool_raydium_api,
+                    rpc_post=rpc_post,
+                    owner_cache=on_chain_owner_cache,
+                )
+                public_pool["pool_verification"] = verification.to_dict()
+                if config.require_verified_raydium_pool and not verification.ok:
+                    verify_reasons = list(verification.reasons) or [
+                        "not a verified Raydium pool state account (failed program/chain/API check)"
+                    ]
+                    verdicts.emit_reject(public_pool, verify_reasons, stream_cfg, idx=reject_idx)
+                    reject_idx += 1
+                    cat = verdicts._classify_reason(verify_reasons[0])
+                    rejection_counts[cat] += 1
+                    reason_histogram[verify_reasons[0][:200]] += 1
+                    rejected.append({**public_pool, "reasons": verify_reasons})
+                    continue
+            ok, reasons = filter_pool(pool, config)
             if not ok:
                 verdicts.emit_reject(public_pool, reasons, stream_cfg, idx=reject_idx)
                 reject_idx += 1
@@ -719,29 +753,6 @@ def scan(
                     if sell_reasons:
                         reason_histogram[sell_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": sell_reasons})
-                    continue
-
-            if config.require_verified_raydium_pool or config.verify_pool_on_chain or config.verify_pool_raydium_api:
-                verification = pool_verify.validate_pool(
-                    public_pool,
-                    api_base=config.raydium_api_base,
-                    rpc_urls=config.solana_rpc_urls,
-                    verify_on_chain=config.verify_pool_on_chain,
-                    verify_raydium_api=config.verify_pool_raydium_api,
-                    rpc_post=rpc_post,
-                    owner_cache=on_chain_owner_cache,
-                )
-                public_pool["pool_verification"] = verification.to_dict()
-                if config.require_verified_raydium_pool and not verification.ok:
-                    verify_reasons = list(verification.reasons) or [
-                        "pool failed Raydium on-chain / program verification"
-                    ]
-                    verdicts.emit_reject(public_pool, verify_reasons, stream_cfg, idx=reject_idx)
-                    reject_idx += 1
-                    cat = verdicts._classify_reason(verify_reasons[0])
-                    rejection_counts[cat] += 1
-                    reason_histogram[verify_reasons[0][:200]] += 1
-                    rejected.append({**public_pool, "reasons": verify_reasons})
                     continue
 
             verdicts.emit_pass(public_pool, stream_cfg)
@@ -793,9 +804,20 @@ def scan(
             flush=True,
         )
 
+    provenance = data_provenance.build_provenance(config=config)
+    try:
+        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        (REPORTS_DIR / "data_provenance.json").write_text(
+            json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
         "mode": "dry_run" if config.dry_run else "trade_disabled_in_this_build",
+        "data_provenance": provenance,
         "strategy": config.strategy,
         "network": config.network,
         "raydium_api_base": config.raydium_api_base,
@@ -1199,10 +1221,10 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
             flush=True,
         )
+        print(data_provenance.print_live_sources_banner(config), file=sys.stderr, flush=True)
         print(
-            "[scan] POOL_STATE = Raydium pool state account (verified: on-chain owner must be CPMM/CLMM/AMM program, "
-            "not System/Token — explorers often wrongly label these as 'wallet'). "
-            "PROOF column = program+chain+api checks. Token mints: mint_a/mint_b.",
+            "[scan] POOL_STATE + PROOF: Raydium pool state pubkey; PROOF e.g. CPMM+chain = live RPC owner matches "
+            "Raydium program (NOT a user wallet). Dust/scam pools can still verify as CPMM but fail TVL/APR filters.",
             file=sys.stderr,
             flush=True,
         )
