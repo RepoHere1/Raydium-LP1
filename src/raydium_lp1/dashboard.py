@@ -86,6 +86,7 @@ def build_dashboard(
         # In dry-run we treat candidates as the would-be open positions.
         for candidate in report.get("candidates", [])[: report.get("candidate_count", 0)]:
             h = candidate.get("health") or {}
+            mom = candidate.get("momentum") or {}
             positions.append(
                 {
                     "pool_id": candidate.get("id"),
@@ -95,6 +96,9 @@ def build_dashboard(
                     "volume_24h_usd": candidate.get("volume_24h_usd"),
                     "health": h.get("score", "healthy"),
                     "health_reasons": h.get("reasons", []),
+                    "momentum_score": mom.get("score"),
+                    "momentum_tier": mom.get("tier"),
+                    "momentum_exit_watch": mom.get("exit_watch"),
                     "dry_run": True,
                 }
             )
@@ -160,6 +164,12 @@ def render_dashboard_text(data: DashboardData) -> str:
         f"TVL>=${settings.get('min_liquidity_usd', 0):,.0f}, "
         f"Vol24h>=${settings.get('min_volume_24h_usd', 0):,.0f}"
     )
+    if settings.get("momentum_enabled"):
+        lines.append(
+            f"  momentum: min_score={settings.get('min_momentum_score', 0)} "
+            f"hold~{settings.get('momentum_hold_hours', 24):.0f}h "
+            f"require_score={settings.get('require_momentum_score', False)}"
+        )
     lines.append(
         f"  routes: sources={settings.get('route_sources', [])} require_sell_route={settings.get('require_sell_route')}"
     )
@@ -195,13 +205,18 @@ def render_dashboard_text(data: DashboardData) -> str:
     if not data.open_positions:
         lines.append("  (none)")
     for position in data.open_positions:
+        mom_s = position.get("momentum_score")
+        mom_txt = f"MOM={mom_s:.0f} {position.get('momentum_tier', '')}" if mom_s is not None else ""
         lines.append(
             f"  - {position.get('pair', '?'):<20} "
             f"APR {float(position.get('apr', 0) or 0):>7.1f}% "
             f"TVL ${float(position.get('liquidity_usd', 0) or 0):>10,.0f} "
             f"health={position.get('health', 'healthy'):<8} "
+            f"{mom_txt} "
             f"pool={position.get('pool_id', '?')}"
         )
+        if position.get("momentum_exit_watch"):
+            lines.append("      ! momentum/health exit_watch — review before holding LP")
         for reason in position.get("health_reasons", []) or []:
             lines.append(f"      ! {reason}")
 

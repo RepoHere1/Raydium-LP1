@@ -81,6 +81,13 @@ def _pair(pool: dict) -> str:
     return f"{pool.get('mint_a_symbol', '?')}/{pool.get('mint_b_symbol', '?')}"
 
 
+def _momentum_col(pool: dict) -> str:
+    mom = pool.get("momentum")
+    if isinstance(mom, dict) and mom.get("score") is not None:
+        return f"{float(mom['score']):>3.0f}"
+    return "  -"
+
+
 def _proof_tag(pool: dict) -> str:
     pv = pool.get("pool_verification")
     if isinstance(pv, dict) and pv.get("proof_tag"):
@@ -136,7 +143,7 @@ def verdict_table_header_and_sep(cfg: StreamConfig) -> tuple[str, str]:
     hdr = (
         f"{'VERDICT':<7} | {'PAIR_NAME':<26} | {'APR_PCT':>12} | "
         f"{'TVL_USD':>12} | {'VOL24_USD':>12} | {'LP_BURN':>7} | "
-        f"{'PROOF':<14} | {'POOL_STATE':<{pid_w}} | REJECT_REASON"
+        f"{'MOM':>4} | {'PROOF':<12} | {'POOL_STATE':<{pid_w}} | REJECT_REASON"
     )
     sep = "-" * min(240, max(100, len(hdr)))
     return hdr, sep
@@ -177,16 +184,17 @@ def _verdict_table_row(verdict: str, pool: dict, reason: str | None, *, pool_id_
     if len(pair) > 26:
         pair = pair[:23] + "..."
     pair = pair.ljust(26)
-    proof = _proof_tag(pool)[:14].ljust(14)
+    mom_col = _momentum_col(pool)
+    proof = _proof_tag(pool)[:12].ljust(12)
     pid = str(pool.get("id") or "?")
     pid_col = _format_pool_id(pid, pool_id_width)
     r = (reason or "").replace("\n", " ").replace("\r", "")
-    if len(r) > 120:
-        r = r[:117] + "..."
+    if len(r) > 100:
+        r = r[:97] + "..."
     reason_col = r if reason is not None else ""
     return (
         f"{verdict:<7} | {pair} | {apr:>12.0f} | {tvl:>12.2f} | {vol:>12.2f} | {burn_col} | "
-        f"{proof} | {pid_col} | {reason_col}"
+        f"{mom_col} | {proof} | {pid_col} | {reason_col}"
     )
 
 
@@ -295,6 +303,8 @@ def _classify_reason(reason: str) -> str:
         return "missing_pool_id"
     if "on-chain" in r or "raydium pool program" in r or "programid" in r.replace(" ", ""):
         return "pool_not_verified"
+    if "momentum score" in r or "momentum exit" in r:
+        return "momentum_below_threshold"
     if "pool age" in r:
         return "pool_age"
     if "burn" in r:

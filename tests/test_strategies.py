@@ -41,9 +41,17 @@ class StrategyPresetTests(unittest.TestCase):
         self.assertEqual(merged["strategy"], "custom")
         self.assertNotIn("min_liquidity_usd", merged)
 
-    def test_describe_presets_mentions_all_four(self):
+    def test_momentum_preset_thresholds(self):
+        preset = strategies.get_preset("momentum")
+        assert preset is not None
+        self.assertEqual(preset.min_liquidity_usd, 2000)
+
+    def test_fee_rush_alias_normalizes_to_momentum(self):
+        self.assertEqual(strategies.normalize_strategy("fee_rush"), "momentum")
+
+    def test_describe_presets_mentions_all_presets(self):
         text = strategies.describe_presets()
-        for name in ("conservative", "moderate", "aggressive", "degen", "custom"):
+        for name in ("conservative", "moderate", "aggressive", "degen", "momentum", "custom"):
             self.assertIn(name, text)
 
 

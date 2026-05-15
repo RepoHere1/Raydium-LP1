@@ -24,7 +24,7 @@ from urllib.request import Request, urlopen
 from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
-from raydium_lp1 import emergency, health, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1 import emergency, health, momentum, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -94,6 +94,16 @@ class ScannerConfig:
     require_verified_raydium_pool: bool = True
     verify_pool_on_chain: bool = True
     verify_pool_raydium_api: bool = False
+    # Momentum / fee-rush: rank short-hold LP targets by live vol/TVL + acceleration.
+    momentum_enabled: bool = False
+    min_momentum_score: float = 0.0
+    require_momentum_score: bool = False
+    momentum_hold_hours: float = 24.0
+    momentum_min_volume_tvl_ratio: float = 0.25
+    momentum_sweet_min_pool_age_hours: float = 6.0
+    momentum_sweet_max_pool_age_hours: float = 168.0
+    momentum_min_tvl_usd: float = 0.0
+    sort_candidates_by_momentum: bool = True
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -160,6 +170,21 @@ class ScannerConfig:
             ),
             verify_pool_on_chain=bool(raw_with_strategy.get("verify_pool_on_chain", True)),
             verify_pool_raydium_api=bool(raw_with_strategy.get("verify_pool_raydium_api", False)),
+            momentum_enabled=bool(raw_with_strategy.get("momentum_enabled", False)),
+            min_momentum_score=float(raw_with_strategy.get("min_momentum_score", 0.0)),
+            require_momentum_score=bool(raw_with_strategy.get("require_momentum_score", False)),
+            momentum_hold_hours=float(raw_with_strategy.get("momentum_hold_hours", 24.0)),
+            momentum_min_volume_tvl_ratio=float(
+                raw_with_strategy.get("momentum_min_volume_tvl_ratio", 0.25)
+            ),
+            momentum_sweet_min_pool_age_hours=float(
+                raw_with_strategy.get("momentum_sweet_min_pool_age_hours", 6.0)
+            ),
+            momentum_sweet_max_pool_age_hours=float(
+                raw_with_strategy.get("momentum_sweet_max_pool_age_hours", 168.0)
+            ),
+            momentum_min_tvl_usd=float(raw_with_strategy.get("momentum_min_tvl_usd", 0.0)),
+            sort_candidates_by_momentum=bool(raw_with_strategy.get("sort_candidates_by_momentum", True)),
         )
 
 
@@ -303,6 +328,13 @@ def pool_apr(pool: dict[str, Any], apr_field: str) -> float:
     return 0.0
 
 
+def _pool_volume_period(pool: dict[str, Any], period_key: str) -> float:
+    period_obj = pool.get(period_key)
+    if isinstance(period_obj, dict):
+        return number(period_obj.get("volume"))
+    return 0.0
+
+
 def pool_volume(pool: dict[str, Any], apr_field: str) -> float:
     """Return 24h (or selected period) USD volume from a Raydium pool."""
 
@@ -377,6 +409,7 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
         ),
         "liquidity_usd": number(nested_get(pool, "tvl", "liquidity", "liquidityUsd", default=0)),
         "volume_24h_usd": pool_volume(pool, apr_field),
+        "volume_7d_usd": _pool_volume_period(pool, "week"),
         "fee_24h_usd": pool_fee_24h(pool),
         "fee_rate": number(pool.get("feeRate")),
         "open_time": open_time_sec,
@@ -755,11 +788,26 @@ def scan(
                     rejected.append({**public_pool, "reasons": sell_reasons})
                     continue
 
+            mom_cfg = momentum.momentum_config_from_scanner(config)
+            if mom_cfg.enabled:
+                mom_pre = momentum.assess_momentum(public_pool, mom_cfg)
+                public_pool["momentum"] = mom_pre.to_dict()
+                mom_ok, mom_reasons = momentum.gate_candidate(public_pool, mom_pre, mom_cfg)
+                if not mom_ok:
+                    verdicts.emit_reject(public_pool, mom_reasons, stream_cfg, idx=reject_idx)
+                    reject_idx += 1
+                    rejection_counts["momentum_below_threshold"] += 1
+                    if mom_reasons:
+                        reason_histogram[mom_reasons[0][:200]] += 1
+                    rejected.append({**public_pool, "reasons": mom_reasons})
+                    continue
+
             verdicts.emit_pass(public_pool, stream_cfg)
             candidates.append(public_pool)
 
     health_summary = {"healthy": 0, "warning": 0, "critical": 0}
     triggered_alerts: list[dict[str, Any]] = []
+    assessments: list[Any] = []
     if config.track_liquidity_health and candidates:
         history_path = Path(config.liquidity_history_path)
         assessments, _ = health.assess_pools(candidates, history_path=history_path)
@@ -767,15 +815,35 @@ def scan(
             pool["health"] = assessment.to_dict()
             health_summary[assessment.score] = health_summary.get(assessment.score, 0) + 1
 
-        if config.emergency_close_enabled:
-            alerts = emergency.run_emergency_pass(
-                zip(candidates, assessments),
-                base_symbol=config.emergency_base_symbol,
-                max_slippage_pct=config.emergency_max_slippage_pct,
-                alerts_path=Path(config.emergency_alerts_path),
-                use_robust_routing=config.use_robust_routing,
+    if config.momentum_enabled and candidates:
+        mom_cfg = momentum.momentum_config_from_scanner(config)
+        for pool in candidates:
+            pool["momentum"] = momentum.assess_momentum(
+                pool, mom_cfg, health=pool.get("health")
+            ).to_dict()
+        if config.sort_candidates_by_momentum:
+            candidates.sort(
+                key=lambda p: float((p.get("momentum") or {}).get("score") or 0),
+                reverse=True,
             )
-            triggered_alerts = [alert.to_dict() for alert in alerts]
+        hot = [p for p in candidates if (p.get("momentum") or {}).get("tier") == momentum.TIER_HOT]
+        if hot:
+            print(
+                f"[scan] momentum: {len(hot)} HOT pool(s) (top score "
+                f"{(hot[0].get('momentum') or {}).get('score', 0):.0f}) — see candidates / dashboard",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    if config.track_liquidity_health and candidates and config.emergency_close_enabled:
+        alerts = emergency.run_emergency_pass(
+            zip(candidates, assessments),
+            base_symbol=config.emergency_base_symbol,
+            max_slippage_pct=config.emergency_max_slippage_pct,
+            alerts_path=Path(config.emergency_alerts_path),
+            use_robust_routing=config.use_robust_routing,
+        )
+        triggered_alerts = [alert.to_dict() for alert in alerts]
 
     wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
     max_positions = int(wallet_capacity_info["capacity"]["max_positions"]) if wallet_config is not None else None
@@ -846,6 +914,9 @@ def scan(
         "rejection_breakdown": dict(rejection_counts),
         "rejection_reason_histogram": dict(reason_histogram.most_common(50)),
         "rejections_csv": rejections_csv_written,
+        "momentum_enabled": config.momentum_enabled,
+        "min_momentum_score": config.min_momentum_score,
+        "momentum_hold_hours": config.momentum_hold_hours,
     }
 
 
@@ -912,12 +983,15 @@ def print_report(report: dict[str, Any]) -> None:
         print_reject_dial_in_hints(report)
         return
 
-    print("\nCandidates (dry-run watch list)")
+    print("\nCandidates (dry-run watch list; sorted by momentum when enabled)")
+    if report.get("momentum_enabled"):
+        hold = report.get("momentum_hold_hours", 24)
+        print(f"  Momentum hold bias: ~{hold:.0f}h — exit when health=critical or momentum tier=exit_now")
     print(
-        "Columns: PAIR_NAME | APR_PCT | TVL_USD | VOL24_USD | POOL_STATE "
-        "(Raydium pool state pubkey — same base58 shape as any Solana account; not a token mint)"
+        "Columns: PAIR_NAME | APR_PCT | TVL_USD | VOL24_USD | MOM | POOL_STATE "
+        "(TVL = real pool liquidity; MOM = 0-100 fee-rush score from live vol/TVL/accel)"
     )
-    hdr = f"{'PAIR_NAME':<32} | {'APR_PCT':>10} | {'TVL_USD':>12} | {'VOL24_USD':>14} | POOL_STATE"
+    hdr = f"{'PAIR_NAME':<32} | {'APR_PCT':>10} | {'TVL_USD':>12} | {'VOL24_USD':>14} | {'MOM':>4} | POOL_STATE"
     print(hdr)
     print("-" * min(160, len(hdr) + 20))
     for pool in report["candidates"]:
@@ -925,11 +999,17 @@ def print_report(report: dict[str, Any]) -> None:
         if len(pair) > 32:
             pair = pair[:29] + "..."
         pair = pair.ljust(32)
-        proof = (pool.get("pool_verification") or {}).get("proof_tag", "?")
+        mom = pool.get("momentum") or {}
+        mom_col = f"{float(mom.get('score', 0)):>4.0f}" if mom else "   -"
+        tier = mom.get("tier", "")
+        exit_w = " EXIT" if mom.get("exit_watch") else ""
         print(
             f"{pair} | {float(pool['apr']):>10.2f} | {float(pool['liquidity_usd']):>12.2f} | "
-            f"{float(pool['volume_24h_usd']):>14.2f} | {proof:<14} | {pool['id']}"
+            f"{float(pool['volume_24h_usd']):>14.2f} | {mom_col} | {pool['id']}"
         )
+        if tier in ("hot", "enter_bias") or exit_w:
+            sig = ", ".join((mom.get("signals") or [])[:4])
+            print(f"         -> {tier}{exit_w} {sig}")
     print("\nDry-run only: no buy, no wallet signing, no LP position opened.")
 
 
@@ -959,6 +1039,9 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
                 "config_account_id",
                 "pool_proof",
                 "raydium_verify_url",
+                "momentum_score",
+                "momentum_tier",
+                "momentum_exit_watch",
                 "pair",
                 "apr",
                 "liquidity_usd",
@@ -969,6 +1052,7 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
         writer.writeheader()
         for pool in report["candidates"]:
             pv = pool.get("pool_verification") or {}
+            mom = pool.get("momentum") or {}
             writer.writerow(
                 {
                     "scanned_at": report["scanned_at"],
@@ -977,6 +1061,9 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
                     "config_account_id": pool.get("config_account_id", ""),
                     "pool_proof": pv.get("proof_tag", ""),
                     "raydium_verify_url": pv.get("raydium_verify_url", ""),
+                    "momentum_score": mom.get("score", ""),
+                    "momentum_tier": mom.get("tier", ""),
+                    "momentum_exit_watch": mom.get("exit_watch", ""),
                     "pair": f"{pool['mint_a_symbol']}/{pool['mint_b_symbol']}",
                     "apr": pool["apr"],
                     "liquidity_usd": pool["liquidity_usd"],

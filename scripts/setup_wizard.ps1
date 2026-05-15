@@ -79,6 +79,7 @@ Write-Host "  conservative   APR>=  50%  TVL>=`$50000  Vol>=`$10000   - boring, 
 Write-Host "  moderate       APR>= 200%  TVL>=`$10000  Vol>=`$1000    - mid-cap yield"
 Write-Host "  aggressive     APR>= 777%  TVL>=`$500    Vol>=`$100     - high APR hunting"
 Write-Host "  degen          APR>= 500%  TVL>=`$200    Vol>=`$50      - anything that pumps"
+Write-Host "  momentum       APR>= 300%  TVL>=`$2000   Vol>=`$500     - real TVL + buyer flow (fee-rush LP)"
 Write-Host "  custom         keep manual values you enter below"
 $savedStrategy = "$(Get-Default $configDefaults 'strategy' 'custom')"
 $strategy = (Ask-WithDefault "Strategy" $savedStrategy).ToLowerInvariant()
@@ -88,6 +89,8 @@ switch ($strategy) {
     "moderate"     { $minAprDefault = 200; $minLiqDefault = 10000; $minVolDefault = 1000  }
     "aggressive"   { $minAprDefault = 777; $minLiqDefault = 500;   $minVolDefault = 100   }
     "degen"        { $minAprDefault = 500; $minLiqDefault = 200;   $minVolDefault = 50    }
+    "momentum"     { $minAprDefault = 300; $minLiqDefault = 2000;  $minVolDefault = 500   }
+    "fee_rush"     { $strategy = "momentum"; $minAprDefault = 300; $minLiqDefault = 2000; $minVolDefault = 500 }
     default        { $strategy = "custom"; $minAprDefault = 999.99; $minLiqDefault = 1000; $minVolDefault = 100 }
 }
 # Remembered values still win over preset numbers when present.
@@ -99,7 +102,11 @@ $pageSizeDefault     = Get-Default $configDefaults "page_size"         100
 $pagesDefault        = Get-Default $configDefaults "pages"             1
 
 $minApr = [double](Ask-WithDefault "Minimum APR percent to flag" "$minAprDefault")
-$minLiquidity = [double](Ask-WithDefault "Minimum pool liquidity/TVL in USD" "$minLiqDefault")
+Write-Host ""
+Write-Host "TVL (liquidity) = real USD in the pool you would LP into. Dust pools show fake APR on `$0.01 TVL." -ForegroundColor DarkGray
+$minLiquidity = [double](Ask-WithDefault "Minimum pool TVL / liquidity in USD (actionable LP floor)" "$minLiqDefault")
+$hardTvlDefault = Get-Default $configDefaults "hard_exit_min_tvl_usd" 0
+$hardTvl = [double](Ask-WithDefault "Hard exit-safety TVL floor (0=off; momentum uses 500)" "$hardTvlDefault")
 $minVolume = [double](Ask-WithDefault "Minimum 24h volume in USD" "$minVolDefault")
 $maxPosition = [double](Ask-WithDefault "Future max position size in USD; scanner is still dry-run only" "$maxPositionDefault")
 
@@ -160,6 +167,19 @@ while ($true) {
 }
 
 $allowedQuotes = $quotesRaw.Split(",") | ForEach-Object { $_.Trim().ToUpperInvariant() } | Where-Object { $_ }
+
+Write-Host ""
+Write-Host "Momentum / fee-rush (ranks pools by live vol/TVL + acceleration; suggests when to exit):" -ForegroundColor Cyan
+$momentumDefault = ($strategy -eq "momentum") -or (Get-Default $configDefaults "momentum_enabled" $false)
+$momentumEnabled = Ask-YesNo "Enable momentum scoring on candidates?" $momentumDefault
+$momScoreDefault = Get-Default $configDefaults "min_momentum_score" 50
+$momScore = [double](Ask-WithDefault "Minimum momentum score 0-100 (only hard-rejects if you enable require below)" "$momScoreDefault")
+$requireMomDefault = Get-Default $configDefaults "require_momentum_score" $false
+$requireMom = Ask-YesNo "Hard-reject pools below min momentum score?" $requireMomDefault
+$holdDefault = Get-Default $configDefaults "momentum_hold_hours" 24
+Write-Host "  Hold bias: 24 = ~1 day fee-rush, 168 = ~1 week"
+$holdHours = [double](Ask-WithDefault "Momentum hold bias (hours)" "$holdDefault")
+
 $config = [ordered]@{
     dry_run = $true
     strategy = $strategy
@@ -171,8 +191,14 @@ $config = [ordered]@{
     page_size = $pageSize
     pages = $pages
     min_liquidity_usd = $minLiquidity
+    hard_exit_min_tvl_usd = $hardTvl
     min_volume_24h_usd = $minVolume
     max_position_usd = $maxPosition
+    momentum_enabled = $momentumEnabled
+    min_momentum_score = $momScore
+    require_momentum_score = $requireMom
+    momentum_hold_hours = $holdHours
+    sort_candidates_by_momentum = $true
     allowed_quote_symbols = @($allowedQuotes)
     blocked_token_symbols = @()
     blocked_mints = @()

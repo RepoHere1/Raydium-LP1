@@ -15,6 +15,7 @@ STRATEGY_CONSERVATIVE = "conservative"
 STRATEGY_MODERATE = "moderate"
 STRATEGY_AGGRESSIVE = "aggressive"
 STRATEGY_DEGEN = "degen"
+STRATEGY_MOMENTUM = "momentum"
 STRATEGY_CUSTOM = "custom"
 
 ALLOWED_STRATEGIES = (
@@ -22,8 +23,25 @@ ALLOWED_STRATEGIES = (
     STRATEGY_MODERATE,
     STRATEGY_AGGRESSIVE,
     STRATEGY_DEGEN,
+    STRATEGY_MOMENTUM,
     STRATEGY_CUSTOM,
 )
+
+# Extra settings applied when strategy=momentum (fee-rush / short-hold LP hunting).
+MOMENTUM_STRATEGY_EXTRAS: dict[str, object] = {
+    "momentum_enabled": True,
+    "min_momentum_score": 50.0,
+    "require_momentum_score": False,
+    "momentum_hold_hours": 24.0,
+    "momentum_min_volume_tvl_ratio": 0.5,
+    "momentum_sweet_min_pool_age_hours": 6.0,
+    "momentum_sweet_max_pool_age_hours": 168.0,
+    "momentum_min_tvl_usd": 2000.0,
+    "sort_candidates_by_momentum": True,
+    "max_pool_age_hours": 168.0,
+    "min_pool_age_hours": 6.0,
+    "hard_exit_min_tvl_usd": 500.0,
+}
 
 
 @dataclass(frozen=True)
@@ -73,6 +91,16 @@ STRATEGY_PRESETS: dict[str, StrategyPreset] = {
         min_volume_24h_usd=50.0,
         description="Anything that pumps. Plan your exit before entering.",
     ),
+    STRATEGY_MOMENTUM: StrategyPreset(
+        name=STRATEGY_MOMENTUM,
+        min_apr=300.0,
+        min_liquidity_usd=2_000.0,
+        min_volume_24h_usd=500.0,
+        description=(
+            "Real TVL + buyer flow: rank pools by live vol/TVL, acceleration, APR; "
+            "exit hints when health/TVL/volume fail."
+        ),
+    ),
 }
 
 
@@ -89,6 +117,8 @@ def normalize_strategy(name: str | None) -> str:
     if not name:
         return STRATEGY_CUSTOM
     key = name.strip().lower()
+    if key in ("fee_rush", "hot_lp", "fee-rush"):
+        return STRATEGY_MOMENTUM
     if key in ALLOWED_STRATEGIES:
         return key
     return STRATEGY_CUSTOM
@@ -117,6 +147,10 @@ def apply_strategy(raw_config: Mapping[str, object], strategy: str | None) -> di
     ):
         if key not in raw_config:
             merged[key] = value
+    if normalized == STRATEGY_MOMENTUM:
+        for key, value in MOMENTUM_STRATEGY_EXTRAS.items():
+            if key not in raw_config:
+                merged[key] = value
     return merged
 
 
@@ -124,7 +158,13 @@ def describe_presets() -> str:
     """Human-friendly multi-line description used by the setup wizard."""
 
     lines = ["Available strategies:"]
-    for key in (STRATEGY_CONSERVATIVE, STRATEGY_MODERATE, STRATEGY_AGGRESSIVE, STRATEGY_DEGEN):
+    for key in (
+        STRATEGY_CONSERVATIVE,
+        STRATEGY_MODERATE,
+        STRATEGY_AGGRESSIVE,
+        STRATEGY_DEGEN,
+        STRATEGY_MOMENTUM,
+    ):
         preset = STRATEGY_PRESETS[key]
         lines.append(
             f"  - {preset.name:<13} APR>={preset.min_apr:>6.0f}%  "
