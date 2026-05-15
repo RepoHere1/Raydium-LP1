@@ -138,7 +138,11 @@ def print_verdict_column_headers(cfg: StreamConfig, *, page: int | None = None) 
     if not cfg.enabled:
         return
     lead = f"Raydium page {page} — " if page is not None else ""
-    title = f"{lead}verdict columns (full POOL_ID; REASON truncated on screen — see rejections.csv for full text)"
+    title = (
+        f"{lead}verdict columns (full POOL_ID; REASON truncated on screen — "
+        "full reason text: enable --write-rejections or settings write_rejections "
+        "to create reports/rejections.csv)"
+    )
     if cfg.color:
         title = f"{_DIM}{title}{_RESET}"
     _println_verdict(cfg, "")
