@@ -7,7 +7,9 @@ param(
     [switch]$WriteReports,
     [switch]$WriteRejections,
     [int]$ShowRejects = 200,
-    [switch]$VerdictStdout
+    [switch]$VerdictStdout,
+    [string]$VerdictLog = "",
+    [int]$VerdictHeaderEvery = 25
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +66,12 @@ if ($WriteRejections) {
 }
 if ($VerdictStdout) {
     $scannerArgs += "--verdict-stdout"
+}
+if ($VerdictLog) {
+    $scannerArgs += @("--verdict-log", $VerdictLog)
+}
+if ($VerdictHeaderEvery -ne 25) {
+    $scannerArgs += @("--verdict-header-every", "$VerdictHeaderEvery")
 }
 $scannerArgs += @("--show-rejects", "$ShowRejects")
 

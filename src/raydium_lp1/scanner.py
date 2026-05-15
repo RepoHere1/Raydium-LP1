@@ -592,6 +592,8 @@ def scan(
     scanned = 0
     reject_idx = 0
     stream_cfg = verdict_stream if verdict_stream is not None else verdicts.make_stream_config(enabled=False)
+    if verdict_stream is not None and verdict_stream.enabled:
+        verdict_stream.row_emit_count = 0
 
     adapter = networks.get_adapter(config.network)
     if not adapter.supports_live:
@@ -840,12 +842,21 @@ def print_report(report: dict[str, Any]) -> None:
         print_reject_dial_in_hints(report)
         return
 
-    print("\nCandidates:")
+    print("\nCandidates (dry-run watch list)")
+    print(
+        "Columns: PAIR_NAME | APR_PCT | TVL_USD | VOL24_USD | POOL_ID (full Raydium pool address)"
+    )
+    hdr = f"{'PAIR_NAME':<32} | {'APR_PCT':>10} | {'TVL_USD':>12} | {'VOL24_USD':>14} | POOL_ID"
+    print(hdr)
+    print("-" * min(160, len(hdr) + 20))
     for pool in report["candidates"]:
         pair = f"{pool['mint_a_symbol']}/{pool['mint_b_symbol']}"
+        if len(pair) > 32:
+            pair = pair[:29] + "..."
+        pair = pair.ljust(32)
         print(
-            f"- {pair} | APR {pool['apr']:.2f}% | TVL ${pool['liquidity_usd']:.2f} | "
-            f"24h Vol ${pool['volume_24h_usd']:.2f} | Pool {pool['id']}"
+            f"{pair} | {float(pool['apr']):>10.2f} | {float(pool['liquidity_usd']):>12.2f} | "
+            f"{float(pool['volume_24h_usd']):>14.2f} | {pool['id']}"
         )
     print("\nDry-run only: no buy, no wallet signing, no LP position opened.")
 
@@ -995,6 +1006,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Write reports/rejections.csv (+ .summary.json) with every pool and its reject reason(s).",
     )
     parser.add_argument(
+        "--verdict-log",
+        type=str,
+        default="",
+        metavar="PATH",
+        help="Overwrite PATH at start, then append plain-text PASS/REJECT lines (read with Get-Content -Wait in another window).",
+    )
+    parser.add_argument(
+        "--verdict-header-every",
+        type=int,
+        default=25,
+        metavar="N",
+        help="Re-print a one-line column reminder every N PASS/REJECT rows on stderr (0 disables).",
+    )
+    parser.add_argument(
         "--wallet-override",
         type=str,
         default=None,
@@ -1051,12 +1076,34 @@ def main(argv: list[str] | None = None) -> int:
     cap = int(args.show_rejects)
     if cap <= 0:
         cap = 10**7
+
+    verdict_log_resolved: str | None = None
+    vraw = (args.verdict_log or "").strip()
+    if vraw:
+        vpath = Path(vraw)
+        vpath.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).isoformat()
+        vpath.write_text(f"# Raydium-LP1 verdict stream started {stamp}\n", encoding="utf-8")
+        verdict_log_resolved = str(vpath.resolve())
+
+    if not args.quiet and not args.json:
+        print(
+            "[scan] STDERR = live pages + PASS/REJECT table + breakdown. "
+            "STDOUT = summary + candidates table. "
+            "Consoles cannot pause on click while Python keeps running; use --verdict-log PATH "
+            "then in another PowerShell:  Get-Content -LiteralPath PATH -Wait",
+            file=sys.stderr,
+            flush=True,
+        )
+
     verdict_stream = sys.stdout if args.verdict_stdout else None
     stream_cfg = verdicts.make_stream_config(
         enabled=not args.quiet and not args.json,
         show_passes=not args.hide_passes,
         max_rejections_shown=cap,
         stream=verdict_stream,
+        verdict_log_path=verdict_log_resolved,
+        header_repeat_rows=int(args.verdict_header_every),
     )
     wr_override = True if args.write_rejections else None
 

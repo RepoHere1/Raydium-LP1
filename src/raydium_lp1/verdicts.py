@@ -19,10 +19,18 @@ should lower it / pick a different sort field").
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TextIO
+
+# Strip ANSI so optional --verdict-log file stays readable in Notepad/VS Code.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    return _ANSI_ESCAPE.sub("", text)
 
 # ANSI escape codes. We probe stdout to decide whether to emit them.
 _GREEN = "\033[32m"
@@ -54,6 +62,11 @@ class StreamConfig:
     stream: TextIO | None = None
     # Widen POOL_ID column for long Raydium / mint-derived ids (still capped for layout).
     pool_id_width: int = 56
+    # Append plain-text copies of verdict lines here (read in another window while scan runs).
+    verdict_log_path: str | None = None
+    # Re-print a one-line column reminder every N data rows (0 = off). Terminals cannot pin a header.
+    header_repeat_rows: int = 25
+    row_emit_count: int = field(default=0, repr=False)
 
     def out(self) -> TextIO:
         # Default stderr: matches scanner progress logs and avoids "silent"
@@ -65,27 +78,43 @@ def _pair(pool: dict) -> str:
     return f"{pool.get('mint_a_symbol', '?')}/{pool.get('mint_b_symbol', '?')}"
 
 
+def _append_verdict_log(cfg: StreamConfig, *parts: str) -> None:
+    path = cfg.verdict_log_path
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            for p in parts:
+                fh.write(strip_ansi(p) + "\n")
+    except OSError:
+        pass
+
+
+def _println_verdict(cfg: StreamConfig, line: str) -> None:
+    print(line, file=cfg.out(), flush=True)
+    _append_verdict_log(cfg, line)
+
+
 def print_verdict_column_headers(cfg: StreamConfig, *, page: int | None = None) -> None:
     """Print a human-readable column guide (repeated each Raydium page from ``scan()``)."""
 
     if not cfg.enabled:
         return
-    out = cfg.out()
     pid_w = max(32, min(64, int(cfg.pool_id_width)))
     lead = f"Raydium page {page} — " if page is not None else ""
     title = f"{lead}verdict columns (full POOL_ID; REASON truncated on screen — see rejections.csv for full text)"
     if cfg.color:
         title = f"{_DIM}{title}{_RESET}"
-    print("", file=out, flush=True)
-    print(title, file=out, flush=True)
+    _println_verdict(cfg, "")
+    _println_verdict(cfg, title)
     hdr = (
         f"{'VERDICT':<7} | {'PAIR_NAME':<26} | {'APR_PCT':>12} | "
         f"{'TVL_USD':>12} | {'VOL24_USD':>12} | {'LP_BURN':>7} | "
         f"{'POOL_ID':<{pid_w}} | REJECT_REASON"
     )
     sep = "-" * min(240, max(100, len(hdr)))
-    print(hdr, file=out, flush=True)
-    print(sep, file=out, flush=True)
+    _println_verdict(cfg, hdr)
+    _println_verdict(cfg, sep)
 
 
 def _format_pool_id(raw: str, width: int) -> str:
@@ -116,6 +145,29 @@ def _verdict_table_row(verdict: str, pool: dict, reason: str | None, *, pool_id_
     )
 
 
+def print_verdict_column_reminder(cfg: StreamConfig) -> None:
+    """Short repeat of column names (every N rows) — not a full table header."""
+
+    if not cfg.enabled:
+        return
+    msg = (
+        "[columns] VERDICT | PAIR_NAME | APR_PCT | TVL_USD | VOL24_USD | LP_BURN | "
+        "POOL_ID | REJECT_REASON"
+    )
+    if cfg.color:
+        msg = f"{_DIM}{msg}{_RESET}"
+    _println_verdict(cfg, msg)
+
+
+def _maybe_repeat_header_row(cfg: StreamConfig) -> None:
+    n = int(cfg.header_repeat_rows)
+    if n <= 0 or not cfg.enabled:
+        return
+    cfg.row_emit_count += 1
+    if cfg.row_emit_count % n == 0:
+        print_verdict_column_reminder(cfg)
+
+
 def emit_pass(pool: dict, cfg: StreamConfig) -> None:
     if not cfg.enabled or not cfg.show_passes:
         return
@@ -123,7 +175,8 @@ def emit_pass(pool: dict, cfg: StreamConfig) -> None:
     line = _verdict_table_row("[PASS]", pool, None, pool_id_width=pid_w)
     if cfg.color:
         line = f"{_GREEN}{line}{_RESET}"
-    print(line, file=cfg.out(), flush=True)
+    _println_verdict(cfg, line)
+    _maybe_repeat_header_row(cfg)
 
 
 def emit_reject(pool: dict, reasons: list[str], cfg: StreamConfig, *, idx: int = 0) -> None:
@@ -136,12 +189,13 @@ def emit_reject(pool: dict, reasons: list[str], cfg: StreamConfig, *, idx: int =
     line = _verdict_table_row("[REJ]", pool, reason, pool_id_width=pid_w)
     if cfg.color:
         line = f"{_RED}{line}{_RESET}"
-    print(line, file=cfg.out(), flush=True)
+    _println_verdict(cfg, line)
+    _maybe_repeat_header_row(cfg)
     if idx + 1 == cfg.max_rejections_shown:
         more = f"  ... (more rejects hidden; pass --show-rejects=N to raise the cap)"
         if cfg.color:
             more = f"{_DIM}{more}{_RESET}"
-        print(more, file=cfg.out(), flush=True)
+        _println_verdict(cfg, more)
 
 
 def make_stream_config(
@@ -151,6 +205,8 @@ def make_stream_config(
     max_rejections_shown: int = 200,
     stream: TextIO | None = None,
     pool_id_width: int = 56,
+    verdict_log_path: str | None = None,
+    header_repeat_rows: int = 25,
 ) -> StreamConfig:
     target = stream if stream is not None else sys.stderr
     return StreamConfig(
@@ -160,6 +216,8 @@ def make_stream_config(
         max_rejections_shown=max_rejections_shown,
         stream=stream,
         pool_id_width=pool_id_width,
+        verdict_log_path=verdict_log_path,
+        header_repeat_rows=max(0, int(header_repeat_rows)),
     )
 
 
@@ -215,12 +273,11 @@ def print_rejection_breakdown(rejected_or_counts, cfg: StreamConfig) -> None:
     if not counts:
         return
     total = sum(counts.values())
-    out = cfg.out()
     header = f"Rejected breakdown ({total} pools):"
     if cfg.color:
         header = f"{_DIM}{header}{_RESET}"
-    print("", file=out)
-    print(header, file=out)
+    _println_verdict(cfg, "")
+    _println_verdict(cfg, header)
     for category, count in counts.most_common():
         pct = (count / total * 100) if total else 0
         bar_width = max(1, int(round(pct / 4)))  # /4 so 100% = 25 chars
@@ -228,4 +285,4 @@ def print_rejection_breakdown(rejected_or_counts, cfg: StreamConfig) -> None:
         line = f"  {category:<26} {count:>7,} ({pct:5.1f}%)  {bar}"
         if cfg.color:
             line = f"{_RED}{line}{_RESET}" if category != "other" else f"{_DIM}{line}{_RESET}"
-        print(line, file=out, flush=True)
+        _println_verdict(cfg, line)

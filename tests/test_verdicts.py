@@ -94,6 +94,61 @@ class HeaderTests(unittest.TestCase):
         self.assertIn("Raydium page 3", out)
 
 
+class HeaderRepeatTests(unittest.TestCase):
+    def test_repeat_injected_every_n_rows(self):
+        stream = io.StringIO()
+        cfg = verdicts.StreamConfig(enabled=True, color=False, stream=stream, header_repeat_rows=2)
+        for i in range(4):
+            verdicts.emit_pass(
+                {
+                    "id": str(i),
+                    "mint_a_symbol": "S",
+                    "mint_b_symbol": "T",
+                    "apr": 1.0,
+                    "liquidity_usd": 1.0,
+                    "volume_24h_usd": 1.0,
+                },
+                cfg,
+            )
+        self.assertGreaterEqual(stream.getvalue().count("[columns]"), 2)
+
+
+class AnsiTests(unittest.TestCase):
+    def test_strip_ansi(self):
+        raw = f"{verdicts._RED}hello{verdicts._RESET}"
+        self.assertEqual(verdicts.strip_ansi(raw), "hello")
+
+
+class VerdictLogTests(unittest.TestCase):
+    def test_verdict_log_plain_text_no_escapes(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v.log"
+            stream = io.StringIO()
+            cfg = verdicts.StreamConfig(
+                enabled=True,
+                color=False,
+                stream=stream,
+                verdict_log_path=str(path),
+            )
+            verdicts.emit_pass(
+                {
+                    "id": "PoolIdPlain123",
+                    "mint_a_symbol": "S",
+                    "mint_b_symbol": "T",
+                    "apr": 9.0,
+                    "liquidity_usd": 1.0,
+                    "volume_24h_usd": 2.0,
+                },
+                cfg,
+            )
+            logged = path.read_text(encoding="utf-8")
+            self.assertIn("PoolIdPlain123", logged)
+            self.assertNotIn("\x1b[", logged)
+
+
 class ClassifierTests(unittest.TestCase):
     def test_classify_apr(self):
         self.assertEqual(verdicts._classify_reason("apr 12.0 below 500.00"), "apr_below_threshold")
