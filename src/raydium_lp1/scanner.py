@@ -22,6 +22,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from raydium_lp1 import dashboard as dashboard_mod
+from raydium_lp1 import dial_in_analyst
 from raydium_lp1 import emergency, health, networks, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
@@ -867,9 +868,16 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
     latest_json = reports_dir / "latest.json"
     stamped_json = reports_dir / f"scan-{timestamp}.json"
     latest_csv = reports_dir / "candidates.csv"
+    latest_diagnosis = reports_dir / "scan_diagnosis.json"
     payload = json.dumps(report, indent=2, sort_keys=True)
     latest_json.write_text(payload + "\n", encoding="utf-8")
     stamped_json.write_text(payload + "\n", encoding="utf-8")
+    diag = report.get("scan_diagnosis")
+    if isinstance(diag, dict):
+        latest_diagnosis.write_text(
+            json.dumps(diag, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     with latest_csv.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
@@ -1150,7 +1158,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Scan failed: {exc}", file=sys.stderr)
             return 1
 
+        report["scan_diagnosis"] = dial_in_analyst.build_scan_diagnosis(config, report)
+
         verdicts.print_rejection_breakdown(report.get("rejection_breakdown") or {}, stream_cfg)
+        if not args.json:
+            dial_in_analyst.print_scan_diagnosis(report["scan_diagnosis"], stream_cfg=stream_cfg)
 
         if args.write_reports:
             write_reports(report)
