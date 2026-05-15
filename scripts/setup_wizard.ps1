@@ -209,6 +209,21 @@ $holdDefault = Get-Default $configDefaults "momentum_hold_hours" 24
 Write-Host "  Hold bias: 24 = ~1 day fee-rush, 168 = ~1 week"
 $holdHours = [double](Ask-WithDefault "Momentum hold bias (hours)" "$holdDefault")
 
+Write-Host ""
+Write-Host "How .\scripts\run_scan.ps1 should behave (saved in settings.json; CLI flags still override):" -ForegroundColor Cyan
+$scanLoopDefault = Get-Default $configDefaults "scan_loop" $false
+$scanLoop = Ask-YesNo "Default: run repeated scans (--loop) until you press Ctrl+C?" $scanLoopDefault
+$intervalDefault = [int](Get-Default $configDefaults "scan_loop_interval_seconds" 60)
+if ($intervalDefault -lt 3) { $intervalDefault = 3 }
+if ($intervalDefault -gt 86400) { $intervalDefault = 86400 }
+$intervalSec = [int](Ask-WithDefault "Seconds between scans when loop is on (3-86400)" "$intervalDefault")
+if ($intervalSec -lt 3) { $intervalSec = 3 }
+if ($intervalSec -gt 86400) { $intervalSec = 86400 }
+$spawnWatcherDefault = Get-Default $configDefaults "spawn_verdict_watcher" $false
+$spawnWatcher = Ask-YesNo "Default: open the verdict log tail window (watch_verdict.ps1) when you start a scan?" $spawnWatcherDefault
+$writeRejectDefault = Get-Default $configDefaults "write_rejections" ($strategy -eq "momentum")
+$writeRejections = Ask-YesNo "Write rejections CSV (reports\rejections.csv) each scan cycle?" $writeRejectDefault
+
 $config = [ordered]@{
     dry_run = $true
     strategy = $strategy
@@ -238,6 +253,10 @@ $config = [ordered]@{
     min_momentum_score = $momScore
     require_momentum_score = $requireMom
     momentum_hold_hours = $holdHours
+    scan_loop = $scanLoop
+    scan_loop_interval_seconds = $intervalSec
+    spawn_verdict_watcher = $spawnWatcher
+    write_rejections = $writeRejections
     momentum_min_volume_tvl_ratio = [double](Get-Default $configDefaults "momentum_min_volume_tvl_ratio" 0.5)
     momentum_sweet_min_pool_age_hours = [double](Get-Default $configDefaults "momentum_sweet_min_pool_age_hours" 6)
     momentum_sweet_max_pool_age_hours = [double](Get-Default $configDefaults "momentum_sweet_max_pool_age_hours" 168)
@@ -288,7 +307,11 @@ Write-Host "Saved $($fallbacks.Count + 1) RPC URL(s) to both $ConfigPath and $En
 Write-Host ""
 Write-Host "Next paste/run:" -ForegroundColor Cyan
 Write-Host ".\scripts\doctor.ps1"
-Write-Host ".\scripts\run_scan.ps1 -CheckRpc -WriteReports"
+if ($scanLoop -or $spawnWatcher -or $writeRejections) {
+    Write-Host ".\scripts\run_scan.ps1   # loop / watcher / rejections use your new defaults; add -CheckRpc as needed"
+} else {
+    Write-Host ".\scripts\run_scan.ps1 -CheckRpc -WriteReports"
+}
 
 if (Ask-YesNo "Run doctor check now?" $true) {
     & "$ScriptDir\doctor.ps1"

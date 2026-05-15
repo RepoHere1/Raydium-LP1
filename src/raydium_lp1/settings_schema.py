@@ -69,4 +69,7 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "lp_main_budget_fraction",
     "lp_max_positions_per_mint",
     "risk_profile",
+    "scan_loop",
+    "scan_loop_interval_seconds",
+    "spawn_verdict_watcher",
 )

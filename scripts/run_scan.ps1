@@ -60,6 +60,35 @@ if (-not (Test-SettingsJson $Config)) {
     exit 2
 }
 
+# Defaults from settings.json — CLI switches always win over these.
+try {
+    $runScanSettings = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
+} catch {
+    $runScanSettings = $null
+}
+if ($null -ne $runScanSettings) {
+    if (-not $PSBoundParameters.ContainsKey('Loop')) {
+        if ($runScanSettings.scan_loop -eq $true) { $Loop = $true }
+    }
+    if (-not $PSBoundParameters.ContainsKey('SpawnWatcher')) {
+        if ($runScanSettings.spawn_verdict_watcher -eq $true) { $SpawnWatcher = $true }
+    }
+    if (-not $PSBoundParameters.ContainsKey('WriteRejections')) {
+        if ($runScanSettings.write_rejections -eq $true) { $WriteRejections = $true }
+    }
+    if (-not $PSBoundParameters.ContainsKey('Interval')) {
+        $iv = $runScanSettings.scan_loop_interval_seconds
+        if ($null -ne $iv -and "$iv" -ne "") {
+            try {
+                $parsed = [int]$iv
+                if ($parsed -ge 3 -and $parsed -le 86400) { $Interval = $parsed }
+            } catch {}
+        }
+    }
+}
+if ($Interval -lt 3) { $Interval = 3 }
+if ($Interval -gt 86400) { $Interval = 86400 }
+
 if (-not (Test-Path "scripts\scan_raydium_lps.py")) {
     throw "Missing scripts\scan_raydium_lps.py. Your folder does not have the scanner files yet. Pull/copy the Raydium-LP1 files first."
 }
