@@ -308,6 +308,8 @@ It checks the repo folder, scanner files, local settings, `.env`, Python, and Gi
 
 ## Running scans
 
+The setup wizard can save **loop**, **verdict log watcher**, and **rejections CSV** choices into `config\settings.json` as **`scan_loop`**, **`scan_loop_interval_seconds`**, **`spawn_verdict_watcher`**, and **`write_rejections`**. A plain `.\run_scan.ps1` then applies those defaults; any flags you pass on the command line still win.
+
 Normal beginner output:
 
 ```powershell
