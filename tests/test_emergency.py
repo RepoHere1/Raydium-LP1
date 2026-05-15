@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from raydium_lp1 import emergency, health
 from raydium_lp1.scanner import ScannerConfig, scan
+from tests.scan_test_defaults import RAYDIUM_CPMM_PROGRAM, SCAN_TEST_DISABLE_VERIFY
 
 
 class SwapPlanTests(unittest.TestCase):
@@ -117,6 +118,7 @@ class ScannerEmergencyIntegrationTests(unittest.TestCase):
                     "data": [
                         {
                             "id": "rug-pool",
+                            "programId": RAYDIUM_CPMM_PROGRAM,
                             "apr24h": 1500,
                             "tvl": 1000,
                             "volume24h": 2,
@@ -136,6 +138,7 @@ class ScannerEmergencyIntegrationTests(unittest.TestCase):
                 emergency_close_enabled=True,
                 emergency_alerts_path=str(alerts_path),
                 use_robust_routing=False,
+                **SCAN_TEST_DISABLE_VERIFY,
             )
             with patch("raydium_lp1.scanner.fetch_json", return_value=api_response):
                 report = scan(config)

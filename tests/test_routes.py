@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from raydium_lp1 import routes
 from raydium_lp1.scanner import ScannerConfig, normalize_pool, scan
+from tests.scan_test_defaults import RAYDIUM_CPMM_PROGRAM, SCAN_TEST_DISABLE_VERIFY
 
 
 def _fake_fetch(url: str) -> dict:
@@ -138,11 +139,13 @@ class ScannerSellabilityIntegrationTests(unittest.TestCase):
             min_liquidity_usd=10,
             min_volume_24h_usd=10,
             require_sell_route=True,
+            **SCAN_TEST_DISABLE_VERIFY,
         )
 
     def _pool_payload(self, pool_id: str, symbol_b: str, mint_b: str) -> dict:
         return {
             "id": pool_id,
+            "programId": RAYDIUM_CPMM_PROGRAM,
             "apr24h": 1500,
             "tvl": 5000,
             "volume24h": 1000,
@@ -178,6 +181,7 @@ class ScannerSellabilityIntegrationTests(unittest.TestCase):
             min_liquidity_usd=10,
             min_volume_24h_usd=10,
             require_sell_route=False,
+            **SCAN_TEST_DISABLE_VERIFY,
         )
         api_response = {
             "data": {"data": [self._pool_payload("bad-pool", "RUG", "BLOCKMINT")]}

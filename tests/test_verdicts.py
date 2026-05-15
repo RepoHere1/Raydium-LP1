@@ -5,11 +5,13 @@ from unittest.mock import patch
 
 from raydium_lp1 import verdicts
 from raydium_lp1.scanner import ScannerConfig, scan
+from tests.scan_test_defaults import RAYDIUM_CPMM_PROGRAM, SCAN_TEST_DISABLE_VERIFY
 
 
 def _pool(pid="p", apr=1500, tvl=5000, vol=1000, sym_b="MEME"):
     return {
         "id": pid,
+        "programId": RAYDIUM_CPMM_PROGRAM,
         "apr24h": apr,
         "tvl": tvl,
         "volume24h": vol,
@@ -224,6 +226,7 @@ class ScannerVerdictIntegrationTests(unittest.TestCase):
         config = ScannerConfig(
             min_apr=500, min_liquidity_usd=200, min_volume_24h_usd=50,
             require_sell_route=False, track_liquidity_health=False,
+            **SCAN_TEST_DISABLE_VERIFY,
         )
         with patch("raydium_lp1.scanner.fetch_json", return_value=api_response):
             report = scan(config, verdict_stream=stream_cfg)

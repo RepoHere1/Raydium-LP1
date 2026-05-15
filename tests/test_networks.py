@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from raydium_lp1 import networks
 from raydium_lp1.scanner import ScannerConfig, assess_capacity, scan
+from tests.scan_test_defaults import RAYDIUM_CPMM_PROGRAM, SCAN_TEST_DISABLE_VERIFY
 
 
 VALID_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
@@ -74,6 +75,7 @@ class MultiNetworkScannerTests(unittest.TestCase):
         api_response = {
             "data": {"data": [{
                 "id": "pool-1",
+                "programId": RAYDIUM_CPMM_PROGRAM,
                 "apr24h": 1500, "tvl": 5000, "volume24h": 1000,
                 "mintA": {"symbol": "SOL", "address": "solmint"},
                 "mintB": {"symbol": "TKN", "address": "tknmint"},
@@ -83,6 +85,7 @@ class MultiNetworkScannerTests(unittest.TestCase):
             min_apr=100, min_liquidity_usd=10, min_volume_24h_usd=10,
             require_sell_route=False, track_liquidity_health=False,
             network="solana",
+            **SCAN_TEST_DISABLE_VERIFY,
         )
         with patch("raydium_lp1.scanner.fetch_json", return_value=api_response):
             report = scan(config)

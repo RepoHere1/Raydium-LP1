@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from raydium_lp1 import wallet
 from raydium_lp1.scanner import ScannerConfig, assess_capacity, scan
+from tests.scan_test_defaults import RAYDIUM_CPMM_PROGRAM, SCAN_TEST_DISABLE_VERIFY
 
 
 VALID_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
@@ -72,6 +73,7 @@ class ScannerCapacityIntegrationTests(unittest.TestCase):
                 "data": [
                     {
                         "id": f"pool-{i}",
+                        "programId": RAYDIUM_CPMM_PROGRAM,
                         "apr24h": 1500,
                         "tvl": 5000,
                         "volume24h": 1000,
@@ -98,6 +100,7 @@ class ScannerCapacityIntegrationTests(unittest.TestCase):
             position_size_sol=0.1,
             reserve_sol=0.02,
             solana_rpc_urls=["https://rpc.example"],
+            **SCAN_TEST_DISABLE_VERIFY,
         )
         with patch("raydium_lp1.scanner.fetch_json", return_value=self._api_response(10)):
             report = scan(config, wallet_config=wcfg, rpc_post=fake_rpc)
@@ -113,6 +116,7 @@ class ScannerCapacityIntegrationTests(unittest.TestCase):
             min_volume_24h_usd=10,
             require_sell_route=False,
             track_liquidity_health=False,
+            **SCAN_TEST_DISABLE_VERIFY,
         )
         with patch("raydium_lp1.scanner.fetch_json", return_value=self._api_response(5)):
             report = scan(config)

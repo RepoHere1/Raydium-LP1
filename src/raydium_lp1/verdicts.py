@@ -26,6 +26,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TextIO
 
+from raydium_lp1 import pool_verify
+
 # Strip ANSI so optional --verdict-log file stays readable in Notepad/VS Code.
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -79,6 +81,14 @@ def _pair(pool: dict) -> str:
     return f"{pool.get('mint_a_symbol', '?')}/{pool.get('mint_b_symbol', '?')}"
 
 
+def _proof_tag(pool: dict) -> str:
+    pv = pool.get("pool_verification")
+    if isinstance(pv, dict) and pv.get("proof_tag"):
+        return str(pv["proof_tag"])
+    label = pool_verify.program_label(str(pool.get("program_id") or ""))
+    return label or "?"
+
+
 def _append_verdict_log(cfg: StreamConfig, *parts: str) -> None:
     path = cfg.verdict_log_path
     if not path:
@@ -126,7 +136,7 @@ def verdict_table_header_and_sep(cfg: StreamConfig) -> tuple[str, str]:
     hdr = (
         f"{'VERDICT':<7} | {'PAIR_NAME':<26} | {'APR_PCT':>12} | "
         f"{'TVL_USD':>12} | {'VOL24_USD':>12} | {'LP_BURN':>7} | "
-        f"{'POOL_STATE':<{pid_w}} | REJECT_REASON"
+        f"{'PROOF':<14} | {'POOL_STATE':<{pid_w}} | REJECT_REASON"
     )
     sep = "-" * min(240, max(100, len(hdr)))
     return hdr, sep
@@ -139,9 +149,8 @@ def print_verdict_column_headers(cfg: StreamConfig, *, page: int | None = None) 
         return
     lead = f"Raydium page {page} — " if page is not None else ""
     title = (
-        f"{lead}verdict columns (POOL_STATE = Raydium pool state-account pubkey; same base58 shape as any Solana "
-        "address — not a token mint; pair mints are mint_a/mint_b, LP receipt is lp_mint_address in JSON/CSV. "
-        "REASON truncated here — use --write-rejections for full text)"
+        f"{lead}verdict columns — PROOF = Raydium program + on-chain owner check (CPMM+chain = verified pool state, "
+        "not a user wallet). POOL_STATE = same id Raydium api-v3 uses. REASON truncated — --write-rejections for CSV."
     )
     if cfg.color:
         title = f"{_DIM}{title}{_RESET}"
@@ -168,6 +177,7 @@ def _verdict_table_row(verdict: str, pool: dict, reason: str | None, *, pool_id_
     if len(pair) > 26:
         pair = pair[:23] + "..."
     pair = pair.ljust(26)
+    proof = _proof_tag(pool)[:14].ljust(14)
     pid = str(pool.get("id") or "?")
     pid_col = _format_pool_id(pid, pool_id_width)
     r = (reason or "").replace("\n", " ").replace("\r", "")
@@ -176,7 +186,7 @@ def _verdict_table_row(verdict: str, pool: dict, reason: str | None, *, pool_id_
     reason_col = r if reason is not None else ""
     return (
         f"{verdict:<7} | {pair} | {apr:>12.0f} | {tvl:>12.2f} | {vol:>12.2f} | {burn_col} | "
-        f"{pid_col} | {reason_col}"
+        f"{proof} | {pid_col} | {reason_col}"
     )
 
 
@@ -283,6 +293,8 @@ def _classify_reason(reason: str) -> str:
         return "no_sell_route"
     if "pool id" in r:
         return "missing_pool_id"
+    if "on-chain" in r or "raydium pool program" in r or "programid" in r.replace(" ", ""):
+        return "pool_not_verified"
     if "pool age" in r:
         return "pool_age"
     if "burn" in r:

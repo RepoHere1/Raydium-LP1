@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from raydium_lp1 import health
 from raydium_lp1.scanner import ScannerConfig, scan
+from tests.scan_test_defaults import RAYDIUM_CPMM_PROGRAM, SCAN_TEST_DISABLE_VERIFY
 
 
 class HealthAssessmentTests(unittest.TestCase):
@@ -89,6 +90,7 @@ class ScannerHealthIntegrationTests(unittest.TestCase):
                 "data": [
                     {
                         "id": "pool-x",
+                        "programId": RAYDIUM_CPMM_PROGRAM,
                         "apr24h": 1500,
                         "tvl": 5000,
                         "volume24h": 1000,
@@ -107,6 +109,7 @@ class ScannerHealthIntegrationTests(unittest.TestCase):
                 require_sell_route=False,
                 track_liquidity_health=True,
                 liquidity_history_path=str(history_path),
+                **SCAN_TEST_DISABLE_VERIFY,
             )
             with patch("raydium_lp1.scanner.fetch_json", return_value=api_response):
                 report = scan(config)

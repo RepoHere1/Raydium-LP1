@@ -23,7 +23,7 @@ from urllib.request import Request, urlopen
 
 from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import dial_in_analyst
-from raydium_lp1 import emergency, health, networks, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1 import emergency, health, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -89,6 +89,10 @@ class ScannerConfig:
     # Write every reject row to CSV (pair, metrics, full reason text).
     write_rejections: bool = False
     rejections_csv_path: str = "reports/rejections.csv"
+    # Reject pools that fail Raydium program + optional on-chain owner checks.
+    require_verified_raydium_pool: bool = True
+    verify_pool_on_chain: bool = True
+    verify_pool_raydium_api: bool = False
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -150,6 +154,11 @@ class ScannerConfig:
             hard_exit_min_tvl_usd=float(raw_with_strategy.get("hard_exit_min_tvl_usd", 0.0)),
             write_rejections=bool(raw_with_strategy.get("write_rejections", False)),
             rejections_csv_path=str(raw_with_strategy.get("rejections_csv_path", "reports/rejections.csv")),
+            require_verified_raydium_pool=bool(
+                raw_with_strategy.get("require_verified_raydium_pool", True)
+            ),
+            verify_pool_on_chain=bool(raw_with_strategy.get("verify_pool_on_chain", True)),
+            verify_pool_raydium_api=bool(raw_with_strategy.get("verify_pool_raydium_api", False)),
         )
 
 
@@ -606,6 +615,7 @@ def scan(
     reason_histogram: _Counter = _Counter()
     scanned = 0
     reject_idx = 0
+    on_chain_owner_cache: dict[str, str | None] = {}
     stream_cfg = verdict_stream if verdict_stream is not None else verdicts.make_stream_config(enabled=False)
     if verdict_stream is not None and verdict_stream.enabled:
         verdict_stream.row_emit_count = 0
@@ -709,6 +719,29 @@ def scan(
                     if sell_reasons:
                         reason_histogram[sell_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": sell_reasons})
+                    continue
+
+            if config.require_verified_raydium_pool or config.verify_pool_on_chain or config.verify_pool_raydium_api:
+                verification = pool_verify.validate_pool(
+                    public_pool,
+                    api_base=config.raydium_api_base,
+                    rpc_urls=config.solana_rpc_urls,
+                    verify_on_chain=config.verify_pool_on_chain,
+                    verify_raydium_api=config.verify_pool_raydium_api,
+                    rpc_post=rpc_post,
+                    owner_cache=on_chain_owner_cache,
+                )
+                public_pool["pool_verification"] = verification.to_dict()
+                if config.require_verified_raydium_pool and not verification.ok:
+                    verify_reasons = list(verification.reasons) or [
+                        "pool failed Raydium on-chain / program verification"
+                    ]
+                    verdicts.emit_reject(public_pool, verify_reasons, stream_cfg, idx=reject_idx)
+                    reject_idx += 1
+                    cat = verdicts._classify_reason(verify_reasons[0])
+                    rejection_counts[cat] += 1
+                    reason_histogram[verify_reasons[0][:200]] += 1
+                    rejected.append({**public_pool, "reasons": verify_reasons})
                     continue
 
             verdicts.emit_pass(public_pool, stream_cfg)
@@ -870,9 +903,10 @@ def print_report(report: dict[str, Any]) -> None:
         if len(pair) > 32:
             pair = pair[:29] + "..."
         pair = pair.ljust(32)
+        proof = (pool.get("pool_verification") or {}).get("proof_tag", "?")
         print(
             f"{pair} | {float(pool['apr']):>10.2f} | {float(pool['liquidity_usd']):>12.2f} | "
-            f"{float(pool['volume_24h_usd']):>14.2f} | {pool['id']}"
+            f"{float(pool['volume_24h_usd']):>14.2f} | {proof:<14} | {pool['id']}"
         )
     print("\nDry-run only: no buy, no wallet signing, no LP position opened.")
 
@@ -901,6 +935,8 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
                 "pool_id",
                 "lp_mint_address",
                 "config_account_id",
+                "pool_proof",
+                "raydium_verify_url",
                 "pair",
                 "apr",
                 "liquidity_usd",
@@ -910,12 +946,15 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
         )
         writer.writeheader()
         for pool in report["candidates"]:
+            pv = pool.get("pool_verification") or {}
             writer.writerow(
                 {
                     "scanned_at": report["scanned_at"],
                     "pool_id": pool["id"],
                     "lp_mint_address": pool.get("lp_mint_address", ""),
                     "config_account_id": pool.get("config_account_id", ""),
+                    "pool_proof": pv.get("proof_tag", ""),
+                    "raydium_verify_url": pv.get("raydium_verify_url", ""),
                     "pair": f"{pool['mint_a_symbol']}/{pool['mint_b_symbol']}",
                     "apr": pool["apr"],
                     "liquidity_usd": pool["liquidity_usd"],
@@ -947,6 +986,9 @@ def write_rejections_csv(
         "pool_id",
         "lp_mint_address",
         "config_account_id",
+        "pool_proof",
+        "on_chain_owner",
+        "raydium_verify_url",
         "pair",
         "mint_a",
         "mint_b",
@@ -969,6 +1011,9 @@ def write_rejections_csv(
                     "pool_id": row.get("id", ""),
                     "lp_mint_address": row.get("lp_mint_address", ""),
                     "config_account_id": row.get("config_account_id", ""),
+                    "pool_proof": (row.get("pool_verification") or {}).get("proof_tag", ""),
+                    "on_chain_owner": (row.get("pool_verification") or {}).get("on_chain_owner", ""),
+                    "raydium_verify_url": (row.get("pool_verification") or {}).get("raydium_verify_url", ""),
                     "pair": f"{row.get('mint_a_symbol', '')}/{row.get('mint_b_symbol', '')}",
                     "mint_a": row.get("mint_a", ""),
                     "mint_b": row.get("mint_b", ""),
@@ -1155,8 +1200,9 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         print(
-            "[scan] POOL_STATE = Raydium api-v3 pool state pubkey (Solana base58; not a token mint). "
-            "Token mints: mint_a/mint_b; LP receipt mint when known: lp_mint_address (CSV/JSON).",
+            "[scan] POOL_STATE = Raydium pool state account (verified: on-chain owner must be CPMM/CLMM/AMM program, "
+            "not System/Token — explorers often wrongly label these as 'wallet'). "
+            "PROOF column = program+chain+api checks. Token mints: mint_a/mint_b.",
             file=sys.stderr,
             flush=True,
         )
