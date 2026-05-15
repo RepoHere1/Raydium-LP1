@@ -968,6 +968,22 @@ def resolve_config_path(path: Path) -> Path:
     return path
 
 
+def _init_verdict_mirror_log(vpath: Path) -> str:
+    """Create or truncate the verdict mirror log and return its absolute path."""
+
+    vpath.parent.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).isoformat()
+    abs_path = str(vpath.resolve())
+    header = (
+        "# Raydium-LP1 verdict stream — plain-text mirror of PASS/REJECT lines (ANSI stripped)\n"
+        f"# started {stamp}\n"
+        "# Second PowerShell from repo root:  .\\scripts\\watch_verdict.ps1\n"
+        f"# Or: Get-Content -LiteralPath '{abs_path}' -Wait -Tail 50\n\n"
+    )
+    vpath.write_text(header, encoding="utf-8")
+    return abs_path
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Scan live Raydium LPs for extreme APR candidates.")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Path to scanner JSON config.")
@@ -1010,7 +1026,13 @@ def main(argv: list[str] | None = None) -> int:
         type=str,
         default="",
         metavar="PATH",
-        help="Overwrite PATH at start, then append plain-text PASS/REJECT lines (read with Get-Content -Wait in another window).",
+        help="Overwrite PATH at start, then append plain-text PASS/REJECT lines. If omitted, "
+        "writes reports/verdict_stream.log whenever the live stream is on (see --no-verdict-log).",
+    )
+    parser.add_argument(
+        "--no-verdict-log",
+        action="store_true",
+        help="Do not write reports/verdict_stream.log (only applies when --verdict-log is not set).",
     )
     parser.add_argument(
         "--verdict-header-every",
@@ -1077,24 +1099,33 @@ def main(argv: list[str] | None = None) -> int:
     if cap <= 0:
         cap = 10**7
 
+    interactive_stream = not args.quiet and not args.json
+    explicit_log = (args.verdict_log or "").strip()
     verdict_log_resolved: str | None = None
-    vraw = (args.verdict_log or "").strip()
-    if vraw:
-        vpath = Path(vraw)
-        vpath.parent.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(UTC).isoformat()
-        vpath.write_text(f"# Raydium-LP1 verdict stream started {stamp}\n", encoding="utf-8")
-        verdict_log_resolved = str(vpath.resolve())
+    if explicit_log:
+        verdict_log_resolved = _init_verdict_mirror_log(Path(explicit_log))
+    elif interactive_stream and not args.no_verdict_log:
+        verdict_log_resolved = _init_verdict_mirror_log(REPORTS_DIR / "verdict_stream.log")
 
-    if not args.quiet and not args.json:
+    if interactive_stream:
         print(
             "[scan] STDERR = live pages + PASS/REJECT table + breakdown. "
-            "STDOUT = summary + candidates table. "
-            "Consoles cannot pause on click while Python keeps running; use --verdict-log PATH "
-            "then in another PowerShell:  Get-Content -LiteralPath PATH -Wait",
+            "STDOUT = summary + candidates table.",
             file=sys.stderr,
             flush=True,
         )
+        if verdict_log_resolved:
+            print(
+                f"[scan] Verdict mirror log (tail in a 2nd window): {verdict_log_resolved}",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(
+                "[scan] Verdict mirror log disabled (--no-verdict-log).",
+                file=sys.stderr,
+                flush=True,
+            )
 
     verdict_stream = sys.stdout if args.verdict_stdout else None
     stream_cfg = verdicts.make_stream_config(
@@ -1141,6 +1172,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if not args.loop:
             return 0
+        if stream_cfg.verdict_log_path:
+            verdicts.log_between_scan_cycles(stream_cfg, iso_timestamp=datetime.now(UTC).isoformat())
         time.sleep(args.interval)
 
 

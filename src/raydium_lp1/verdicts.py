@@ -90,6 +90,25 @@ def _append_verdict_log(cfg: StreamConfig, *parts: str) -> None:
         pass
 
 
+def append_verdict_log_plain(cfg: StreamConfig, text: str) -> None:
+    """Append raw text to the verdict mirror log only (no terminal echo)."""
+
+    path = cfg.verdict_log_path
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        pass
+
+
+def log_between_scan_cycles(cfg: StreamConfig, *, iso_timestamp: str) -> None:
+    """Mark the boundary between loop iterations in the mirror log file."""
+
+    append_verdict_log_plain(cfg, f"\n### Next scan cycle {iso_timestamp} ###\n")
+
+
 def _println_verdict(cfg: StreamConfig, line: str) -> None:
     print(line, file=cfg.out(), flush=True)
     _append_verdict_log(cfg, line)

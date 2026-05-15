@@ -9,6 +9,7 @@ param(
     [int]$ShowRejects = 200,
     [switch]$VerdictStdout,
     [string]$VerdictLog = "",
+    [switch]$NoVerdictLog,
     [int]$VerdictHeaderEvery = 25
 )
 
@@ -69,6 +70,9 @@ if ($VerdictStdout) {
 }
 if ($VerdictLog) {
     $scannerArgs += @("--verdict-log", $VerdictLog)
+}
+if ($NoVerdictLog) {
+    $scannerArgs += "--no-verdict-log"
 }
 if ($VerdictHeaderEvery -ne 25) {
     $scannerArgs += @("--verdict-header-every", "$VerdictHeaderEvery")

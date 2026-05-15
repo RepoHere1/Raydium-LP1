@@ -148,6 +148,25 @@ class VerdictLogTests(unittest.TestCase):
             self.assertIn("PoolIdPlain123", logged)
             self.assertNotIn("\x1b[", logged)
 
+    def test_log_between_scan_cycles_appends_marker(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "v.log"
+            path.write_text("seed\n", encoding="utf-8")
+            cfg = verdicts.StreamConfig(
+                enabled=False,
+                color=False,
+                stream=io.StringIO(),
+                verdict_log_path=str(path),
+            )
+            verdicts.log_between_scan_cycles(cfg, iso_timestamp="2026-05-14T12:00:00+00:00")
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("seed", text)
+            self.assertIn("Next scan cycle", text)
+            self.assertIn("2026-05-14T12:00:00+00:00", text)
+
 
 class ClassifierTests(unittest.TestCase):
     def test_classify_apr(self):
