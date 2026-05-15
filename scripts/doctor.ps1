@@ -41,24 +41,34 @@ Write-Host "  Git:    config\settings.example.json + config\settings.momentum.ex
 Write-Host "  Local:  config\settings.json  <-- scanner reads THIS (not in Git)"
 Write-Host ""
 
+$env:PYTHONPATH = "src"
 if (Test-Path $Config) {
-    try {
-        $cfg = Get-Content $Config -Raw | ConvertFrom-Json
-        $momKeys = @(
-            "strategy", "min_liquidity_usd", "hard_exit_min_tvl_usd",
-            "momentum_enabled", "min_momentum_score", "momentum_hold_hours",
-            "momentum_min_volume_tvl_ratio", "momentum_top_hot"
-        )
-        Write-Host "Momentum-related values in $Config :" -ForegroundColor DarkGray
-        foreach ($k in $momKeys) {
-            if ($cfg.PSObject.Properties[$k]) {
-                Write-Host "  $k = $($cfg.$k)"
-            } else {
-                Write-Host "  $k = (missing — run .\scripts\sync_settings.ps1)" -ForegroundColor Yellow
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        & py -3 -m raydium_lp1.settings_sync --validate --target $Config 2>&1 | ForEach-Object { Write-Host $_ }
+    } else {
+        & python -m raydium_lp1.settings_sync --validate --target $Config 2>&1 | ForEach-Object { Write-Host $_ }
+    }
+    if ($LASTEXITCODE -eq 0) {
+        try {
+            $cfg = Get-Content $Config -Raw | ConvertFrom-Json
+            $momKeys = @(
+                "strategy", "min_liquidity_usd", "hard_exit_min_tvl_usd",
+                "momentum_enabled", "min_momentum_score", "momentum_hold_hours",
+                "momentum_min_volume_tvl_ratio", "momentum_top_hot"
+            )
+            Write-Host "Momentum-related values in $Config :" -ForegroundColor DarkGray
+            foreach ($k in $momKeys) {
+                if ($cfg.PSObject.Properties[$k]) {
+                    Write-Host "  $k = $($cfg.$k)"
+                } else {
+                    Write-Host "  $k = (missing — run .\scripts\sync_settings.ps1 -ApplyMomentumTemplate)" -ForegroundColor Yellow
+                }
             }
+        } catch {
+            Write-Host "  (parsed by Python but PowerShell ConvertFrom-Json failed — odd encoding?)" -ForegroundColor Yellow
         }
-    } catch {
-        Write-Host "  (could not parse $Config)" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Repair: .\scripts\repair_settings.ps1 -ApplyMomentumTemplate" -ForegroundColor Yellow
     }
 } else {
     Write-Host "  Run: .\scripts\sync_settings.ps1 -ApplyMomentumTemplate" -ForegroundColor Yellow
@@ -66,5 +76,6 @@ if (Test-Path $Config) {
 
 Write-Host ""
 Write-Host "If BAD appears for Local settings or Local .env, run:" -ForegroundColor Cyan
+Write-Host ".\scripts\repair_settings.ps1 -ApplyMomentumTemplate"
 Write-Host ".\scripts\setup_wizard.ps1"
 Write-Host ".\scripts\sync_settings.ps1 -ApplyMomentumTemplate"

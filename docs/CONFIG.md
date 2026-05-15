@@ -19,6 +19,17 @@
 
 If you only see `settings.example.json` on GitHub but `settings.json` on `C:\...\Raydium-LP1`, that is correct. The scanner does **not** read the `.example` file unless you pass `--config` to it.
 
+## Invalid JSON (`JSONDecodeError` on line 26, etc.)
+
+The scanner requires **strict JSON** in `config\settings.json`. A missing comma after a line, a trailing comma on the last key, or `//` comments will stop the scan immediately (the watcher window may still open, but Window 1 exits).
+
+```powershell
+.\scripts\doctor.ps1
+.\scripts\repair_settings.ps1 -ApplyMomentumTemplate
+```
+
+That backs up your broken file to `config\settings.json.bak` and replaces it with the known-good momentum template. Settings sync/wizard now write JSON through Python so `ConvertTo-Json` depth bugs are less likely.
+
 ## One-time: align local `settings.json` with momentum
 
 ```powershell

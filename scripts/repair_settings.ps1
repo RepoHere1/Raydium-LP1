@@ -1,7 +1,6 @@
 param(
     [string]$Target = "config\settings.json",
-    [switch]$ApplyMomentumTemplate,
-    [switch]$MergeMissingKeysOnly
+    [switch]$ApplyMomentumTemplate
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,16 +14,16 @@ if (Get-Command py -ErrorAction SilentlyContinue) {
     $pythonArgs = @("-3")
 }
 
-$syncArgs = @("-m", "raydium_lp1.settings_sync", "--target", $Target)
+$syncArgs = @("-m", "raydium_lp1.settings_sync", "--repair", "--target", $Target)
 if ($ApplyMomentumTemplate) {
-    $syncArgs += "--momentum", "--overwrite"
+    $syncArgs += "--momentum"
 }
-# Without -ApplyMomentumTemplate, only missing keys are merged (safe default).
 
 $env:PYTHONPATH = "src"
 & $pythonExe @pythonArgs @syncArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host ""
-Write-Host "Git has settings.example.json + settings.momentum.example.json only."
-Write-Host "Your scanner reads: $Target (local, not committed)."
+Write-Host "Re-run:" -ForegroundColor Cyan
+Write-Host "  .\scripts\doctor.ps1"
+Write-Host "  .\scripts\run_scan.ps1 -Loop -SpawnWatcher -WriteRejections"

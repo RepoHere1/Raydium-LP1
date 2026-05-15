@@ -110,7 +110,9 @@ class ScannerConfig:
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        from raydium_lp1.settings_io import load_settings_json
+
+        raw = load_settings_json(path)
         env_urls = split_env_list(os.environ.get("SOLANA_RPC_URLS", ""))
         single_env_url = os.environ.get("SOLANA_RPC_URL", "").strip()
         if single_env_url:
@@ -1331,7 +1333,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.strategy:
         os.environ["RAYDIUM_LP1_STRATEGY"] = args.strategy
     config_path = resolve_config_path(args.config)
-    config = ScannerConfig.from_file(config_path)
+    try:
+        config = ScannerConfig.from_file(config_path)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if not config.dry_run:
         print("Refusing to run: this build is dry-run only. Set dry_run=true.", file=sys.stderr)
         return 2

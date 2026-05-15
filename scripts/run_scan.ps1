@@ -46,6 +46,20 @@ if ($pythonCommand) {
     $pythonPrefixArgs = @()
 }
 
+function Test-SettingsJson([string]$Path) {
+    $env:PYTHONPATH = "src"
+    $validateArgs = @("-m", "raydium_lp1.settings_sync", "--validate", "--target", $Path)
+    & $pythonExe @pythonPrefixArgs @validateArgs
+    return $LASTEXITCODE -eq 0
+}
+
+if (-not (Test-SettingsJson $Config)) {
+    Write-Host ""
+    Write-Host "Fix invalid JSON, then re-run. Quick repair (backs up your file):" -ForegroundColor Yellow
+    Write-Host "  .\scripts\repair_settings.ps1 -ApplyMomentumTemplate"
+    exit 2
+}
+
 if (-not (Test-Path "scripts\scan_raydium_lps.py")) {
     throw "Missing scripts\scan_raydium_lps.py. Your folder does not have the scanner files yet. Pull/copy the Raydium-LP1 files first."
 }
@@ -63,7 +77,11 @@ if ($SpawnWatcher) {
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $watchPs1
     ) -WorkingDirectory $RepoRoot
     Start-Sleep -Milliseconds 600
-    Write-Host "Spawned log watcher in a new window ($shell). Use -Loop on this run so Window 1 keeps writing the log." -ForegroundColor Cyan
+    if ($Loop) {
+        Write-Host "Spawned verdict log watcher in a new window ($shell)." -ForegroundColor Cyan
+    } else {
+        Write-Host "Spawned verdict log watcher ($shell). Pass -Loop so this window keeps scanning and appending reports\verdict_stream.log." -ForegroundColor Yellow
+    }
 }
 
 $scannerArgs = @("scripts\scan_raydium_lps.py", "--config", $Config)

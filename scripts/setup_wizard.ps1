@@ -215,7 +215,24 @@ $config = [ordered]@{
 
 $configDir = Split-Path -Parent $ConfigPath
 if ($configDir -and -not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir | Out-Null }
-$config | ConvertTo-Json -Depth 5 | Set-Content -Path $ConfigPath -Encoding UTF8
+
+$pythonExe = "python"
+$pythonPrefix = @()
+if (Get-Command py -ErrorAction SilentlyContinue) {
+    $pythonExe = "py"
+    $pythonPrefix = @("-3")
+}
+$tmpConfig = [System.IO.Path]::GetTempFileName() + ".json"
+try {
+    $config | ConvertTo-Json -Depth 8 | Set-Content -Path $tmpConfig -Encoding UTF8
+    $env:PYTHONPATH = "src"
+    & $pythonExe @pythonPrefix -m raydium_lp1.settings_sync --normalize $tmpConfig --output $ConfigPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not write valid JSON to $ConfigPath. See error above."
+    }
+} finally {
+    Remove-Item -LiteralPath $tmpConfig -ErrorAction SilentlyContinue
+}
 
 $allFallbacks = ($fallbacks | Where-Object { $_ -and $_ -ne $primaryRpc }) -join ","
 @(
