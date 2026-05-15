@@ -206,15 +206,7 @@ def print_verdict_column_reminder(cfg: StreamConfig) -> None:
     if not cfg.enabled:
         return
     hdr, sep = verdict_table_header_and_sep(cfg)
-    n = max(1, int(cfg.header_repeat_rows))
-    note = (
-        f"[repeat header every {n} data rows] same columns as [PASS]/[REJ] lines "
-        "(POOL_STATE width matches pool_id_width in StreamConfig)"
-    )
-    if cfg.color:
-        note = f"{_DIM}{note}{_RESET}"
     _println_verdict(cfg, "")
-    _println_verdict(cfg, note)
     _println_verdict(cfg, hdr)
     _println_verdict(cfg, sep)
 

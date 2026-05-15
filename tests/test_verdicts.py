@@ -129,7 +129,10 @@ class HeaderRepeatTests(unittest.TestCase):
                 },
                 cfg,
             )
-        self.assertGreaterEqual(stream.getvalue().count("[repeat header every"), 2)
+        text = stream.getvalue()
+        # Header row repeats every 2 emits (2 repeats in 4 passes); no filler meta line.
+        self.assertGreaterEqual(text.count("VERDICT |"), 2)
+        self.assertNotIn("[repeat header every", text)
 
 
 class AnsiTests(unittest.TestCase):

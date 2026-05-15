@@ -132,7 +132,7 @@ class ValidatePoolTests(unittest.TestCase):
                 verify_on_chain=True,
             )
         self.assertFalse(v.ok)
-        self.assertTrue(any("no account" in r for r in v.reasons))
+        self.assertTrue(any("RPC account" in r for r in v.reasons))
 
 
 class RaydiumApiRoundTripTests(unittest.TestCase):
