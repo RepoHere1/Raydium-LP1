@@ -48,6 +48,8 @@ class ScannerConfig:
 
     min_apr: float = 999.99
     apr_field: str = "apr24h"
+    # Raydium ``poolSortField`` for paging the list. Empty → same as apr_field (legacy APR-first pages).
+    pool_sort_field: str = ""
     page_size: int = 100
     pages: int = 1
     http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS
@@ -123,6 +125,7 @@ class ScannerConfig:
         return cls(
             min_apr=float(raw_with_strategy.get("min_apr", cls.min_apr)),
             apr_field=str(raw_with_strategy.get("apr_field", cls.apr_field)),
+            pool_sort_field=str(raw_with_strategy.get("pool_sort_field") or "").strip(),
             page_size=_clamp_page_size(int(raw_with_strategy.get("page_size", cls.page_size))),
             pages=_clamp_pages(int(raw_with_strategy.get("pages", cls.pages))),
             http_timeout_seconds=max(3, int(raw_with_strategy.get("http_timeout_seconds", DEFAULT_HTTP_TIMEOUT_SECONDS))),
@@ -510,10 +513,17 @@ def mask_secret_url(url: str) -> str:
     return url
 
 
+def raydium_pool_sort_param(config: ScannerConfig) -> str:
+    """Raydium list sort column; empty ``pool_sort_field`` keeps legacy APR-sort behavior."""
+
+    psf = (config.pool_sort_field or "").strip()
+    return psf or config.apr_field
+
+
 def pool_list_url(config: ScannerConfig, page: int = 1) -> str:
     params = {
         "poolType": config.pool_type,
-        "poolSortField": config.apr_field,
+        "poolSortField": raydium_pool_sort_param(config),
         "sortType": config.sort_type,
         "pageSize": config.page_size,
         "page": page,
@@ -679,6 +689,9 @@ def scan(
             "min_liquidity_usd": config.min_liquidity_usd,
             "min_volume_24h_usd": config.min_volume_24h_usd,
             "apr_field": config.apr_field,
+            "sort_type": config.sort_type,
+            "pool_sort_field": config.pool_sort_field,
+            "raydium_sort_field": raydium_pool_sort_param(config),
             "scanned_count": 0,
             "candidate_count": 0,
             "candidate_count_pre_capacity": 0,
@@ -725,7 +738,7 @@ def scan(
         # remote API apart from a hard hang.
         print(
             f"[scan] page {page}/{config.pages} (page_size={config.page_size}, "
-            f"timeout={config.http_timeout_seconds}s)...",
+            f"sort={raydium_pool_sort_param(config)}, timeout={config.http_timeout_seconds}s)...",
             file=sys.stderr,
             flush=True,
         )
@@ -960,6 +973,10 @@ def scan(
         "min_liquidity_usd": config.min_liquidity_usd,
         "min_volume_24h_usd": config.min_volume_24h_usd,
         "apr_field": config.apr_field,
+        "sort_type": config.sort_type,
+        "pool_sort_field": config.pool_sort_field,
+        "raydium_sort_field": raydium_pool_sort_param(config),
+        "hard_exit_min_tvl_usd": config.hard_exit_min_tvl_usd,
         "scanned_count": scanned,
         "candidate_count": len(capped_candidates),
         "candidate_count_pre_capacity": len(candidates),
@@ -1034,7 +1051,12 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"Time: {report['scanned_at']}")
     print(f"Mode: {report['mode']}")
     print(f"Strategy: {report.get('strategy', 'custom')}")
-    print(f"APR filter: {report['apr_field']} >= {report['min_apr']:.2f}%")
+    sort_by = report.get("raydium_sort_field") or report.get("apr_field")
+    how = report.get("sort_type", "desc")
+    apr_key = report.get("apr_field", "apr24h")
+    print(
+        f"Raydium pages: sorted by {sort_by} ({how}); thresholds use {apr_key} >= {report['min_apr']:.2f}%"
+    )
     print(f"Scanned: {report['scanned_count']} | Candidates: {report['candidate_count']} | Rejected: {report['rejected_count']}")
     print(f"Configured Solana RPCs: {report['rpc_count']}")
     print(f"Max future position size: ${report['max_position_usd']:.2f}")

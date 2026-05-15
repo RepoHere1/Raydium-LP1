@@ -32,7 +32,12 @@ fee24h, fee7d, fee30d, apr24h, apr7d, apr30d
 The default tab sorts by `liquidity` desc. The "high APR" view sorts by
 `apr24h` desc — that's what LP1 uses by default.
 
-**LP1 setting:** `"apr_field": "apr24h"` (or 7d/30d), `"sort_type": "desc"`.
+**LP1 settings:** `"apr_field": "apr24h"` (or 7d/30d), `"sort_type": "desc"`.
+
+**Separate list-order knob:** `"pool_sort_field": ""` (empty) leaves legacy behavior
+(the API sorts by the same string as `apr_field`). Set `"pool_sort_field": "volume24h"`
+or `"liquidity"` to page Raydium in a different order while still reading APR thresholds
+from `apr_field`. See `raydium_pool_sort_param()` in `scanner.py`.
 
 ## 3. TVL / liquidity (`tvl`)
 

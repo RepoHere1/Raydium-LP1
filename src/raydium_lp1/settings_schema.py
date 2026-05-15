@@ -9,6 +9,7 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "strategy",
     "min_apr",
     "apr_field",
+    "pool_sort_field",
     "raydium_api_base",
     "pool_type",
     "sort_type",

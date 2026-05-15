@@ -70,6 +70,9 @@ def build_dashboard(
         "strategy": getattr(config, "strategy", "custom"),
         "dry_run": getattr(config, "dry_run", True),
         "min_apr": getattr(config, "min_apr", 0),
+        "apr_field": getattr(config, "apr_field", "apr24h"),
+        "sort_type": getattr(config, "sort_type", "desc"),
+        "pool_sort_field": getattr(config, "pool_sort_field", ""),
         "min_liquidity_usd": getattr(config, "min_liquidity_usd", 0),
         "min_volume_24h_usd": getattr(config, "min_volume_24h_usd", 0),
         "position_size_sol": getattr(config, "position_size_sol", 0.1),
@@ -171,6 +174,11 @@ def render_dashboard_text(data: DashboardData) -> str:
         f"  filters: APR>={settings.get('min_apr', 0):.0f}%, "
         f"TVL>=${settings.get('min_liquidity_usd', 0):,.0f}, "
         f"Vol24h>=${settings.get('min_volume_24h_usd', 0):,.0f}"
+    )
+    _psort = ((settings.get("pool_sort_field") or "").strip() or settings.get("apr_field", "apr24h"))
+    lines.append(
+        f"  raydium pages: sorted by {_psort} ({settings.get('sort_type', 'desc')}); "
+        f"hard_exit_TVL>={settings.get('hard_exit_min_tvl_usd', 0):,.0f} USD (0=off)"
     )
     if settings.get("momentum_enabled"):
         lines.append(

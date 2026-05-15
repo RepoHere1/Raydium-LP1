@@ -79,7 +79,7 @@ Write-Host "  conservative   APR>=  50%  TVL>=`$50000  Vol>=`$10000   - boring, 
 Write-Host "  moderate       APR>= 200%  TVL>=`$10000  Vol>=`$1000    - mid-cap yield"
 Write-Host "  aggressive     APR>= 777%  TVL>=`$500    Vol>=`$100     - high APR hunting"
 Write-Host "  degen          APR>= 500%  TVL>=`$200    Vol>=`$50      - anything that pumps"
-Write-Host "  momentum       APR>= 300%  TVL>=`$2000   Vol>=`$500     - real TVL + buyer flow (fee-rush LP)"
+Write-Host "  momentum       APR>= 300%  TVL>=`$5000  Vol>=`$500      - real TVL + buyer flow (fee-rush LP)"
 Write-Host "  custom         keep manual values you enter below"
 $savedStrategy = "$(Get-Default $configDefaults 'strategy' 'custom')"
 $strategy = (Ask-WithDefault "Strategy" $savedStrategy).ToLowerInvariant()
@@ -89,8 +89,8 @@ switch ($strategy) {
     "moderate"     { $minAprDefault = 200; $minLiqDefault = 10000; $minVolDefault = 1000  }
     "aggressive"   { $minAprDefault = 777; $minLiqDefault = 500;   $minVolDefault = 100   }
     "degen"        { $minAprDefault = 500; $minLiqDefault = 200;   $minVolDefault = 50    }
-    "momentum"     { $minAprDefault = 300; $minLiqDefault = 2000;  $minVolDefault = 500   }
-    "fee_rush"     { $strategy = "momentum"; $minAprDefault = 300; $minLiqDefault = 2000; $minVolDefault = 500 }
+    "momentum"     { $minAprDefault = 300; $minLiqDefault = 5000;  $minVolDefault = 500   }
+    "fee_rush"     { $strategy = "momentum"; $minAprDefault = 300; $minLiqDefault = 5000; $minVolDefault = 500 }
     default        { $strategy = "custom"; $minAprDefault = 999.99; $minLiqDefault = 1000; $minVolDefault = 100 }
 }
 # Remembered values still win over preset numbers when present.
@@ -106,7 +106,7 @@ Write-Host ""
 Write-Host "TVL (liquidity) = real USD in the pool you would LP into. Dust pools show fake APR on `$0.01 TVL." -ForegroundColor DarkGray
 $minLiquidity = [double](Ask-WithDefault "Minimum pool TVL / liquidity in USD (actionable LP floor)" "$minLiqDefault")
 $hardTvlDefault = Get-Default $configDefaults "hard_exit_min_tvl_usd" 0
-$hardTvl = [double](Ask-WithDefault "Hard exit-safety TVL floor (0=off; momentum uses 500)" "$hardTvlDefault")
+$hardTvl = [double](Ask-WithDefault "Hard exit-safety TVL floor (0=off; momentum preset default 1000)" "$hardTvlDefault")
 $minVolume = [double](Ask-WithDefault "Minimum 24h volume in USD" "$minVolDefault")
 $maxPosition = [double](Ask-WithDefault "Future max position size in USD; scanner is still dry-run only" "$maxPositionDefault")
 
@@ -129,6 +129,11 @@ if ($pages -gt 50) {
     Write-Host "  clamping to 50. Raise it again later by editing config\settings.json if you really mean it." -ForegroundColor Yellow
     $pages = 50
 }
+
+Write-Host ""
+Write-Host "Raydium page ordering (pool_sort_field): APR-sorted pages favor micro-TVL hype pools. Use volume24h (or liquidity) to scan a friendlier slice." -ForegroundColor DarkGray
+$poolSortSaved = "$(Get-Default $configDefaults 'pool_sort_field' '')".Trim()
+$poolSortField = (Ask-WithDefault "pool_sort_field (blank = same as APR field; try volume24h)" $poolSortSaved).Trim()
 
 $raydiumApiBaseDefault = if ($envDefaults["RAYDIUM_API_BASE"]) { $envDefaults["RAYDIUM_API_BASE"] } else { "https://api-v3.raydium.io" }
 $raydiumApiBase = Ask-WithDefault "Raydium live API base" $raydiumApiBaseDefault
@@ -190,6 +195,7 @@ $config = [ordered]@{
     sort_type = "desc"
     page_size = $pageSize
     pages = $pages
+    pool_sort_field = $poolSortField
     min_liquidity_usd = $minLiquidity
     hard_exit_min_tvl_usd = $hardTvl
     min_volume_24h_usd = $minVolume

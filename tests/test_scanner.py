@@ -11,6 +11,7 @@ from raydium_lp1.scanner import (
     load_dotenv,
     normalize_pool,
     pool_list_url,
+    raydium_pool_sort_param,
     write_reports,
 )
 
@@ -63,6 +64,34 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("poolSortField=apr24h", url)
         self.assertIn("pageSize=10", url)
         self.assertIn("page=2", url)
+
+    def test_pool_sort_field_overrides_raydium_sort_only(self):
+        config = ScannerConfig(page_size=10, apr_field="apr24h", pool_sort_field="volume24h")
+        self.assertEqual(raydium_pool_sort_param(config), "volume24h")
+        url = pool_list_url(config, page=1)
+        self.assertIn("poolSortField=volume24h", url)
+
+    def test_hard_exit_rejects_micro_tvl_first(self):
+        config = ScannerConfig(
+            min_apr=50.0,
+            hard_exit_min_tvl_usd=1000.0,
+            min_liquidity_usd=100.0,
+            min_volume_24h_usd=1.0,
+        )
+        pool = normalize_pool(
+            {
+                "id": "pool-1",
+                "apr24h": 500,
+                "tvl": 5,
+                "volume24h": 500_000,
+                "mintA": {"symbol": "SOL", "address": "sol-mint"},
+                "mintB": {"symbol": "TEST", "address": "test-mint"},
+            },
+            "apr24h",
+        )
+        ok, reasons = filter_pool(pool, config)
+        self.assertFalse(ok)
+        self.assertTrue(reasons[0].startswith("HARD reject: TVL"))
 
     def test_load_dotenv_and_config_rpc_urls(self):
         with tempfile.TemporaryDirectory() as tempdir:

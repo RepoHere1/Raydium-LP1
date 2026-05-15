@@ -5,6 +5,7 @@
   "strategy": "momentum",
   "min_apr": 300,
   "apr_field": "apr24h",
+  "pool_sort_field": "",
   "raydium_api_base": "https://api-v3.raydium.io",
   "pool_type": "all",
   "sort_type": "desc",

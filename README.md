@@ -165,6 +165,32 @@ git reset --hard origin/main
 
 (same effect as `reset_to_main.ps1`.)
 
+### If PowerShell cannot find `.\scripts\reset_to_main.ps1`
+
+That usually happens while **`git pull` never finished**: the merge failed, so newer files never landed locally. **`git fetch` already updated remote refs**, so force your tree to **`origin/main` without merging**:
+
+```powershell
+git merge --abort
+git fetch origin
+git reset --hard origin/main
+```
+
+Or double-click **`RESET_TO_ORIGIN_MAIN.bat`** in the repo root (uses `CMD`, not `.ps1`).
+
+**After** `reset --hard`, `git pull origin main` will say "Already up to date" until the next upstream commit.
+
+## Momentum scans show hundreds of rejects on `hard_exit_min_tvl_usd`
+
+When Raydium pages are **`apr*` sorted** (default), the first pools are ultra-high APR dust with roughly **$0–$13 TVL** — they instantly fail **`hard_exit_min_tvl_usd`** (preset **1000**). That is the filter working, not a bug.
+
+**Tunings (pick a few):**
+
+1. Add **`"pool_sort_field": "volume24h"`** (or `"liquidity"`) in `config\settings.json` — new in this build; wizard asks for it.
+2. **`"hard_exit_min_tvl_usd": 0`** turns off the exit-safety hard line (riskier); or lower (e.g. **200**) to match `aggressive` appetite.
+3. **`"pages": 5`–`10`** only helps a little on APR-sorted lists; sort change matters more.
+4. **`min_apr`**: very high floors + APR-sorted pages = almost only dust; consider **100–200** if you need a longer watch list (still dry-run).
+5. **Wallet `0` SOL** → **`max_positions=0`** only **caps** how many candidates print after filters; it does not create the TVL rejects you listed.
+
 ## Live data sources
 
 This project is designed to use real production data, not placeholders:

@@ -34,7 +34,13 @@ if (-not $mergeMarkers -or $mergeMarkers.Count -eq 0) {
 } else {
     $m = $mergeMarkers[0]
     $rel = ($m.Path -replace [regex]::Escape($RepoRoot + [System.IO.Path]::DirectorySeparatorChar), "").Replace('\', '/')
-    Show-Check "Sources (Git merge leftovers)" $false "${rel}:$($m.LineNumber) has marker — .\scripts\reset_to_main.ps1 or: git checkout origin/main -- $rel"
+    Show-Check "Sources (Git merge leftovers)" $false "${rel}:$($m.LineNumber) has conflict marker <<< — see RESCUE block below."
+}
+$mrg = Join-Path ".git" "MERGE_HEAD"
+if (-not (Test-Path -LiteralPath $mrg)) {
+    Show-Check "Git merge in progress" $true "(no)"
+} else {
+    Show-Check "Git merge in progress" $false "(yes — use RESCUE block below)"
 }
 Show-Check "Local settings" (Test-Path $Config) $Config
 Show-Check "Local .env" (Test-Path ".env") ".env"
@@ -93,9 +99,16 @@ if (Test-Path $Config) {
 }
 
 Write-Host ""
+Write-Host "RESCUE (failed merge / <<< markers / .\scripts\reset_to_main.ps1 not found):" -ForegroundColor Yellow
+Write-Host "  git merge --abort" -ForegroundColor White
+Write-Host "  git fetch origin" -ForegroundColor White
+Write-Host "  git reset --hard origin/main" -ForegroundColor White
+Write-Host "Or double-click RESET_TO_ORIGIN_MAIN.bat . Then .\scripts\doctor.ps1 again." -ForegroundColor DarkGray
+Write-Host ""
+
 Write-Host "If BAD appears for Local settings or Local .env, run (in order):" -ForegroundColor Cyan
-Write-Host "  git pull origin main   # track main; avoid random cursor/* unless you intend that branch"
+Write-Host "  git pull origin main   # normal updates only after merges are clean — use RESCUE first otherwise"
 Write-Host "  .\scripts\repair_settings.ps1 -ApplyMomentumTemplate   # broken settings.json"
-Write-Host "  .\scripts\reset_to_main.ps1   # Python SyntaxError on <<<<<<< or unmerged files after bad git pull"
+Write-Host "  .\scripts\reset_to_main.ps1   # after repo is sane; prompts RESET"
 Write-Host "  .\scripts\doctor.ps1"
 Write-Host "  .\scripts\setup_wizard.ps1   # optional full re-setup"
