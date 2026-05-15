@@ -87,6 +87,9 @@ def build_dashboard(
         "momentum_hold_hours": getattr(config, "momentum_hold_hours", 24),
         "momentum_top_hot": getattr(config, "momentum_top_hot", 25),
         "hard_exit_min_tvl_usd": getattr(config, "hard_exit_min_tvl_usd", 0),
+        "lp_planning_enabled": getattr(config, "lp_planning_enabled", False),
+        "risk_profile": getattr(config, "risk_profile", "balanced"),
+        "lp_full_range_parallel": getattr(config, "lp_full_range_parallel", False),
     }
 
     wallet_capacity = dict(report.get("wallet_capacity") or {})
@@ -180,6 +183,11 @@ def render_dashboard_text(data: DashboardData) -> str:
         f"  raydium pages: sorted by {_psort} ({settings.get('sort_type', 'desc')}); "
         f"hard_exit_TVL>={settings.get('hard_exit_min_tvl_usd', 0):,.0f} USD (0=off)"
     )
+    if settings.get("lp_planning_enabled"):
+        lines.append(
+            f"  lp paper plans: ON | risk={settings.get('risk_profile')} "
+            f"full_range_parallel={settings.get('lp_full_range_parallel')}"
+        )
     if settings.get("momentum_enabled"):
         lines.append(
             f"  momentum: min_score={settings.get('min_momentum_score', 0)} "

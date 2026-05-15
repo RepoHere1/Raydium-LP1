@@ -54,5 +54,15 @@
   "position_size_sol": 0.1,
   "reserve_sol": 0.02,
   "dashboard_path": "reports/dashboard.json",
+  "risk_profile": "balanced",
+  "lp_planning_enabled": false,
+  "lp_range_mode": "auto",
+  "lp_default_range_width_pct": 20,
+  "lp_range_width_candidates": [12, 20, 30, 50],
+  "lp_skew_use_momentum": true,
+  "lp_full_range_parallel": false,
+  "lp_full_range_budget_fraction": 0.25,
+  "lp_main_budget_fraction": 0.75,
+  "lp_max_positions_per_mint": 2,
   "solana_rpc_urls": []
 }

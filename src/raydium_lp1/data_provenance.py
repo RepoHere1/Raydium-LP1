@@ -60,6 +60,12 @@ NON_LIVE_COMPONENTS: list[dict[str, str]] = [
         "detail": "No live DEX adapter; Solana/Raydium only",
     },
     {
+        "module": "lp_range_planner.py",
+        "what": "CLMM band / budget suggestions",
+        "source": "MODELED",
+        "detail": "Heuristic widths + momentum skew from public list fields; not on-chain tick math; no signed txs",
+    },
+    {
         "module": "scanner.py",
         "what": "Trade execution",
         "source": "DISABLED",

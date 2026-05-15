@@ -174,6 +174,30 @@ while ($true) {
 $allowedQuotes = $quotesRaw.Split(",") | ForEach-Object { $_.Trim().ToUpperInvariant() } | Where-Object { $_ }
 
 Write-Host ""
+Write-Host "Risk & routes (helps dial-in for volatile meme pairs):" -ForegroundColor Cyan
+$riskDefault = Get-Default $configDefaults "risk_profile" "balanced"
+$risk = (Ask-WithDefault "Risk profile (balanced | degen — degen widens LP bands + suggests higher slippage default)" $riskDefault).ToLowerInvariant()
+if ($risk -notin @("balanced","degen")) { $risk = "balanced" }
+$slipDefault = [double](Get-Default $configDefaults "max_route_price_impact_pct" 30)
+if ($risk -eq "degen" -and ([double]$slipDefault -eq 30.0)) { $slipDefault = 40 }
+$maxSlip = [double](Ask-WithDefault "Max route price impact % (Jupiter/Raydium quote; reject worse)" "$slipDefault")
+
+Write-Host ""
+Write-Host "LP placement (paper-only bands until live execution is merged):" -ForegroundColor Cyan
+$lpEnDefault = Get-Default $configDefaults "lp_planning_enabled" $false
+$lpPlan = Ask-YesNo "Attach concentrated / full-range budget plans to passing candidates?" $lpEnDefault
+$widthDef = Get-Default $configDefaults "lp_default_range_width_pct" 20
+$widthPct = [double](Ask-WithDefault "Default concentrated band width %" "$widthDef")
+$frDefault = Get-Default $configDefaults "lp_full_range_parallel" $false
+$fr = Ask-YesNo "Plan a smaller parallel full-range leg (wild tokens)?" $frDefault
+$frFrac = [double](Get-Default $configDefaults "lp_full_range_budget_fraction" 0.25)
+$frFrac = [double](Ask-WithDefault "Fraction of position SOL for full-range leg (0-1)" "$frFrac")
+$mainFrac = [double](Get-Default $configDefaults "lp_main_budget_fraction" 0.75)
+$mainFrac = [double](Ask-WithDefault "Fraction of position SOL for concentrated main band (0-1)" "$mainFrac")
+$maxLpM = [int](Get-Default $configDefaults "lp_max_positions_per_mint" 2)
+$maxLpM = [int](Ask-WithDefault "Max simultaneous LP positions per non-quote mint (policy for future execution)" "$maxLpM")
+
+Write-Host ""
 Write-Host "Momentum / fee-rush (ranks pools by live vol/TVL + acceleration; suggests when to exit):" -ForegroundColor Cyan
 $momentumDefault = ($strategy -eq "momentum") -or (Get-Default $configDefaults "momentum_enabled" $false)
 $momentumEnabled = Ask-YesNo "Enable momentum scoring on candidates?" $momentumDefault
@@ -200,6 +224,16 @@ $config = [ordered]@{
     hard_exit_min_tvl_usd = $hardTvl
     min_volume_24h_usd = $minVolume
     max_position_usd = $maxPosition
+    max_route_price_impact_pct = $maxSlip
+    risk_profile = $risk
+    lp_planning_enabled = $lpPlan
+    lp_range_mode = (Get-Default $configDefaults "lp_range_mode" "auto")
+    lp_default_range_width_pct = $widthPct
+    lp_full_range_parallel = $fr
+    lp_full_range_budget_fraction = $frFrac
+    lp_main_budget_fraction = $mainFrac
+    lp_max_positions_per_mint = $maxLpM
+    lp_skew_use_momentum = $true
     momentum_enabled = $momentumEnabled
     min_momentum_score = $momScore
     require_momentum_score = $requireMom

@@ -24,7 +24,7 @@ from urllib.request import Request, urlopen
 from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
-from raydium_lp1 import emergency, health, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1 import emergency, health, lp_range_planner, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -40,6 +40,22 @@ MAX_PAGES_HARD_CEILING = 50
 MAX_PAGE_SIZE = 1000
 DEFAULT_HTTP_TIMEOUT_SECONDS = 15
 DEFAULT_PAGE_DELAY_SECONDS = 0.25
+
+
+def _parse_lp_width_candidates(raw: dict[str, Any]) -> tuple[float, ...]:
+    v = raw.get("lp_range_width_candidates")
+    if isinstance(v, list) and v:
+        out: list[float] = []
+        for item in v:
+            try:
+                f = float(item)
+                if f > 0:
+                    out.append(f)
+            except (TypeError, ValueError):
+                continue
+        if out:
+            return tuple(sorted(set(out)))
+    return (12.0, 20.0, 30.0, 50.0)
 
 
 @dataclass(frozen=True)
@@ -109,6 +125,17 @@ class ScannerConfig:
     momentum_top_hot: int = 25
     momentum_detective_enabled: bool = True
     momentum_probe_market_lists: bool = True
+    # Paper-only CLMM / concentrated band hints (no signed txs in this build).
+    lp_planning_enabled: bool = False
+    lp_range_mode: str = "auto"  # auto | symmetric | fixed | popular_20 | manual_default
+    lp_default_range_width_pct: float = 20.0
+    lp_range_width_candidates: tuple[float, ...] = (12.0, 20.0, 30.0, 50.0)
+    lp_skew_use_momentum: bool = True
+    lp_full_range_parallel: bool = False
+    lp_full_range_budget_fraction: float = 0.25
+    lp_main_budget_fraction: float = 0.75
+    lp_max_positions_per_mint: int = 2
+    risk_profile: str = "balanced"  # balanced | degen
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -196,6 +223,16 @@ class ScannerConfig:
             momentum_top_hot=max(1, int(raw_with_strategy.get("momentum_top_hot", 25))),
             momentum_detective_enabled=bool(raw_with_strategy.get("momentum_detective_enabled", True)),
             momentum_probe_market_lists=bool(raw_with_strategy.get("momentum_probe_market_lists", True)),
+            lp_planning_enabled=bool(raw_with_strategy.get("lp_planning_enabled", False)),
+            lp_range_mode=str(raw_with_strategy.get("lp_range_mode", "auto")),
+            lp_default_range_width_pct=float(raw_with_strategy.get("lp_default_range_width_pct", 20.0)),
+            lp_range_width_candidates=_parse_lp_width_candidates(dict(raw_with_strategy)),
+            lp_skew_use_momentum=bool(raw_with_strategy.get("lp_skew_use_momentum", True)),
+            lp_full_range_parallel=bool(raw_with_strategy.get("lp_full_range_parallel", False)),
+            lp_full_range_budget_fraction=float(raw_with_strategy.get("lp_full_range_budget_fraction", 0.25)),
+            lp_main_budget_fraction=float(raw_with_strategy.get("lp_main_budget_fraction", 0.75)),
+            lp_max_positions_per_mint=max(1, int(raw_with_strategy.get("lp_max_positions_per_mint", 2))),
+            risk_profile=str(raw_with_strategy.get("risk_profile") or "balanced"),
         )
 
 
@@ -759,6 +796,8 @@ def scan(
         for pool in page_pools:
             scanned += 1
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
+            if config.lp_planning_enabled and pool.get("raw") is not None:
+                public_pool["raw"] = pool["raw"]
             if (
                 config.require_verified_raydium_pool
                 or config.verify_pool_on_chain
@@ -915,6 +954,28 @@ def scan(
         except OSError:
             pass
 
+    if config.lp_planning_enabled and candidates:
+        lp_plan_cfg = lp_range_planner.planner_config_from_scanner(config)
+        for pool in candidates:
+            mom_blob = pool.get("momentum") if isinstance(pool.get("momentum"), dict) else None
+            pool["lp_placement_plan"] = lp_range_planner.plan_for_pool(pool, mom_blob, lp_plan_cfg)
+        try:
+            REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+            (REPORTS_DIR / "lp_placement_latest.json").write_text(
+                json.dumps(
+                    {
+                        "scanned_at": datetime.now(UTC).isoformat(),
+                        "plans": [p.get("lp_placement_plan") for p in candidates if p.get("lp_placement_plan")],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
     if config.track_liquidity_health and candidates and config.emergency_close_enabled:
         alerts = emergency.run_emergency_pass(
             zip(candidates, assessments),
@@ -977,6 +1038,8 @@ def scan(
         "pool_sort_field": config.pool_sort_field,
         "raydium_sort_field": raydium_pool_sort_param(config),
         "hard_exit_min_tvl_usd": config.hard_exit_min_tvl_usd,
+        "lp_planning_enabled": config.lp_planning_enabled,
+        "risk_profile": config.risk_profile,
         "scanned_count": scanned,
         "candidate_count": len(capped_candidates),
         "candidate_count_pre_capacity": len(candidates),
