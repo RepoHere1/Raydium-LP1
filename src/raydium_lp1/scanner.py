@@ -149,6 +149,8 @@ class ScannerConfig:
         config_urls = [str(value).strip() for value in raw.get("solana_rpc_urls", []) if str(value).strip()]
         env_strategy = os.environ.get("RAYDIUM_LP1_STRATEGY", "").strip() or None
         raw_with_strategy = strategies.apply_strategy(raw, env_strategy or raw.get("strategy"))
+        merged_rpc = dedupe([*env_urls, *config_urls])
+        rpc_clean = pool_verify.filter_rpc_urls(merged_rpc) or [pool_verify.DEFAULT_PUBLIC_RPC]
         return cls(
             min_apr=float(raw_with_strategy.get("min_apr", cls.min_apr)),
             apr_field=str(raw_with_strategy.get("apr_field", cls.apr_field)),
@@ -168,7 +170,7 @@ class ScannerConfig:
             require_pool_id=bool(raw_with_strategy.get("require_pool_id", True)),
             dry_run=bool(raw_with_strategy.get("dry_run", True)),
             raydium_api_base=str(raw_with_strategy.get("raydium_api_base") or os.environ.get("RAYDIUM_API_BASE") or RAYDIUM_API_BASE),
-            solana_rpc_urls=dedupe([*env_urls, *config_urls]),
+            solana_rpc_urls=rpc_clean,
             strategy=strategies.normalize_strategy(str(raw_with_strategy.get("strategy", strategies.STRATEGY_CUSTOM))),
             require_sell_route=bool(raw_with_strategy.get("require_sell_route", True)),
             route_sources=tuple(
@@ -526,6 +528,7 @@ def post_json(url: str, payload: dict[str, Any], timeout: int = 12) -> dict[str,
 def check_rpc_urls(urls: list[str]) -> list[dict[str, Any]]:
     """Ping configured Solana RPCs with getHealth for live-source diagnostics."""
 
+    urls = pool_verify.filter_rpc_urls(urls, warn=False) or [pool_verify.DEFAULT_PUBLIC_RPC]
     results: list[dict[str, Any]] = []
     for index, url in enumerate(urls, start=1):
         masked = mask_secret_url(url)
