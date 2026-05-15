@@ -326,6 +326,12 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
     Reads nested period objects (``day`` / ``week`` / ``month``) for APR,
     volume and fees, and surfaces ``openTime``, ``burnPercent`` and pool
     type so feature filters can match what raydium.io's UI exposes.
+
+    **Identifiers:** Raydium's API uses ``poolId`` / ``ammId`` / ``id`` (in that
+    preference order here) for the pool's **on-chain state account**. Solana
+    pubkeys all look like "wallets" — compare token mints (``mint_a`` /
+    ``mint_b``) vs ``id`` vs ``lp_mint_address`` (LP receipt SPL mint when
+    present).
     """
 
     mint_a = nested_get(pool, "mintA", "mint1", "baseMint", default={})
@@ -344,8 +350,14 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
     except (TypeError, ValueError):
         open_time_sec = 0
 
+    lp_mint_obj = pool.get("lpMint") if isinstance(pool.get("lpMint"), dict) else {}
+    lp_mint_address = str(lp_mint_obj.get("address") or "")
+    cfg_obj = pool.get("config") if isinstance(pool.get("config"), dict) else {}
+    config_account_id = str(cfg_obj.get("id") or "")
+    pool_state_id = str(nested_get(pool, "poolId", "ammId", "id", default=""))
+
     return {
-        "id": str(nested_get(pool, "id", "poolId", "ammId", default="")),
+        "id": pool_state_id,
         "type": pool_type,
         "subtypes": list(pool_subtypes),
         "program_id": str(pool.get("programId") or ""),
@@ -369,6 +381,8 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
         "mint_b_decimals": int(mint_b.get("decimals") or 0) if isinstance(mint_b, dict) else 0,
         "mint_a_tags": list(mint_a.get("tags") or []) if isinstance(mint_a, dict) else [],
         "mint_b_tags": list(mint_b.get("tags") or []) if isinstance(mint_b, dict) else [],
+        "lp_mint_address": lp_mint_address,
+        "config_account_id": config_account_id,
         "raw": pool,
     }
 
@@ -845,9 +859,10 @@ def print_report(report: dict[str, Any]) -> None:
 
     print("\nCandidates (dry-run watch list)")
     print(
-        "Columns: PAIR_NAME | APR_PCT | TVL_USD | VOL24_USD | POOL_ID (full Raydium pool address)"
+        "Columns: PAIR_NAME | APR_PCT | TVL_USD | VOL24_USD | POOL_STATE "
+        "(Raydium pool state pubkey — same base58 shape as any Solana account; not a token mint)"
     )
-    hdr = f"{'PAIR_NAME':<32} | {'APR_PCT':>10} | {'TVL_USD':>12} | {'VOL24_USD':>14} | POOL_ID"
+    hdr = f"{'PAIR_NAME':<32} | {'APR_PCT':>10} | {'TVL_USD':>12} | {'VOL24_USD':>14} | POOL_STATE"
     print(hdr)
     print("-" * min(160, len(hdr) + 20))
     for pool in report["candidates"]:
@@ -881,7 +896,17 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
     with latest_csv.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["scanned_at", "pool_id", "pair", "apr", "liquidity_usd", "volume_24h_usd", "decision"],
+            fieldnames=[
+                "scanned_at",
+                "pool_id",
+                "lp_mint_address",
+                "config_account_id",
+                "pair",
+                "apr",
+                "liquidity_usd",
+                "volume_24h_usd",
+                "decision",
+            ],
         )
         writer.writeheader()
         for pool in report["candidates"]:
@@ -889,6 +914,8 @@ def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> No
                 {
                     "scanned_at": report["scanned_at"],
                     "pool_id": pool["id"],
+                    "lp_mint_address": pool.get("lp_mint_address", ""),
+                    "config_account_id": pool.get("config_account_id", ""),
                     "pair": f"{pool['mint_a_symbol']}/{pool['mint_b_symbol']}",
                     "apr": pool["apr"],
                     "liquidity_usd": pool["liquidity_usd"],
@@ -918,6 +945,8 @@ def write_rejections_csv(
     fieldnames = [
         "scanned_at",
         "pool_id",
+        "lp_mint_address",
+        "config_account_id",
         "pair",
         "mint_a",
         "mint_b",
@@ -938,6 +967,8 @@ def write_rejections_csv(
                 {
                     "scanned_at": scanned_at,
                     "pool_id": row.get("id", ""),
+                    "lp_mint_address": row.get("lp_mint_address", ""),
+                    "config_account_id": row.get("config_account_id", ""),
                     "pair": f"{row.get('mint_a_symbol', '')}/{row.get('mint_b_symbol', '')}",
                     "mint_a": row.get("mint_a", ""),
                     "mint_b": row.get("mint_b", ""),
@@ -1120,6 +1151,12 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "[scan] STDERR = live pages + PASS/REJECT table + breakdown. "
             "STDOUT = summary + candidates table.",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            "[scan] POOL_STATE = Raydium api-v3 pool state pubkey (Solana base58; not a token mint). "
+            "Token mints: mint_a/mint_b; LP receipt mint when known: lp_mint_address (CSV/JSON).",
             file=sys.stderr,
             flush=True,
         )

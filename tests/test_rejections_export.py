@@ -38,6 +38,8 @@ class RejectionsExportTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["mint_a"], "So11111111111111111111111111111111111111112")
             self.assertEqual(rows[0]["mint_b"], "MemeMint1111111111111111111111111111111111")
+            self.assertEqual(rows[0].get("lp_mint_address", ""), "")
+            self.assertEqual(rows[0].get("config_account_id", ""), "")
             summ = path.with_name(path.stem + ".summary.json")
             self.assertTrue(summ.exists())
             data = json.loads(summ.read_text(encoding="utf-8"))

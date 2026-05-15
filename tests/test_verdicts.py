@@ -89,7 +89,7 @@ class HeaderTests(unittest.TestCase):
         verdicts.print_verdict_column_headers(cfg, page=3)
         out = stream.getvalue()
         self.assertIn("PAIR_NAME", out)
-        self.assertIn("POOL_ID", out)
+        self.assertIn("POOL_STATE", out)
         self.assertIn("REJECT_REASON", out)
         self.assertIn("Raydium page 3", out)
 

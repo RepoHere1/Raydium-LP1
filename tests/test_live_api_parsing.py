@@ -57,6 +57,12 @@ LIVE_POOL = {
     "week": {"apr": 600.0, "volume": 12345.0},
     "month": {"apr": 200.0, "volume": 54321.0},
     "pooltype": ["Cpmm"],
+    "lpMint": {
+        "address": "LpMintTest1111111111111111111111111111111111",
+        "symbol": "LP-TEST",
+        "decimals": 6,
+    },
+    "config": {"id": "CfgAccTest1111111111111111111111111111111111", "index": 0},
 }
 
 
@@ -97,6 +103,18 @@ class LiveApiParsingTests(unittest.TestCase):
         self.assertEqual(pool["fee_rate"], 0.04)
         self.assertEqual(pool["subtypes"], ["Cpmm"])
         self.assertEqual(pool["type"], "Standard")
+        self.assertEqual(pool["lp_mint_address"], "LpMintTest1111111111111111111111111111111111")
+        self.assertEqual(pool["config_account_id"], "CfgAccTest1111111111111111111111111111111111")
+
+    def test_pool_state_prefers_pool_id_over_generic_id(self):
+        trimmed = {
+            "poolId": "PreferredPoolId111111111111111111111111111111",
+            "id": "GenericId1111111111111111111111111111111111",
+            "mintA": {"symbol": "SOL"},
+            "mintB": {"symbol": "X"},
+        }
+        pool = normalize_pool(trimmed, "apr24h")
+        self.assertEqual(pool["id"], "PreferredPoolId111111111111111111111111111111")
 
     def test_filter_accepts_live_wsol_pool(self):
         """The exact failure mode the user hit on Windows."""
