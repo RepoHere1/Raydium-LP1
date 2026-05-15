@@ -53,6 +53,22 @@ function Read-ConfigDefaults {
 $envDefaults = Read-EnvDefaults -Path $EnvPath
 $configDefaults = Read-ConfigDefaults -Path $ConfigPath
 
+$configRpcUrls = New-Object System.Collections.Generic.List[string]
+if ($null -ne $configDefaults -and $configDefaults.PSObject.Properties["solana_rpc_urls"]) {
+    foreach ($u in @($configDefaults.solana_rpc_urls)) {
+        $t = "$u".Trim()
+        if ($t) { [void]$configRpcUrls.Add($t) }
+    }
+}
+
+function Get-SafeStringCollection {
+    param([object]$Object, [string]$Prop)
+    if ($null -eq $Object) { return @() }
+    $pInfo = $Object.PSObject.Properties[$Prop]
+    if ($null -eq $pInfo -or $null -eq $pInfo.Value) { return @() }
+    return @($pInfo.Value | ForEach-Object { "$_" })
+}
+
 function Get-Default {
     param($Object, [string]$PropertyName, $Fallback)
     if ($null -eq $Object) { return $Fallback }
@@ -69,8 +85,8 @@ Write-Host "This creates your local config\settings.json and .env files."
 Write-Host "Your .env can contain private RPC/API-key URLs and is ignored by Git."
 Write-Host ""
 
-if ($null -ne $configDefaults -or $null -ne $envDefaults["SOLANA_RPC_URL"]) {
-    Write-Host "Found existing settings; using them as defaults. Press Enter to keep, or type a new value." -ForegroundColor DarkGray
+if (($null -ne $configDefaults) -or ($null -ne $envDefaults["SOLANA_RPC_URL"]) -or ($configRpcUrls.Count -gt 0)) {
+    Write-Host "Found existing $ConfigPath / .env; using saved values as defaults. Press Enter to keep, type a new value to replace." -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -135,17 +151,36 @@ Write-Host "Raydium page ordering (pool_sort_field): APR-sorted pages favor micr
 $poolSortSaved = "$(Get-Default $configDefaults 'pool_sort_field' '')".Trim()
 $poolSortField = (Ask-WithDefault "pool_sort_field (blank = same as APR field; try volume24h)" $poolSortSaved).Trim()
 
-$raydiumApiBaseDefault = if ($envDefaults["RAYDIUM_API_BASE"]) { $envDefaults["RAYDIUM_API_BASE"] } else { "https://api-v3.raydium.io" }
+$raydiumApiBaseDefault = if ($envDefaults["RAYDIUM_API_BASE"]) {
+    $envDefaults["RAYDIUM_API_BASE"]
+} else {
+    "$(Get-Default $configDefaults 'raydium_api_base' 'https://api-v3.raydium.io')"
+}
 $raydiumApiBase = Ask-WithDefault "Raydium live API base" $raydiumApiBaseDefault
 
-$primaryRpcDefault = if ($envDefaults["SOLANA_RPC_URL"]) { $envDefaults["SOLANA_RPC_URL"] } else { "https://api.mainnet-beta.solana.com" }
+if ($envDefaults["SOLANA_RPC_URL"]) {
+    $primaryRpcDefault = $envDefaults["SOLANA_RPC_URL"]
+} elseif ($configRpcUrls.Count -gt 0) {
+    $primaryRpcDefault = "$($configRpcUrls[0])"
+} else {
+    $primaryRpcDefault = "https://api.mainnet-beta.solana.com"
+}
 $primaryRpc = Ask-WithDefault "Primary Solana RPC URL. Public default is OK; paste Helius/Chainstack/etc if you want" $primaryRpcDefault
 
 $fallbacks = New-Object System.Collections.Generic.List[string]
 if ($envDefaults["SOLANA_RPC_URLS"]) {
     foreach ($entry in $envDefaults["SOLANA_RPC_URLS"].Split(",")) {
         $entry = $entry.Trim()
-        if ($entry -and $entry -ne $primaryRpc) { $fallbacks.Add($entry) }
+        if ($entry -and $entry -ne $primaryRpc) { [void]$fallbacks.Add($entry) }
+    }
+}
+if ($fallbacks.Count -eq 0 -and $configRpcUrls.Count -gt 1) {
+    foreach ($u in @($configRpcUrls)) {
+        $entry = "$u".Trim()
+        if (-not $entry) { continue }
+        if (($entry -ne $primaryRpc) -and -not $fallbacks.Contains($entry)) {
+            [void]$fallbacks.Add($entry)
+        }
     }
 }
 if ($fallbacks.Count -eq 0) {
@@ -265,11 +300,20 @@ $config = [ordered]@{
     momentum_detective_enabled = $momentumEnabled
     momentum_probe_market_lists = $momentumEnabled
     sort_candidates_by_momentum = $true
+    blocked_token_symbols = @(Get-SafeStringCollection $configDefaults "blocked_token_symbols")
+    blocked_mints = @(Get-SafeStringCollection $configDefaults "blocked_mints")
     allowed_quote_symbols = @($allowedQuotes)
-    blocked_token_symbols = @()
-    blocked_mints = @()
-    require_pool_id = $true
+    require_pool_id = [bool](Get-Default $configDefaults "require_pool_id" $true)
     solana_rpc_urls = @(@($primaryRpc) + $fallbacks | Where-Object { $_ } | Select-Object -Unique)
+}
+
+if ($null -ne $configDefaults) {
+    foreach ($prop in $configDefaults.PSObject.Properties) {
+        $nm = $prop.Name
+        if (-not ($config.Keys -contains $nm)) {
+            $config[$nm] = $prop.Value
+        }
+    }
 }
 
 $configDir = Split-Path -Parent $ConfigPath

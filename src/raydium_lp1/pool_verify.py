@@ -262,7 +262,11 @@ def verify_on_chain_owner(
 
     reasons: list[str] = []
     if owner is None:
-        reasons.append(f"on-chain: no account at {pool_id} (not a live pool state pubkey)")
+        if len(pool_id) <= 12:
+            short = pool_id
+        else:
+            short = f"{pool_id[:6]}…{pool_id[-4:]}"
+        reasons.append(f"on-chain: no RPC account ({short}); id is wrong or not LP state")
         return False, None, reasons
     if owner in NON_POOL_OWNERS:
         reasons.append(
