@@ -124,6 +124,18 @@ git pull origin main
 .\scripts\run_scan.ps1 -Loop -SpawnWatcher -WriteRejections
 ```
 
+## PowerShell says `Missing file specification after redirection operator` (`<<<<<<< HEAD`)
+
+Unresolved Git merge conflict markers got saved inside a `.ps1` file (often `scripts\run_scan.ps1`). PowerShell reads `<<` as redirection. Replace that file from GitHub:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+git fetch origin main
+git checkout origin/main -- scripts/run_scan.ps1
+```
+
+Or reset all helpers: `git checkout origin/main -- scripts/`. `./scripts/doctor.ps1` also flags stray `<<<<<<<` lines under `scripts/`.
+
 ## Live data sources
 
 This project is designed to use real production data, not placeholders:

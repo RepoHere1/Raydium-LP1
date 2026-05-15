@@ -18,7 +18,19 @@ Write-Host "Raydium-LP1 doctor" -ForegroundColor Cyan
 Show-Check "Repo folder" (Test-Path ".git") (Get-Location).Path
 Show-Check "Scanner script" (Test-Path "scripts\scan_raydium_lps.py") "scripts\scan_raydium_lps.py"
 Show-Check "Run helper" (Test-Path "scripts\run_scan.ps1") "scripts\run_scan.ps1"
-Show-Check "Local settings" (Test-Path $Config) $Config
+
+$mergeMarkers = @(
+    Get-ChildItem -LiteralPath "scripts" -Filter "*.ps1" -File -ErrorAction SilentlyContinue |
+        Select-String -Pattern '^<<<<<<<' |
+        Select-Object -First 5
+)
+if (-not $mergeMarkers -or $mergeMarkers.Count -eq 0) {
+    Show-Check "Scripts (Git merge leftovers)" $true "none"
+} else {
+    $m = $mergeMarkers[0]
+    $leaf = Split-Path -Leaf $m.Path
+    Show-Check "Scripts (Git merge leftovers)" $false "$($m.Path):$($m.LineNumber) has merge marker — run: git fetch origin main ; git checkout origin/main -- scripts/$leaf"
+}Show-Check "Local settings" (Test-Path $Config) $Config
 Show-Check "Local .env" (Test-Path ".env") ".env"
 
 $python = Get-Command py -ErrorAction SilentlyContinue
