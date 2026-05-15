@@ -988,7 +988,8 @@ def scan(
 
     wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
     max_positions = int(wallet_capacity_info["capacity"]["max_positions"]) if wallet_config is not None else None
-    if wallet_config is not None and max_positions is not None:
+    # In dry-run, always show the full filter-pass list; wallet/RPC capacity is informational only.
+    if wallet_config is not None and max_positions is not None and not config.dry_run:
         capped_candidates = candidates[:max_positions]
         candidates_truncated = max(0, len(candidates) - len(capped_candidates))
     else:
@@ -1130,7 +1131,11 @@ def print_report(report: dict[str, Any]) -> None:
             f"Wallet: balance {bal.get('sol', 0):.4f} SOL | position_size {cap.get('position_size_sol', 0):.4f} SOL "
             f"-> max_positions={cap.get('max_positions', 0)} (reserved {cap.get('reserved_sol', 0):.4f} SOL)"
         )
-        if report.get("candidates_truncated"):
+        if report.get("mode") == "dry_run":
+            print(
+                "  (dry-run: full pass list — not wallet-capped; fund SOL for a non-dry-run capacity cap.)"
+            )
+        elif report.get("candidates_truncated"):
             print(f"  ...{report['candidates_truncated']} candidate(s) hidden by capacity cap")
     if not report["candidates"]:
         print("No pools passed all filters. No action taken.")

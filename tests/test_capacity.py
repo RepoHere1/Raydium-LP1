@@ -92,6 +92,7 @@ class ScannerCapacityIntegrationTests(unittest.TestCase):
             return {"result": {"value": int(0.32 * wallet.LAMPORTS_PER_SOL)}}
 
         config = ScannerConfig(
+            dry_run=False,
             min_apr=100,
             min_liquidity_usd=10,
             min_volume_24h_usd=10,
@@ -107,6 +108,31 @@ class ScannerCapacityIntegrationTests(unittest.TestCase):
         self.assertEqual(report["candidate_count"], 3)
         self.assertEqual(report["candidate_count_pre_capacity"], 10)
         self.assertEqual(report["candidates_truncated"], 7)
+        self.assertEqual(report["wallet_capacity"]["capacity"]["max_positions"], 3)
+
+    def test_dry_run_does_not_wallet_cap_candidates(self):
+        wcfg = wallet.override_wallet(VALID_ADDRESS)
+
+        def fake_rpc(url, payload):
+            return {"result": {"value": int(0.32 * wallet.LAMPORTS_PER_SOL)}}
+
+        config = ScannerConfig(
+            dry_run=True,
+            min_apr=100,
+            min_liquidity_usd=10,
+            min_volume_24h_usd=10,
+            require_sell_route=False,
+            track_liquidity_health=False,
+            position_size_sol=0.1,
+            reserve_sol=0.02,
+            solana_rpc_urls=["https://rpc.example"],
+            **SCAN_TEST_DISABLE_VERIFY,
+        )
+        with patch("raydium_lp1.scanner.fetch_json", return_value=self._api_response(10)):
+            report = scan(config, wallet_config=wcfg, rpc_post=fake_rpc)
+        self.assertEqual(report["candidate_count"], 10)
+        self.assertEqual(report["candidate_count_pre_capacity"], 10)
+        self.assertEqual(report["candidates_truncated"], 0)
         self.assertEqual(report["wallet_capacity"]["capacity"]["max_positions"], 3)
 
     def test_no_wallet_means_no_cap(self):
