@@ -26,7 +26,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TextIO
 
-# Strip ANSI so optional --verdict-log file stays readable in Notepad/VS Code.
+# ANSI stripping for mirror logs when ``StreamConfig.verdict_log_strip_ansi`` is enabled.
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -65,6 +65,8 @@ class StreamConfig:
     pool_id_width: int = 56
     # Append plain-text copies of verdict lines here (read in another window while scan runs).
     verdict_log_path: str | None = None
+    # When True, strip ANSI from the mirror log (Notepad-friendly). When False, keep color escapes for WT/pwsh.
+    verdict_log_strip_ansi: bool = False
     # Re-print the full table header (same column widths as data) every N rows (0 = off).
     header_repeat_rows: int = 25
     row_emit_count: int = field(default=0, repr=False)
@@ -86,7 +88,8 @@ def _append_verdict_log(cfg: StreamConfig, *parts: str) -> None:
     try:
         with open(path, "a", encoding="utf-8") as fh:
             for p in parts:
-                fh.write(strip_ansi(p) + "\n")
+                line = strip_ansi(p) if cfg.verdict_log_strip_ansi else p
+                fh.write(line + "\n")
     except OSError:
         pass
 
@@ -247,6 +250,7 @@ def make_stream_config(
     pool_id_width: int = 56,
     verdict_log_path: str | None = None,
     header_repeat_rows: int = 25,
+    verdict_log_strip_ansi: bool = False,
 ) -> StreamConfig:
     target = stream if stream is not None else sys.stderr
     return StreamConfig(
@@ -258,6 +262,7 @@ def make_stream_config(
         pool_id_width=pool_id_width,
         verdict_log_path=verdict_log_path,
         header_repeat_rows=max(0, int(header_repeat_rows)),
+        verdict_log_strip_ansi=bool(verdict_log_strip_ansi),
     )
 
 

@@ -29,6 +29,12 @@ class DashboardBuildTests(unittest.TestCase):
                     "liquidity_usd": 5000.0,
                     "volume_24h_usd": 1000.0,
                     "health": {"score": "healthy", "reasons": []},
+                    "shadow_exit_pnl": {
+                        "status": "modeled",
+                        "pnl_sol_net_model": -0.05,
+                        "entry_assumption_sol": 0.1,
+                        "priority_fee_reserve_sol": 0.00002,
+                    },
                 }
             ],
             "wallet_capacity": {
@@ -65,6 +71,7 @@ class DashboardBuildTests(unittest.TestCase):
         for section in ("Settings", "Wallet & capacity", "Open positions", "Recent alerts", "RPC health", "Last scan"):
             self.assertIn(section, text)
         self.assertIn("SOL/TKN", text)
+        self.assertTrue("shadow NET(model)" in text or "shadow exit model" in text)
 
     def test_write_dashboard_creates_json(self):
         with tempfile.TemporaryDirectory() as tmp:
