@@ -11,7 +11,8 @@ param(
     [string]$VerdictLog = "",
     [switch]$NoVerdictLog,
     [int]$VerdictHeaderEvery = 25,
-    [switch]$SpawnWatcher
+    [switch]$SpawnWatcher,
+    [switch]$NoConfigHotReload
 )
 
 $ErrorActionPreference = "Stop"
@@ -117,6 +118,9 @@ if ($VerdictLog) {
 }
 if ($NoVerdictLog) {
     $scannerArgs += "--no-verdict-log"
+}
+if ($NoConfigHotReload) {
+    $scannerArgs += "--no-config-hot-reload"
 }
 if ($VerdictHeaderEvery -ne 25) {
     $scannerArgs += @("--verdict-header-every", "$VerdictHeaderEvery")

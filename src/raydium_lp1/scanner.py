@@ -976,6 +976,23 @@ def resolve_config_path(path: Path) -> Path:
     return path
 
 
+def hot_reload_scanner_config(path: Path, last_mtime: list[float]) -> ScannerConfig | None:
+    """If ``path``'s ``st_mtime`` changed since ``last_mtime[0]``, return a new :class:`ScannerConfig`.
+
+    ``last_mtime`` must be a one-element list primed with ``[path.stat().st_mtime]`` right after
+    the initial :meth:`ScannerConfig.from_file` load.
+    """
+
+    try:
+        m = path.stat().st_mtime
+    except OSError:
+        return None
+    if m == last_mtime[0]:
+        return None
+    last_mtime[0] = m
+    return ScannerConfig.from_file(path)
+
+
 def _init_verdict_mirror_log(vpath: Path) -> str:
     """Create or truncate the verdict mirror log and return its absolute path."""
 
@@ -996,8 +1013,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Scan live Raydium LPs for extreme APR candidates.")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Path to scanner JSON config.")
     parser.add_argument("--json", action="store_true", help="Print the scan report as JSON.")
-    parser.add_argument("--loop", action="store_true", help="Keep scanning until stopped.")
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Keep scanning until stopped. While looping, settings are re-loaded whenever the "
+        "--config JSON file is saved (mtime change); use --no-config-hot-reload to freeze the first load.",
+    )
     parser.add_argument("--interval", type=int, default=60, help="Seconds between scans in loop mode.")
+    parser.add_argument(
+        "--no-config-hot-reload",
+        action="store_true",
+        help="In --loop, keep the first-loaded settings for every pass (do not re-read when the JSON changes).",
+    )
     parser.add_argument("--write-reports", action="store_true", help="Write reports/latest.json and reports/candidates.csv.")
     parser.add_argument("--check-rpc", action="store_true", help="Check configured Solana RPC URLs with getHealth before scanning.")
     parser.add_argument(
@@ -1084,6 +1111,8 @@ def main(argv: list[str] | None = None) -> int:
         print("Refusing to run: this build is dry-run only. Set dry_run=true.", file=sys.stderr)
         return 2
 
+    config_mtime_anchor: list[float] = [config_path.stat().st_mtime]
+
     try:
         active_wallet = wallet_mod.load_wallet()
     except wallet_mod.WalletError as exc:
@@ -1148,6 +1177,21 @@ def main(argv: list[str] | None = None) -> int:
     wr_override = True if args.write_rejections else None
 
     while True:
+        if args.loop and not args.no_config_hot_reload:
+            new_cfg = hot_reload_scanner_config(config_path, config_mtime_anchor)
+            if new_cfg is not None:
+                if not new_cfg.dry_run:
+                    print(
+                        "Refusing to continue: dry_run=false after config reload. This build is dry-run only.",
+                        file=sys.stderr,
+                    )
+                    return 2
+                config = new_cfg
+                print(
+                    f"[scan] hot-reloaded {config_path} (edit saved; next pass uses new thresholds)",
+                    file=sys.stderr,
+                    flush=True,
+                )
         try:
             report = scan(
                 config,
