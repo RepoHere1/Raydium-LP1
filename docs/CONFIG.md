@@ -55,28 +55,35 @@ python scripts\scan_raydium_lps.py --config config\settings.json --json 2>$null 
 After a scan, open:
 
 - `reports\dashboard.json` — includes `momentum_hot_top` (top 25 HOT), rejection breakdown, and `scan_diagnosis` for tuning filters
-- **Loopback web UI** (localhost only, no auth) — two terminals from repo root:
+- **Loopback web UI** (localhost only, no auth) — open **two** Windows Terminal / PowerShell tabs from the repo folder:
 
-  ```bash
-  # Terminal A — writes reports/dashboard.json each cycle
-  ./scripts/run_scan_dashboard.sh
-  # optional: INTERVAL=120 ./scripts/run_scan_dashboard.sh --write-rejections
-
-  # Terminal B — funnel + settings editor
-  ./scripts/run_dashboard_web.sh
+  ```powershell
+  cd C:\Users\Taylor\Raydium-LP1
   ```
 
-  Then open http://127.0.0.1:8844/
+  **Window 1** — scanner writes `reports\dashboard.json` every cycle and reloads `config\settings.json` when you save from the UI:
 
-  Same flags without helpers:
-
-  ```bash
-  export PYTHONPATH=src PYTHONUNBUFFERED=1
-  python3 -m raydium_lp1.scanner --dashboard --loop --reload-config-each-scan
-  python3 -m raydium_lp1.dashboard_web
+  ```powershell
+  .\scripts\run_scan_dashboard.ps1
   ```
 
-  PowerShell (same `python -m` modules): `.\scripts\run_dashboard_web.ps1` for the UI; scanner needs explicit flags, e.g. `python -m raydium_lp1.scanner --dashboard --loop --reload-config-each-scan` from repo root with `$env:PYTHONPATH='src'`
+  Optional extras (same as `run_scan.ps1`):
+
+  ```powershell
+  .\scripts\run_scan_dashboard.ps1 -WriteRejections -CheckRpc -Interval 120
+  ```
+
+  **Window 2** — funnel bars + settings editor:
+
+  ```powershell
+  .\scripts\run_dashboard_web.ps1
+  ```
+
+  Shortcut from repo root: `.\run_dashboard_web.ps1`
+
+  Browser: http://127.0.0.1:8844/
+
+  You can also pass flags through the main helper: `.\scripts\run_scan.ps1 -Loop -Dashboard -ReloadConfigEachScan`
 - `reports\momentum_sniffer.json` — full detective breakdown per pool
 - `reports\latest.json` — all candidates with `momentum` objects
 
