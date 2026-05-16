@@ -19,6 +19,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from raydium_lp1.http_json import load_json_from_urlopen_response
+
 JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
 RAYDIUM_COMPUTE_URL = "https://transaction-v1.raydium.io/compute/swap-base-in"
 
@@ -74,11 +76,15 @@ HttpFetcher = Callable[[str], dict]
 def _default_fetch_json(url: str, timeout: int = 8) -> dict:
     request = Request(
         url,
-        headers={"accept": "application/json", "user-agent": "Raydium-LP1/0.3"},
+        headers={
+            "accept": "application/json",
+            "accept-encoding": "identity",
+            "user-agent": "Raydium-LP1/0.3",
+        },
     )
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - public API
-            return json.loads(response.read().decode("utf-8"))
+            return load_json_from_urlopen_response(response)
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(str(exc)) from exc
 

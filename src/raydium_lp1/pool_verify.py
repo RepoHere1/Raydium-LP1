@@ -18,6 +18,9 @@ from typing import Any, Callable, Iterable
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
+from raydium_lp1.http_json import load_json_from_urlopen_response
+
+
 # Raydium pool program IDs (mainnet) -> short label shown in verdict stream.
 RAYDIUM_POOL_PROGRAMS: dict[str, str] = {
     "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C": "CPMM",
@@ -168,7 +171,7 @@ def fetch_raydium_pool_by_id(
     def _default_fetch(u: str, t: int) -> dict[str, Any]:
         request = Request(u, headers={"accept": "application/json", "user-agent": "Raydium-LP1/verify"})
         with urlopen(request, timeout=t) as response:  # noqa: S310
-            return json.loads(response.read().decode("utf-8"))
+            return load_json_from_urlopen_response(response)
 
     loader = fetch_json or _default_fetch
     try:
@@ -209,11 +212,16 @@ def prefetch_account_owners(
         request = Request(
             url,
             data=json.dumps(body).encode("utf-8"),
-            headers={"content-type": "application/json"},
+            headers={
+                "content-type": "application/json",
+                "accept": "application/json",
+                "accept-encoding": "identity",
+                "user-agent": "Raydium-LP1/pool-verify",
+            },
             method="POST",
         )
         with urlopen(request, timeout=12) as resp:  # noqa: S310
-            return json.loads(resp.read().decode("utf-8"))
+            return load_json_from_urlopen_response(resp)
 
     for start in range(0, len(pending), chunk_size):
         chunk = pending[start : start + chunk_size]
@@ -254,11 +262,16 @@ def get_account_owner(
         request = Request(
             rpc_url,
             data=json.dumps(body).encode("utf-8"),
-            headers={"content-type": "application/json"},
+            headers={
+                "content-type": "application/json",
+                "accept": "application/json",
+                "accept-encoding": "identity",
+                "user-agent": "Raydium-LP1/pool-verify",
+            },
             method="POST",
         )
         with urlopen(request, timeout=timeout) as resp:  # noqa: S310
-            response = json.loads(resp.read().decode("utf-8"))
+            response = load_json_from_urlopen_response(resp)
     value = (response.get("result") or {}).get("value")
     if not value:
         return None

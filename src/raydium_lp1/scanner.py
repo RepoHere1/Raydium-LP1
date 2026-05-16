@@ -25,6 +25,7 @@ from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
 from raydium_lp1 import emergency, health, lp_range_planner, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1.http_json import load_json_from_urlopen_response
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
@@ -503,10 +504,17 @@ def extract_pool_items(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def fetch_json(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS) -> dict[str, Any]:
-    request = Request(url, headers={"accept": "application/json", "user-agent": "Raydium-LP1/0.6"})
+    request = Request(
+        url,
+        headers={
+            "accept": "application/json",
+            "accept-encoding": "identity",
+            "user-agent": "Raydium-LP1/0.6",
+        },
+    )
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - intentional public API read
-            return json.loads(response.read().decode("utf-8"))
+            return load_json_from_urlopen_response(response)
     except HTTPError as exc:
         raise RuntimeError(f"API returned HTTP {exc.code} for {url}") from exc
     except URLError as exc:
@@ -525,12 +533,17 @@ def post_json(url: str, payload: dict[str, Any], timeout: int = 12) -> dict[str,
     request = Request(
         url,
         data=data,
-        headers={"content-type": "application/json", "accept": "application/json", "user-agent": "Raydium-LP1/0.2"},
+        headers={
+            "content-type": "application/json",
+            "accept": "application/json",
+            "accept-encoding": "identity",
+            "user-agent": "Raydium-LP1/0.2",
+        },
         method="POST",
     )
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - user-configured RPC read
-            return json.loads(response.read().decode("utf-8"))
+            return load_json_from_urlopen_response(response)
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(str(exc)) from exc
 
