@@ -61,27 +61,17 @@ After a scan, open:
   cd C:\Users\Taylor\Raydium-LP1
   ```
 
-  **Window 1** — scanner writes `reports\dashboard.json` every cycle and reloads `config\settings.json` when you save from the UI:
+  **One command** (opens web UI in a new window, scanner runs in this one):
 
   ```powershell
-  .\scripts\run_scan_dashboard.ps1
+  .\run_dashboard_stack.ps1
   ```
 
-  Optional extras (same as `run_scan.ps1`):
+  Or: `.\scripts\run_scan_dashboard_stack.ps1`
 
-  ```powershell
-  .\scripts\run_scan_dashboard.ps1 -WriteRejections -CheckRpc -Interval 120
-  ```
+  Browser: http://127.0.0.1:8844/ (also printed when the stack starts)
 
-  **Window 2** — funnel bars + settings editor:
-
-  ```powershell
-  .\scripts\run_dashboard_web.ps1
-  ```
-
-  Shortcut from repo root: `.\run_dashboard_web.ps1`
-
-  Browser: http://127.0.0.1:8844/
+  **Two windows manually** — `.\scripts\run_scan_dashboard.ps1` plus `.\scripts\run_dashboard_web.ps1` in a second tab.
 
   You can also pass flags through the main helper: `.\scripts\run_scan.ps1 -Loop -Dashboard -ReloadConfigEachScan`
 - `reports\momentum_sniffer.json` — full detective breakdown per pool
