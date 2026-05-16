@@ -24,7 +24,7 @@ from typing import Callable, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from raydium_lp1 import emergency
+from raydium_lp1 import emergency, pool_verify
 
 LAMPORTS_PER_SOL = 1_000_000_000
 DEFAULT_POSITION_SIZE_SOL = 0.1
@@ -177,6 +177,8 @@ def sell_all_to_base(
 
 
 def _default_rpc_post(url: str, payload: dict) -> dict:
+    if not pool_verify.is_valid_solana_rpc_url(url):
+        raise RuntimeError(f"Invalid Solana RPC URL for POST: {url!r}")
     data = json.dumps(payload).encode("utf-8")
     request = Request(
         url,
@@ -229,7 +231,10 @@ def fetch_sol_balance(
 
     caller = rpc_post or _default_rpc_post
     last_error = "no rpc urls configured"
-    for url in rpc_urls:
+    urls = pool_verify.filter_rpc_urls(rpc_urls, warn=False)
+    if not urls:
+        urls = [pool_verify.DEFAULT_PUBLIC_RPC]
+    for url in urls:
         payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [address]}
         try:
             response = caller(url, payload)

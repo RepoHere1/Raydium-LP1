@@ -137,6 +137,14 @@ class ScannerConfig:
     lp_max_positions_per_mint: int = 2
     risk_profile: str = "balanced"  # balanced | degen
 
+    def __post_init__(self) -> None:
+        """Strip junk RPC entries (e.g. comma-split ``y``) from any construction path."""
+
+        raw = list(self.solana_rpc_urls)
+        cleaned = pool_verify.filter_rpc_urls(raw, warn=True)
+        if cleaned != raw:
+            object.__setattr__(self, "solana_rpc_urls", cleaned)
+
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
         from raydium_lp1.settings_io import load_settings_json
@@ -511,6 +519,10 @@ def fetch_json(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS) -> dict[st
 
 
 def post_json(url: str, payload: dict[str, Any], timeout: int = 12) -> dict[str, Any]:
+    """POST JSON to a Solana RPC (or compatible) HTTP endpoint."""
+
+    if not pool_verify.is_valid_solana_rpc_url(url):
+        raise RuntimeError(f"Invalid Solana RPC URL for POST: {url!r}")
     data = json.dumps(payload).encode("utf-8")
     request = Request(
         url,

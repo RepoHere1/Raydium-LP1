@@ -65,6 +65,23 @@ class CapacityTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("everything is down", result.error)
 
+    def test_fetch_sol_balance_skips_invalid_urls_before_fallback(self):
+        from raydium_lp1 import pool_verify
+
+        calls: list[str] = []
+
+        def fake_rpc(url, payload):
+            calls.append(url)
+            return {"jsonrpc": "2.0", "id": 1, "result": {"context": {"slot": 1}, "value": 0}}
+
+        result = wallet.fetch_sol_balance(
+            VALID_ADDRESS,
+            ["y", "zz", pool_verify.DEFAULT_PUBLIC_RPC],
+            rpc_post=fake_rpc,
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(calls[0], pool_verify.DEFAULT_PUBLIC_RPC)
+
 
 class ScannerCapacityIntegrationTests(unittest.TestCase):
     def _api_response(self, n: int) -> dict:

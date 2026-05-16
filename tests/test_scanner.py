@@ -129,6 +129,10 @@ class ScannerTests(unittest.TestCase):
         self.assertNotIn("y", config.solana_rpc_urls)
         self.assertTrue(all(str(u).startswith("http") for u in config.solana_rpc_urls))
 
+    def test_scanner_config_constructor_strips_invalid_rpc_urls(self):
+        cfg = ScannerConfig(solana_rpc_urls=["y", "https://only-good.example/rpc"])
+        self.assertEqual(cfg.solana_rpc_urls, ["https://only-good.example/rpc"])
+
     def test_env_comma_list_drops_invalid_tail_tokens(self):
         with tempfile.TemporaryDirectory() as tempdir:
             env_path = Path(tempdir) / ".env"
