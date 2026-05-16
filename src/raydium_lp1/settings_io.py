@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+from raydium_lp1.settings_schema import KNOWN_SETTINGS_KEYS
 
 # PowerShell ConvertTo-Json sometimes emits @{...} when -Depth is too low.
 _PS_HASHTABLE_RE = re.compile(r"@\{[^}]*\}")
@@ -81,3 +83,25 @@ def validate_settings_file(path: Path) -> tuple[bool, str]:
 def write_settings_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def merge_known_settings_patch(path: Path, patch: Mapping[str, Any]) -> dict[str, Any]:
+    """Shallow-merge ``patch`` into ``path`` keeping only keys in ``KNOWN_SETTINGS_KEYS``.
+
+    Raises:
+        ValueError: unknown keys or non-object patch.
+        FileNotFoundError: settings file missing.
+    """
+
+    if not isinstance(patch, Mapping):
+        raise ValueError(f"PATCH must be a JSON object, not {type(patch).__name__}")
+    pk = {str(k): v for k, v in patch.items()}
+    known = frozenset(KNOWN_SETTINGS_KEYS)
+    unknown = sorted(k for k in pk if k not in known)
+    if unknown:
+        raise ValueError("Unknown settings keys (not merged): " + ", ".join(unknown))
+    prev = load_settings_json(path)
+    merged = dict(prev)
+    merged.update(pk)
+    write_settings_json(path, merged)
+    return merged
