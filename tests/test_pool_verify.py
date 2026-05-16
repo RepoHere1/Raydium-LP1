@@ -35,6 +35,17 @@ FAKE_WALLET = {
 }
 
 
+class RpcUrlSanitizeTests(unittest.TestCase):
+    def test_filter_drops_short_and_non_http(self):
+        good = "https://api.mainnet-beta.solana.com"
+        out = pool_verify.filter_rpc_urls([good, "y", "n", "ftp://x/y", ""], warn=False)
+        self.assertEqual(out, [good])
+
+    def test_filter_dedupes_preserving_order(self):
+        u = "https://api.mainnet-beta.solana.com"
+        self.assertEqual(pool_verify.filter_rpc_urls([u, u], warn=False), [u])
+
+
 class ApiProgramTests(unittest.TestCase):
     def test_cpmm_pool_program_accepted(self):
         ok, reasons, label = pool_verify.verify_api_program(CPMM_POOL)

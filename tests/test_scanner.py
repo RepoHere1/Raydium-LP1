@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -109,6 +110,41 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(config.solana_rpc_urls[0], "https://api.mainnet-beta.solana.com")
             self.assertIn("https://solana-rpc.publicnode.com", config.solana_rpc_urls)
             self.assertIn("https://extra.example", config.solana_rpc_urls)
+
+    def test_junk_solana_rpc_urls_in_json_are_dropped(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            config_path = Path(tempdir) / "settings.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "min_apr": 999.99,
+                        "solana_rpc_urls": ["https://extra.example", "y", "ftp://bad/x"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                config = ScannerConfig.from_file(config_path)
+        self.assertIn("https://extra.example", config.solana_rpc_urls)
+        self.assertNotIn("y", config.solana_rpc_urls)
+        self.assertTrue(all(str(u).startswith("http") for u in config.solana_rpc_urls))
+
+    def test_env_comma_list_drops_invalid_tail_tokens(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            env_path = Path(tempdir) / ".env"
+            config_path = Path(tempdir) / "settings.json"
+            env_path.write_text(
+                "SOLANA_RPC_URL=https://good.example/rpc\n"
+                "SOLANA_RPC_URLS=https://a.example.com,y\n",
+                encoding="utf-8",
+            )
+            config_path.write_text('{"min_apr": 999.99}', encoding="utf-8")
+            with patch.dict(os.environ, {}, clear=True):
+                load_dotenv(env_path)
+                config = ScannerConfig.from_file(config_path)
+        self.assertEqual(config.solana_rpc_urls[0], "https://good.example/rpc")
+        self.assertIn("https://a.example.com", config.solana_rpc_urls)
+        self.assertNotIn("y", config.solana_rpc_urls)
 
     def test_write_reports_creates_json_and_csv(self):
         report = {

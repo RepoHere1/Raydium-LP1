@@ -12,9 +12,10 @@ field is the pool **state account** pubkey. We verify:
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
-from typing import Any, Callable
-from urllib.parse import quote
+from typing import Any, Callable, Iterable
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 # Raydium pool program IDs (mainnet) -> short label shown in verdict stream.
@@ -37,6 +38,35 @@ RAYDIUM_POOL_INFO_IDS = "/pools/info/ids"
 RAYDIUM_UI_POOL_URL = "https://raydium.io/liquidity/increase/?mode=add&pool_id={pool_id}"
 
 RpcPost = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+
+def is_valid_solana_rpc_url(url: str) -> bool:
+    """Reject junk list entries (e.g. comma-split typos like ``y`` from ``...,y``)."""
+
+    u = (url or "").strip()
+    if len(u) < 8:
+        return False
+    parsed = urlparse(u)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+def filter_rpc_urls(urls: Iterable[str], *, warn: bool = True) -> list[str]:
+    """Return only usable HTTP(S) RPC endpoints, deduped in order."""
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in urls:
+        u = str(raw).strip()
+        if is_valid_solana_rpc_url(u):
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        elif u and warn:
+            print(
+                f"[config] skipping invalid Solana RPC URL (use full https://…): {u!r}",
+                file=sys.stderr,
+            )
+    return out
 
 
 @dataclass(frozen=True)
@@ -165,7 +195,7 @@ def prefetch_account_owners(
     pending = [pk for pk in pubkeys if pk and pk not in owner_cache]
     if not pending:
         return
-    urls = [u for u in rpc_urls if u.strip()] or [DEFAULT_PUBLIC_RPC]
+    urls = filter_rpc_urls(rpc_urls, warn=False) or [DEFAULT_PUBLIC_RPC]
 
     def _post(url: str, keys: list[str]) -> dict[str, Any]:
         body = {
@@ -250,7 +280,7 @@ def verify_on_chain_owner(
     if pool_id in cache:
         owner = cache[pool_id]
     else:
-        urls = [u for u in rpc_urls if u.strip()] or [DEFAULT_PUBLIC_RPC]
+        urls = filter_rpc_urls(rpc_urls, warn=False) or [DEFAULT_PUBLIC_RPC]
         for url in urls:
             try:
                 owner = get_account_owner(pool_id, url, rpc_post=rpc_post)
