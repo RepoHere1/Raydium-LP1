@@ -3,11 +3,15 @@
 ``GET /`` serves a single-page UI. ``GET /api/dashboard`` and ``GET /api/settings`` return JSON.
 ``POST /api/settings`` merges an object into ``config/settings.json`` (scanner-known keys only).
 
-Use with::
+From repo root (bash)::
 
-    python -m raydium_lp1.dashboard_web
+    ./scripts/run_dashboard_web.sh
+    ./scripts/run_scan_dashboard.sh   # other terminal
 
-and run the scanner with ``--dashboard --loop --reload-config-each-scan`` while you tune gates.
+Or::
+
+    PYTHONPATH=src python3 -m raydium_lp1.dashboard_web
+    PYTHONPATH=src python3 -m raydium_lp1.scanner --dashboard --loop --reload-config-each-scan
 """
 
 from __future__ import annotations
