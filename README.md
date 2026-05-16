@@ -147,6 +147,25 @@ git fetch origin main
 git checkout origin/main -- scripts/run_scan.ps1 src/raydium_lp1/verdicts.py
 ```
 
+One-liner helper (same restore):
+
+```powershell
+.\scripts\restore_conflicted_scripts.ps1
+```
+
+**Wrong:** putting the scanner on the same line as `cd`, or `cd` to the `.ps1` path — `cd` does not accept `-Loop`:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1.\scripts\run_scan.ps1 -Loop -SpawnWatcher   # invalid
+```
+
+**Right** — two lines (or separate with `;`):
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\scripts\run_scan.ps1 -Loop -SpawnWatcher -WriteRejections
+```
+
 Or reset the whole tracked tree when many files broke (usual after merging the wrong branch):
 
 ```powershell
