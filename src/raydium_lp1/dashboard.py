@@ -69,24 +69,39 @@ def build_dashboard(
     settings = {
         "strategy": getattr(config, "strategy", "custom"),
         "dry_run": getattr(config, "dry_run", True),
+        "network": getattr(config, "network", "solana"),
         "min_apr": getattr(config, "min_apr", 0),
         "apr_field": getattr(config, "apr_field", "apr24h"),
         "sort_type": getattr(config, "sort_type", "desc"),
         "pool_sort_field": getattr(config, "pool_sort_field", ""),
+        "pages": getattr(config, "pages", 1),
+        "page_size": getattr(config, "page_size", 100),
+        "pool_type": getattr(config, "pool_type", "all"),
+        "page_delay_seconds": getattr(config, "page_delay_seconds", 0),
+        "http_timeout_seconds": getattr(config, "http_timeout_seconds", 15),
         "min_liquidity_usd": getattr(config, "min_liquidity_usd", 0),
         "min_volume_24h_usd": getattr(config, "min_volume_24h_usd", 0),
+        "hard_exit_min_tvl_usd": getattr(config, "hard_exit_min_tvl_usd", 0),
+        "max_position_usd": getattr(config, "max_position_usd", 0),
+        "max_pool_age_hours": getattr(config, "max_pool_age_hours", 0),
+        "min_pool_age_hours": getattr(config, "min_pool_age_hours", 0),
+        "min_burn_percent": getattr(config, "min_burn_percent", 0),
+        "require_momentum_score": getattr(config, "require_momentum_score", False),
         "position_size_sol": getattr(config, "position_size_sol", 0.1),
         "reserve_sol": getattr(config, "reserve_sol", 0.02),
         "require_sell_route": getattr(config, "require_sell_route", True),
         "route_sources": list(getattr(config, "route_sources", ())),
+        "max_route_price_impact_pct": getattr(config, "max_route_price_impact_pct", 30.0),
+        "use_robust_routing": getattr(config, "use_robust_routing", True),
+        "verify_pool_on_chain": getattr(config, "verify_pool_on_chain", True),
+        "require_verified_raydium_pool": getattr(config, "require_verified_raydium_pool", True),
         "emergency_close_enabled": getattr(config, "emergency_close_enabled", True),
         "emergency_max_slippage_pct": getattr(config, "emergency_max_slippage_pct", 0.30),
-        "network": getattr(config, "network", "solana"),
         "momentum_enabled": getattr(config, "momentum_enabled", False),
         "min_momentum_score": getattr(config, "min_momentum_score", 0),
         "momentum_hold_hours": getattr(config, "momentum_hold_hours", 24),
         "momentum_top_hot": getattr(config, "momentum_top_hot", 25),
-        "hard_exit_min_tvl_usd": getattr(config, "hard_exit_min_tvl_usd", 0),
+        "sort_candidates_by_momentum": getattr(config, "sort_candidates_by_momentum", True),
         "lp_planning_enabled": getattr(config, "lp_planning_enabled", False),
         "risk_profile": getattr(config, "risk_profile", "balanced"),
         "lp_full_range_parallel": getattr(config, "lp_full_range_parallel", False),
@@ -120,6 +135,23 @@ def build_dashboard(
     if recent_alerts:
         recent_alerts = recent_alerts[-RECENT_ALERT_COUNT:]
 
+    bd = report.get("rejection_breakdown") or {}
+    if isinstance(bd, dict):
+        breakdown = {str(k): int(v) for k, v in bd.items()}
+    else:
+        breakdown = {}
+
+    hist = report.get("rejection_reason_histogram") or {}
+    if isinstance(hist, dict):
+        hist_out = {
+            str(k): int(v) for k, v in sorted(hist.items(), key=lambda kv: kv[1], reverse=True)
+        }
+    else:
+        hist_out = {}
+
+    diag = report.get("scan_diagnosis")
+    diagnosis_out = diag if isinstance(diag, dict) else {}
+
     last_scan = {
         "scanned_at": report.get("scanned_at"),
         "scanned_count": report.get("scanned_count", 0),
@@ -130,6 +162,9 @@ def build_dashboard(
         "health_summary": report.get("health_summary", {}),
         "triggered_alerts": report.get("triggered_alerts", []),
         "raydium_api_base": report.get("raydium_api_base"),
+        "rejection_breakdown": breakdown,
+        "rejection_reason_histogram": hist_out,
+        "scan_diagnosis": diagnosis_out,
     }
 
     return DashboardData(
@@ -146,7 +181,8 @@ def build_dashboard(
 
 def write_dashboard(data: DashboardData, path: Path = DEFAULT_DASHBOARD_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # sort_keys=False keeps rejection histogram / category order meaningful for UI consumers.
+    path.write_text(json.dumps(data.to_dict(), indent=2, sort_keys=False) + "\n", encoding="utf-8")
 
 
 def _hr(char: str = "=", width: int = 64) -> str:
@@ -290,6 +326,11 @@ def render_dashboard_text(data: DashboardData) -> str:
         f"| candidates={last.get('candidate_count', 0)} (pre-cap {last.get('candidate_count_pre_capacity', 0)}) "
         f"| rejected={last.get('rejected_count', 0)}"
     )
+    br = last.get("rejection_breakdown") or {}
+    if isinstance(br, dict) and br:
+        top_cats = sorted(br.items(), key=lambda kv: kv[1], reverse=True)[:8]
+        parts = [f"{k}:{v}" for k, v in top_cats]
+        lines.append("  rejects by category (top): " + ", ".join(parts))
     summary = last.get("health_summary") or {}
     if summary:
         lines.append(

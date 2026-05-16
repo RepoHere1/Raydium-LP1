@@ -1436,6 +1436,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Disable dashboard output even if it would otherwise run.",
     )
+    parser.add_argument(
+        "--reload-config-each-scan",
+        action="store_true",
+        help="With --loop, reload settings from --config and dotenv before each scan (use with the web dashboard).",
+    )
     args = parser.parse_args(argv)
 
     if args.list_strategies:
@@ -1528,7 +1533,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     wr_override = True if args.write_rejections else None
 
+    if args.reload_config_each_scan and not args.loop:
+        print(
+            "[scan] Note: --reload-config-each-scan only applies together with --loop.",
+            file=sys.stderr,
+            flush=True,
+        )
+
     while True:
+        if args.loop and args.reload_config_each_scan:
+            load_dotenv()
+            if args.strategy:
+                os.environ["RAYDIUM_LP1_STRATEGY"] = args.strategy
+            try:
+                config = ScannerConfig.from_file(config_path)
+            except ValueError as exc:
+                print(f"Config reload failed: {exc}", file=sys.stderr)
+                time.sleep(args.interval)
+                continue
         try:
             report = scan(
                 config,

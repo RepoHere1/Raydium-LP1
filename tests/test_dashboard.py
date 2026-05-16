@@ -20,6 +20,9 @@ class DashboardBuildTests(unittest.TestCase):
             "health_summary": {"healthy": 1, "warning": 1, "critical": 0},
             "triggered_alerts": [],
             "raydium_api_base": "https://api-v3.raydium.io",
+            "rejection_breakdown": {"apr_below_threshold": 10, "tvl_below_threshold": 5},
+            "rejection_reason_histogram": {"apr low": 10, "liquidity small": 5},
+            "scan_diagnosis": {"scan_signal": "test", "narrative_lines": ["line a"]},
             "candidates": [
                 {
                     "id": "pool-1",
@@ -56,6 +59,9 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertEqual(data.last_scan["candidates_truncated"], 3)
         self.assertEqual(data.wallet_capacity["capacity"]["max_positions"], 4)
         self.assertEqual(data.rpc_health[0]["ok"], True)
+        self.assertEqual(data.last_scan["rejection_breakdown"]["apr_below_threshold"], 10)
+        self.assertIn("liquidity small", data.last_scan["rejection_reason_histogram"])
+        self.assertEqual(data.last_scan["scan_diagnosis"]["scan_signal"], "test")
 
     def test_render_text_has_expected_sections(self):
         config = ScannerConfig()
