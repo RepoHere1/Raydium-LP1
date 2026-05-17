@@ -22,7 +22,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from raydium_lp1.dashboard import DEFAULT_DASHBOARD_PATH
+from raydium_lp1.dashboard import (
+    DEFAULT_DASHBOARD_PATH,
+    SCAN_HEARTBEAT_PATH,
+    SETTINGS_SAVE_ACK_PATH,
+    write_settings_save_ack,
+)
 from raydium_lp1.settings_io import load_settings_json, merge_known_settings_patch
 from raydium_lp1.strategies import ALLOWED_STRATEGIES
 
@@ -348,6 +353,12 @@ _CLIENT_JS = r"""
   async function refresh(){
     var dash=await gj('/api/dashboard');
     renderFunnel(dash); renderList(dash.open_positions||[]);
+    try{
+      var st=await gj('/api/status');
+      if(st.scanner_scanning){
+        showBan('ban-warn','<b>Scanner running</b> Funnel/shortlist refresh when the current scan finishes (see heartbeat in settings box).');
+      }
+    }catch(e){}
   }
 
   async function loadSettings(){
@@ -363,12 +374,18 @@ _CLIENT_JS = r"""
   function renderLive(st){
     var el=$('#live'); if(!el) return;
     var sm=st.settings_mtime||'never'; var dm=st.dashboard_mtime||'waiting for scan';
-    var sync='';
-    if(st.settings_mtime && st.dashboard_mtime && st.settings_mtime > st.dashboard_mtime)
-      sync='<span class="live-ok">settings newer than last dashboard — next scanner loop should reload</span>';
-    else if(st.dashboard_mtime) sync='<span class="live-ok">dashboard fresh</span>';
+    var hb=st.heartbeat||{}; var sync='';
+    if(st.scanner_scanning){
+      sync='<span class="live-bad">Scanner busy — page '+esc(String(hb.page||'?'))+'/'+esc(String(hb.pages_total||'?'))+
+        ' · shortlist updates after scan_complete</span>';
+    } else if(st.settings_mtime && st.dashboard_mtime && st.settings_mtime > st.dashboard_mtime){
+      sync='<span class="live-ok">settings newer than dashboard — watch Scanner tab for [scan] reloaded …</span>';
+    } else if(st.dashboard_mtime){ sync='<span class="live-ok">dashboard fresh</span>'; }
+    else { sync='<span class="live-bad">no dashboard yet — run Scanner tab until first scan finishes</span>'; }
+    if(hb.last_error) sync+='<br/><span class="live-bad">last error: '+esc(hb.last_error)+'</span>';
     el.innerHTML='<strong>settings</strong> '+esc(st.settings_path)+'<br/>mtime <span class="live-ok">'+esc(sm)+'</span><br/>'+
-      '<strong>dashboard</strong> '+esc(st.dashboard_path)+'<br/>mtime '+esc(dm)+'<br/>'+sync;
+      '<strong>dashboard</strong> '+esc(st.dashboard_path)+'<br/>mtime '+esc(dm)+'<br/>'+
+      '<strong>heartbeat</strong> '+esc(hb.phase||'idle')+' · '+esc(hb.updated_at||'—')+'<br/>'+sync;
   }
   async function pollStatus(){
     try{ var st=await gj('/api/status'); renderLive(st); }catch(e){}
@@ -420,12 +437,32 @@ class WebPaths:
     settings_path: Path
 
 
+def _read_json_file(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _status_payload(paths: WebPaths) -> dict[str, Any]:
+    heartbeat = _read_json_file(SCAN_HEARTBEAT_PATH)
+    save_ack = _read_json_file(SETTINGS_SAVE_ACK_PATH)
+    dash_mtime = _iso_mtime(paths.dashboard_path)
+    settings_mtime = _iso_mtime(paths.settings_path)
+    phase = (heartbeat or {}).get("phase")
+    scanning = phase in {"scan_start", "page_fetch", "page_failed"}
     return {
         "settings_path": str(paths.settings_path.resolve()),
-        "settings_mtime": _iso_mtime(paths.settings_path),
+        "settings_mtime": settings_mtime,
         "dashboard_path": str(paths.dashboard_path.resolve()),
-        "dashboard_mtime": _iso_mtime(paths.dashboard_path),
+        "dashboard_mtime": dash_mtime,
+        "heartbeat_path": str(SCAN_HEARTBEAT_PATH.resolve()),
+        "heartbeat": heartbeat,
+        "settings_save_ack": save_ack,
+        "scanner_scanning": scanning,
         "settings_apply": {
             "how": "POST /api/settings merges into settings.json (known keys only).",
             "scanner": "Scanner tab must use run_scan_dashboard.ps1 (--reload-config-each-scan).",
@@ -525,16 +562,18 @@ def main(argv: list[str] | None = None) -> int:
                 return
             try:
                 merge_known_settings_patch(paths.settings_path, patch)
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError) exc:
                 self._send_json(400, {"error": str(exc)})
                 return
+            keys_patched = sorted(str(k) for k in patch.keys())
+            write_settings_save_ack(keys_patched=keys_patched, settings_path=paths.settings_path)
             self._send_json(
                 200,
                 {
                     "ok": True,
                     "path": str(paths.settings_path.resolve()),
                     "settings_mtime": _iso_mtime(paths.settings_path),
-                    "keys_patched": sorted(str(k) for k in patch.keys()),
+                    "keys_patched": keys_patched,
                     "scanner_note": "Next scan loop reloads settings when run_scan_dashboard.ps1 is used.",
                 },
             )

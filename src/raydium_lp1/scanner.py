@@ -25,6 +25,7 @@ from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
 from raydium_lp1 import emergency, health, lp_range_planner, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1.http_fetch import fetch_json_get
 from raydium_lp1.http_json import load_json_from_urlopen_response
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
@@ -504,26 +505,15 @@ def extract_pool_items(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def fetch_json(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS) -> dict[str, Any]:
-    request = Request(
+    return fetch_json_get(
         url,
+        timeout=timeout,
         headers={
             "accept": "application/json",
             "accept-encoding": "identity",
-            "user-agent": "Raydium-LP1/0.6",
+            "user-agent": "Raydium-LP1/0.7",
         },
     )
-    try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - intentional public API read
-            return load_json_from_urlopen_response(response)
-    except HTTPError as exc:
-        raise RuntimeError(f"API returned HTTP {exc.code} for {url}") from exc
-    except URLError as exc:
-        reason = getattr(exc, "reason", exc)
-        raise RuntimeError(f"API request failed for {url}: {reason}") from exc
-    except TimeoutError as exc:
-        raise RuntimeError(f"API request timed out after {timeout}s for {url}") from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"API returned invalid JSON for {url}: {exc}") from exc
 
 
 def post_json(url: str, payload: dict[str, Any], timeout: int = 12) -> dict[str, Any]:
@@ -796,6 +786,13 @@ def scan(
 
         sellability_checker = _sell_check
 
+    pages_failed = 0
+    dashboard_mod.write_scan_heartbeat(
+        phase="scan_start",
+        pages_total=config.pages,
+        scanned_so_far=0,
+    )
+
     for page in range(1, config.pages + 1):
         url = pool_list_url(config, page=page)
         page_pass = 0
@@ -809,7 +806,38 @@ def scan(
             file=sys.stderr,
             flush=True,
         )
-        response = fetch_json(url, timeout=config.http_timeout_seconds)
+        dashboard_mod.write_scan_heartbeat(
+            phase="page_fetch",
+            pages_total=config.pages,
+            page=page,
+            scanned_so_far=scanned,
+            candidates_so_far=len(candidates),
+            rejected_so_far=len(rejected),
+            pages_failed=pages_failed,
+        )
+        try:
+            response = fetch_json(url, timeout=config.http_timeout_seconds)
+        except RuntimeError as exc:
+            pages_failed += 1
+            err = str(exc)
+            print(
+                f"[scan] page {page}/{config.pages} FAILED (skipping): {err}",
+                file=sys.stderr,
+                flush=True,
+            )
+            dashboard_mod.write_scan_heartbeat(
+                phase="page_failed",
+                pages_total=config.pages,
+                page=page,
+                scanned_so_far=scanned,
+                candidates_so_far=len(candidates),
+                rejected_so_far=len(rejected),
+                pages_failed=pages_failed,
+                last_error=err,
+            )
+            if page < config.pages and config.page_delay_seconds > 0:
+                time.sleep(config.page_delay_seconds)
+            continue
         items = extract_pool_items(response)
         page_pools = [normalize_pool(item, config.apr_field) for item in items]
         if stream_cfg.enabled:
@@ -920,6 +948,22 @@ def scan(
             )
         if page < config.pages and config.page_delay_seconds > 0:
             time.sleep(config.page_delay_seconds)
+
+    dashboard_mod.write_scan_heartbeat(
+        phase="scan_complete",
+        pages_total=config.pages,
+        scanned_so_far=scanned,
+        candidates_so_far=len(candidates),
+        rejected_so_far=len(rejected),
+        pages_failed=pages_failed,
+    )
+    if pages_failed:
+        print(
+            f"[scan] warning: {pages_failed} page(s) failed (network/API); "
+            f"results are partial — consider lowering pages/page_size or raising http_timeout_seconds",
+            file=sys.stderr,
+            flush=True,
+        )
 
     health_summary = {"healthy": 0, "warning": 0, "critical": 0}
     triggered_alerts: list[dict[str, Any]] = []
@@ -1095,6 +1139,7 @@ def scan(
         "hard_exit_min_tvl_usd": config.hard_exit_min_tvl_usd,
         "lp_planning_enabled": config.lp_planning_enabled,
         "risk_profile": config.risk_profile,
+        "pages_failed": pages_failed,
         "scanned_count": scanned,
         "candidate_count": len(capped_candidates),
         "candidate_count_pre_capacity": len(candidates),
@@ -1594,7 +1639,20 @@ def main(argv: list[str] | None = None) -> int:
                 write_rejections_override=wr_override,
             )
         except RuntimeError as exc:
-            print(f"Scan failed: {exc}", file=sys.stderr)
+            print(f"Scan failed: {exc}", file=sys.stderr, flush=True)
+            dashboard_mod.write_scan_heartbeat(
+                phase="scan_failed",
+                pages_total=config.pages,
+                last_error=str(exc),
+            )
+            if args.loop:
+                print(
+                    f"[scan] loop: retrying in {args.interval}s (dashboard.json unchanged until a full scan succeeds)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(args.interval)
+                continue
             return 1
 
         report["scan_diagnosis"] = dial_in_analyst.build_scan_diagnosis(config, report)
