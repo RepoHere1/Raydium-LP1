@@ -1579,6 +1579,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Config reload failed: {exc}", file=sys.stderr)
                 time.sleep(args.interval)
                 continue
+            print(
+                f"[scan] reloaded {config_path} · min_apr={config.min_apr} "
+                f"min_tvl={config.min_liquidity_usd} hard_exit_tvl={config.hard_exit_min_tvl_usd} "
+                f"pages={config.pages}",
+                file=sys.stderr,
+                flush=True,
+            )
         try:
             report = scan(
                 config,
