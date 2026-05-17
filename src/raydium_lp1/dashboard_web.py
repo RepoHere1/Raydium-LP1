@@ -196,6 +196,7 @@ ul.z{margin:.45rem 0;color:var(--m);font-size:.84rem;padding-left:1rem;border-le
 .ban-hide{display:none}
 .livebox{font-family:var(--mono);font-size:.76rem;background:#0f141c;border:1px solid var(--line);border-radius:8px;padding:.55rem .75rem;margin-bottom:.8rem;color:var(--m);line-height:1.55}
 .livebox strong{color:var(--txt)}.live-ok{color:var(--ok)}.live-bad{color:var(--no)}
+.drift-warn{background:#3a2818;border:1px solid #c97a2a;color:#fdb34b;font-size:.82rem;margin:0 0 .65rem;padding:.55rem .7rem;border-radius:6px;line-height:1.35}
 button.primary{background:rgba(77,163,255,.2);border-color:#3d7fd6;color:#9fd0ff;font-weight:650}
 </style></head><body>
 <header><h1>Raydium-LP1 · mission control</h1><span class="p pl">127.0.0.1 · local only</span><span class="p" id="stamp">waiting…</span>
@@ -317,15 +318,22 @@ _CLIENT_JS = r"""
     return d;
   }
 
-  function renderFunnel(d){
+  function renderFunnel(d, st){
     var ls=d.last_scan||{}, sc=ls.scanned_count||0, c=ls.candidate_count||0, rej=ls.rejected_count||0;
     var rate=(c+rej)>0?(100*c/(c+rej)):0;
     $('#stamp').textContent='dash '+(d.generated_at||'?').replace('T',' ').slice(11,22)+'Z';
     var snap=d.settings||{};
     var snapNote='';
-    if(snap.min_apr!=null){
-      snapNote='<p style="color:var(--wm);font-size:.8rem;margin:0 0 .6rem">This funnel is from a scan that used <b>min_apr='+esc(String(snap.min_apr))+
-        '</b>, sort=<b>'+esc(String(snap.pool_sort_field||'(apr default)'))+'</b>. Form edits apply on the next finished scan.</p>';
+    var drift=(st&&st.settings_drift_keys)||[];
+    if(drift.length){
+      var ds=(st.dashboard_scan_settings||{}), dk=(st.settings_on_disk||{});
+      snapNote='<p class="drift-warn"><b>Stale funnel</b> — last scan used min_apr='+esc(String(ds.min_apr))+
+        ' but settings.json has min_apr='+esc(String(dk.min_apr))+
+        '. Reject lines like &quot;apr 0.00 below 1.00&quot; are from the <em>old</em> scan, not your form. '+
+        'Wait for Scanner to finish one full scan (heartbeat scan_complete).</p>';
+    } else if(snap.min_apr!=null){
+      snapNote='<p style="color:var(--wm);font-size:.8rem;margin:0 0 .6rem">This funnel matches the last scan: <b>min_apr='+esc(String(snap.min_apr))+
+        '</b>, sort=<b>'+esc(String(snap.pool_sort_field||'(apr default)'))+'</b>.</p>';
     }
     var bd=Object.entries(ls.rejection_breakdown||{}).sort(function(a,b){return b[1]-a[1];});
     var mx=Math.max.apply(null,bd.map(function(x){return x[1];}).concat([0]))||1;
@@ -363,9 +371,11 @@ _CLIENT_JS = r"""
   }
 
   async function refresh(){
+    var st=null;
+    try{ st=await gj('/api/status'); }catch(e){}
     try{
       var dash=await gj('/api/dashboard');
-      renderFunnel(dash); renderList(dash.open_positions||[]);
+      renderFunnel(dash, st); renderList(dash.open_positions||[]);
     }catch(e){
       $('#fu').innerHTML='<p style="color:#fdb34b;margin:0"><b>Dashboard not ready</b> — '+esc(String(e))+
         '<br/><small>Scanner tab must finish at least one full scan (writes reports/dashboard.json).</small></p>';
@@ -432,10 +442,14 @@ _CLIENT_JS = r"""
           var d; try{d=JSON.parse(x.t);}catch(e){throw new Error(x.t.slice(0,200));}
           if(!x.r.ok) throw new Error(d.error||x.t);
           var keys=(d.keys_patched||[]).join(', ');
+          var warn=(d.warnings||[]).map(function(w){return '<br/>⚠ '+esc(w);}).join('');
+          var drift=(d.settings_drift_keys||[]);
+          var driftNote=drift.length?('<br/><span class="live-bad">Funnel still shows old scan until Scanner finishes (drift: '+esc(drift.join(', '))+').</span>'):'';
           showBan('ban-ok','<b>[SUCCESS] Settings saved to disk</b><br/>File: '+esc(d.path||'')+
             '<br/>Updated: '+esc(keys||'(form fields)')+
             '<br/>mtime: <span class="live-ok">'+esc(d.settings_mtime||'?')+'</span><br/>'+
-            'Watch the <strong>Scanner</strong> tab for <code>[scan] reloaded …</code> when the next page starts.');
+            'Watch the <strong>Scanner</strong> tab for <code>[scan] reloaded …</code> when the next page starts.'+
+            driftNote+warn);
           pollStatus();
         }).catch(function(e){showBan('ban-err','<b>Save failed</b><br/>'+esc(String(e)));});
     }catch(e){showBan('ban-err','<b>Save failed</b><br/>'+esc(String(e)));}
@@ -472,6 +486,63 @@ def _read_json_file(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+_DRIFT_COMPARE_KEYS = (
+    "min_apr",
+    "min_liquidity_usd",
+    "pool_sort_field",
+    "pages",
+    "require_sell_route",
+)
+
+
+def _snapshot_settings_from_dashboard(dash_blob: dict[str, Any] | None) -> dict[str, Any]:
+    if not dash_blob:
+        return {}
+    snap_settings = dash_blob.get("settings") if isinstance(dash_blob.get("settings"), dict) else {}
+    return {
+        "generated_at": dash_blob.get("generated_at"),
+        "min_apr": snap_settings.get("min_apr"),
+        "min_liquidity_usd": snap_settings.get("min_liquidity_usd"),
+        "pool_sort_field": snap_settings.get("pool_sort_field"),
+        "pages": snap_settings.get("pages"),
+        "require_sell_route": snap_settings.get("require_sell_route"),
+    }
+
+
+def _settings_on_disk_summary(settings_path: Path) -> dict[str, Any]:
+    try:
+        raw = load_settings_json(settings_path)
+    except (OSError, ValueError):
+        return {}
+    return {key: raw.get(key) for key in _DRIFT_COMPARE_KEYS}
+
+
+def _settings_drift_keys(snap: dict[str, Any], on_disk: dict[str, Any]) -> list[str]:
+    if not snap or not on_disk:
+        return []
+    return [key for key in _DRIFT_COMPARE_KEYS if snap.get(key) != on_disk.get(key)]
+
+
+def _settings_save_warnings(on_disk: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    min_apr = on_disk.get("min_apr")
+    if isinstance(min_apr, (int, float)) and min_apr > 50:
+        warnings.append(
+            f"min_apr={min_apr:g} is very high — expect mass apr_below_threshold rejects until you lower it."
+        )
+    if on_disk.get("require_sell_route") is True:
+        warnings.append(
+            "require_sell_route=true — scans probe Jupiter/Raydium per pool and can take a long time; "
+            "uncheck for tune-style scans or use scripts/run_tune_scan.ps1."
+        )
+    pool_sort = str(on_disk.get("pool_sort_field") or "").strip().lower()
+    if not pool_sort or pool_sort in {"apr", "apr24h"}:
+        warnings.append(
+            "pool_sort_field is empty or APR-sorted — page 1 is often dust TVL; set liquidity for discovery."
+        )
+    return warnings
+
+
 def _status_payload(paths: WebPaths) -> dict[str, Any]:
     heartbeat = _read_json_file(SCAN_HEARTBEAT_PATH)
     save_ack = _read_json_file(SETTINGS_SAVE_ACK_PATH)
@@ -480,33 +551,9 @@ def _status_payload(paths: WebPaths) -> dict[str, Any]:
     phase = (heartbeat or {}).get("phase")
     scanning = phase in {"scan_start", "page_fetch", "page_failed"}
     dash_blob = _read_json_file(paths.dashboard_path)
-    snap: dict[str, Any] = {}
-    if dash_blob:
-        snap_settings = dash_blob.get("settings") if isinstance(dash_blob.get("settings"), dict) else {}
-        snap = {
-            "generated_at": dash_blob.get("generated_at"),
-            "min_apr": snap_settings.get("min_apr"),
-            "min_liquidity_usd": snap_settings.get("min_liquidity_usd"),
-            "pool_sort_field": snap_settings.get("pool_sort_field"),
-            "pages": snap_settings.get("pages"),
-            "require_sell_route": snap_settings.get("require_sell_route"),
-        }
-    on_disk: dict[str, Any] = {}
-    try:
-        raw = load_settings_json(paths.settings_path)
-        on_disk = {
-            "min_apr": raw.get("min_apr"),
-            "min_liquidity_usd": raw.get("min_liquidity_usd"),
-            "pool_sort_field": raw.get("pool_sort_field"),
-            "pages": raw.get("pages"),
-            "require_sell_route": raw.get("require_sell_route"),
-        }
-    except (OSError, ValueError):
-        pass
-    drift_keys: list[str] = []
-    for key in ("min_apr", "min_liquidity_usd", "pool_sort_field", "pages", "require_sell_route"):
-        if snap and on_disk and snap.get(key) != on_disk.get(key):
-            drift_keys.append(key)
+    snap = _snapshot_settings_from_dashboard(dash_blob)
+    on_disk = _settings_on_disk_summary(paths.settings_path)
+    drift_keys = _settings_drift_keys(snap, on_disk)
     return {
         "settings_path": str(paths.settings_path.resolve()),
         "settings_mtime": settings_mtime,
@@ -630,6 +677,10 @@ def main(argv: list[str] | None = None) -> int:
                 return
             keys_patched = sorted(str(k) for k in patch.keys())
             write_settings_save_ack(keys_patched=keys_patched, settings_path=paths.settings_path)
+            on_disk = _settings_on_disk_summary(paths.settings_path)
+            dash_blob = _read_json_file(paths.dashboard_path)
+            snap = _snapshot_settings_from_dashboard(dash_blob)
+            drift_keys = _settings_drift_keys(snap, on_disk)
             self._send_json(
                 200,
                 {
@@ -637,6 +688,10 @@ def main(argv: list[str] | None = None) -> int:
                     "path": str(paths.settings_path.resolve()),
                     "settings_mtime": _iso_mtime(paths.settings_path),
                     "keys_patched": keys_patched,
+                    "settings_drift_keys": drift_keys,
+                    "dashboard_scan_settings": snap,
+                    "settings_on_disk": on_disk,
+                    "warnings": _settings_save_warnings(on_disk),
                     "scanner_note": "Next scan loop reloads settings when run_scan_dashboard.ps1 is used.",
                 },
             )
