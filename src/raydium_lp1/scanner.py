@@ -25,7 +25,7 @@ from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
 from raydium_lp1 import emergency, health, lp_range_planner, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
-from raydium_lp1.http_fetch import fetch_json_get
+from raydium_lp1.http_fetch import fetch_json_get, make_json_get_fetcher
 from raydium_lp1.http_json import load_json_from_urlopen_response
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
@@ -700,12 +700,15 @@ def _sellability_checker_for(config: ScannerConfig) -> Any:
     if not config.require_sell_route:
         return None
     max_impact = config.max_route_price_impact_pct if config.max_route_price_impact_pct > 0 else 0.0
+    route_timeout = min(8, max(3, int(config.http_timeout_seconds)))
+    route_fetcher = make_json_get_fetcher(timeout=route_timeout, max_attempts=2)
 
     def _sell_check(p: dict) -> routes.SellabilityResult:
         return routes.check_pool_sellability(
             p,
             base_symbols=tuple(s.upper() for s in sorted(config.allowed_quote_symbols)),
             sources=config.route_sources,
+            fetcher=route_fetcher,
             max_route_price_impact_pct=max_impact,
         )
 
@@ -825,6 +828,15 @@ def scan(
 
     if sellability_checker is None:
         sellability_checker = _sellability_checker_for(config)
+    if sellability_checker is not None and stream_cfg.enabled:
+        route_timeout = min(8, max(3, int(config.http_timeout_seconds)))
+        print(
+            f"[scan] sell-route probes ON (Jupiter/Raydium, timeout={route_timeout}s each, "
+            f"sources={list(config.route_sources)}) — disable require_sell_route in settings "
+            "to speed up APR/TVL tuning scans.",
+            file=sys.stderr,
+            flush=True,
+        )
 
     settings_mtime = _settings_mtime(config_path) if config_path else 0.0
     pages_failed = 0

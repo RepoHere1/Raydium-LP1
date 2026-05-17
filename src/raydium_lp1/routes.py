@@ -12,14 +12,11 @@ route sources (Orca, Raydium AMM direct).
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Sequence
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
-from raydium_lp1.http_json import load_json_from_urlopen_response
+from raydium_lp1.http_fetch import make_json_get_fetcher
 
 JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
 RAYDIUM_COMPUTE_URL = "https://transaction-v1.raydium.io/compute/swap-base-in"
@@ -74,19 +71,7 @@ HttpFetcher = Callable[[str], dict]
 
 
 def _default_fetch_json(url: str, timeout: int = 8) -> dict:
-    request = Request(
-        url,
-        headers={
-            "accept": "application/json",
-            "accept-encoding": "identity",
-            "user-agent": "Raydium-LP1/0.3",
-        },
-    )
-    try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - public API
-            return load_json_from_urlopen_response(response)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(str(exc)) from exc
+    return make_json_get_fetcher(timeout=timeout, max_attempts=2)(url)
 
 
 def _truthy_route(payload: object) -> bool:
@@ -310,6 +295,9 @@ def check_sell_route(
                 best_record = record
                 best_target_symbol = base_symbol.upper()
                 best_target_mint = target_mint
+                break
+        if best_record is not None:
+            break
     ok = best_record is not None
     return RouteCheck(
         token_mint=token_mint,

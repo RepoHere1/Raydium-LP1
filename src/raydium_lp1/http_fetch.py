@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import ssl
 import time
+from collections.abc import Callable
 from typing import Any, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -66,3 +67,28 @@ def fetch_json_get(
             time.sleep(pause)
 
     raise RuntimeError(f"API request failed for {url}: {last_error}")
+
+
+def make_json_get_fetcher(
+    *,
+    timeout: int = 8,
+    max_attempts: int = 2,
+    user_agent: str = "Raydium-LP1/0.7",
+) -> Callable[[str], dict[str, Any]]:
+    """Return ``fetch(url) -> dict`` for route/quote probes (retries, bounded wait)."""
+
+    headers = {
+        "accept": "application/json",
+        "accept-encoding": "identity",
+        "user-agent": user_agent,
+    }
+
+    def _fetch(url: str) -> dict[str, Any]:
+        return fetch_json_get(
+            url,
+            timeout=timeout,
+            headers=headers,
+            max_attempts=max_attempts,
+        )
+
+    return _fetch

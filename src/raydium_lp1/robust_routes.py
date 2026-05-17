@@ -19,16 +19,13 @@ swap path, dashboards) should use :func:`best_route` here.
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from raydium_lp1 import routes
-from raydium_lp1.http_json import load_json_from_urlopen_response
+from raydium_lp1.http_fetch import make_json_get_fetcher
 
 ORCA_QUOTE_URL = "https://api.orca.so/v2/solana/swap-quote"
 RAYDIUM_AMM_QUOTE_URL = "https://transaction-v1.raydium.io/compute/swap-base-in"
@@ -42,19 +39,7 @@ HttpFetcher = Callable[[str], dict]
 # ---------------------------------------------------------------------------
 
 def _default_fetch_json(url: str, timeout: int = 8) -> dict:
-    request = Request(
-        url,
-        headers={
-            "accept": "application/json",
-            "accept-encoding": "identity",
-            "user-agent": "Raydium-LP1/0.5",
-        },
-    )
-    try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310
-            return load_json_from_urlopen_response(response)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(str(exc)) from exc
+    return make_json_get_fetcher(timeout=timeout, max_attempts=2)(url)
 
 
 def check_orca_route(
