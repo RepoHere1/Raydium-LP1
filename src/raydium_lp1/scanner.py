@@ -13,7 +13,7 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -138,6 +138,8 @@ class ScannerConfig:
     lp_main_budget_fraction: float = 0.75
     lp_max_positions_per_mint: int = 2
     risk_profile: str = "balanced"  # balanced | degen
+    # Fast candidate discovery: TVL sort, no Jupiter route probes, no on-chain verify.
+    scan_tune_mode: bool = False
 
     def __post_init__(self) -> None:
         """Drop invalid RPC URLs from any construction path (not only ``from_file``)."""
@@ -245,6 +247,7 @@ class ScannerConfig:
             lp_main_budget_fraction=float(raw_with_strategy.get("lp_main_budget_fraction", 0.75)),
             lp_max_positions_per_mint=max(1, int(raw_with_strategy.get("lp_max_positions_per_mint", 2))),
             risk_profile=str(raw_with_strategy.get("risk_profile") or "balanced"),
+            scan_tune_mode=bool(raw_with_strategy.get("scan_tune_mode", False)),
         )
 
 
@@ -573,6 +576,50 @@ def raydium_pool_sort_param(config: ScannerConfig) -> str:
     return psf or config.apr_field
 
 
+def effective_scan_config(config: ScannerConfig) -> ScannerConfig:
+    """Apply fast tune overrides (TVL sort, no route/RPC verify)."""
+
+    if not config.scan_tune_mode:
+        return config
+    sort_field = (config.pool_sort_field or "").strip() or "liquidity"
+    return replace(
+        config,
+        pool_sort_field=sort_field,
+        require_sell_route=False,
+        verify_pool_on_chain=False,
+        verify_pool_raydium_api=False,
+        require_verified_raydium_pool=False,
+        momentum_enabled=False,
+        momentum_detective_enabled=False,
+        momentum_probe_market_lists=False,
+    )
+
+
+def print_scan_config_warnings(config: ScannerConfig, *, stream_cfg: verdicts.StreamConfig | None = None) -> None:
+    """Warn when Raydium sort order will flood the funnel with APR dust."""
+
+    if not stream_cfg or not stream_cfg.enabled:
+        return
+    sort_by = raydium_pool_sort_param(config)
+    if config.scan_tune_mode:
+        print(
+            "[scan] TUNE MODE — sorted by "
+            f"{sort_by}, no sell-route probes, no on-chain verify (fast candidate discovery).",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    if sort_by == config.apr_field:
+        print(
+            f"[scan] WARNING: Raydium list sorted by {sort_by} (APR-first). "
+            "Page 1 is mostly $0–$5 TVL dust — almost all [REJ]. "
+            "Fix: browser → pool_sort_field=liquidity, min_liquidity_usd=10000, "
+            "uncheck require_sell_route — OR run: .\\scripts\\run_tune_scan.ps1",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def pool_list_url(config: ScannerConfig, page: int = 1) -> str:
     params = {
         "poolType": config.pool_type,
@@ -766,6 +813,8 @@ def scan(
     on/off for this run regardless of ``config.write_rejections``.
     """
 
+    config = effective_scan_config(config)
+
     from collections import Counter as _Counter
     candidates: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
@@ -825,6 +874,8 @@ def scan(
                 "Switch back to network=solana to scan Raydium pools."
             ),
         }
+
+    print_scan_config_warnings(config, stream_cfg=stream_cfg)
 
     if sellability_checker is None:
         sellability_checker = _sellability_checker_for(config)
@@ -899,13 +950,24 @@ def scan(
         page_pools = [normalize_pool(item, config.apr_field) for item in items]
         if stream_cfg.enabled:
             verdicts.print_verdict_column_headers(stream_cfg, page=page)
+        verify_enabled = (
+            config.require_verified_raydium_pool
+            or config.verify_pool_on_chain
+            or config.verify_pool_raydium_api
+        )
         if config.verify_pool_on_chain:
-            pool_verify.prefetch_account_owners(
-                [str(p.get("id") or "") for p in page_pools if p.get("id")],
-                config.solana_rpc_urls,
-                owner_cache=on_chain_owner_cache,
-                rpc_post=rpc_post,
-            )
+            verify_ids = [
+                str(p.get("id") or "")
+                for p in page_pools
+                if p.get("id") and filter_pool(p, config)[0]
+            ]
+            if verify_ids:
+                pool_verify.prefetch_account_owners(
+                    verify_ids,
+                    config.solana_rpc_urls,
+                    owner_cache=on_chain_owner_cache,
+                    rpc_post=rpc_post,
+                )
         page_pool_total = len(page_pools)
         for pool_idx, pool in enumerate(page_pools, start=1):
             if page_pool_total > 400 and pool_idx % 250 == 0:
@@ -918,11 +980,20 @@ def scan(
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
             if config.lp_planning_enabled and pool.get("raw") is not None:
                 public_pool["raw"] = pool["raw"]
-            if (
-                config.require_verified_raydium_pool
-                or config.verify_pool_on_chain
-                or config.verify_pool_raydium_api
-            ):
+            ok, reasons = filter_pool(pool, config)
+            if not ok:
+                verdicts.emit_reject(public_pool, reasons, stream_cfg, idx=reject_idx)
+                reject_idx += 1
+                page_reject += 1
+                category = verdicts._classify_reason(reasons[0]) if reasons else "other"
+                rejection_counts[category] += 1
+                if reasons:
+                    key = reasons[0][:200]
+                    reason_histogram[key] += 1
+                rejected.append({**public_pool, "reasons": reasons})
+                continue
+
+            if verify_enabled:
                 verification = pool_verify.validate_pool(
                     public_pool,
                     api_base=config.raydium_api_base,
@@ -945,18 +1016,6 @@ def scan(
                     rejected.append({**public_pool, "reasons": verify_reasons})
                     page_reject += 1
                     continue
-            ok, reasons = filter_pool(pool, config)
-            if not ok:
-                verdicts.emit_reject(public_pool, reasons, stream_cfg, idx=reject_idx)
-                reject_idx += 1
-                page_reject += 1
-                category = verdicts._classify_reason(reasons[0]) if reasons else "other"
-                rejection_counts[category] += 1
-                if reasons:
-                    key = reasons[0][:200]
-                    reason_histogram[key] += 1
-                rejected.append({**public_pool, "reasons": reasons})
-                continue
 
             if sellability_checker is not None:
                 sell = sellability_checker(public_pool)

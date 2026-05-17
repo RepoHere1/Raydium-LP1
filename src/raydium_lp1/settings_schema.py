@@ -72,4 +72,5 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "scan_loop",
     "scan_loop_interval_seconds",
     "spawn_verdict_watcher",
+    "scan_tune_mode",
 )

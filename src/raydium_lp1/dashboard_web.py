@@ -147,6 +147,7 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "scan_loop", "label": "scan_loop (prefer CLI)", "type": "checkbox"},
             {"key": "scan_loop_interval_seconds", "label": "Loop interval hint (s)", "type": "number"},
             {"key": "spawn_verdict_watcher", "label": "Spawn verdict watcher", "type": "checkbox"},
+            {"key": "scan_tune_mode", "label": "Tune mode (TVL sort, no routes)", "type": "checkbox"},
         ],
     },
 ]
