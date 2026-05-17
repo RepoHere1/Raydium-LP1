@@ -82,6 +82,26 @@ class StreamingTests(unittest.TestCase):
         out = stream.getvalue()
         self.assertEqual(out.count("[REJ]"), 3)
         self.assertIn("more rejects hidden", out)
+        self.assertEqual(cfg.rejects_suppressed, 7)
+
+    def test_page_rollup_mentions_hidden_rejects(self):
+        stream = io.StringIO()
+        cfg = verdicts.StreamConfig(
+            enabled=True, color=False, show_passes=False,
+            max_rejections_shown=1, stream=stream, rejects_suppressed=5,
+        )
+        verdicts.print_page_verdict_rollup(
+            cfg,
+            page=2,
+            total_pages=50,
+            api_pool_count=1000,
+            passed=3,
+            rejected=997,
+            suppressed_this_page=997,
+        )
+        out = stream.getvalue()
+        self.assertIn("page 2/50 done", out)
+        self.assertIn("997 reject line(s) hidden", out)
 
 
 class HeaderTests(unittest.TestCase):

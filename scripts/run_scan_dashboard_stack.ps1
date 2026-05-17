@@ -4,6 +4,7 @@
 param(
     [string]$Config = "config\settings.json",
     [int]$Interval = 60,
+    [int]$ShowRejects = 0,
     [int]$WebPort = 8844,
     [string]$WebHost = "127.0.0.1",
     [switch]$CheckRpc,
@@ -52,6 +53,7 @@ if (-not $NoSpawnWeb) {
 & $scanPs1 `
     -Config $Config `
     -Interval $Interval `
+    -ShowRejects $ShowRejects `
     -CheckRpc:$CheckRpc `
     -WriteReports:$WriteReports `
     -WriteRejections:$WriteRejections `

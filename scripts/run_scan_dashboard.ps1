@@ -6,6 +6,7 @@
 param(
     [string]$Config = "config\settings.json",
     [int]$Interval = 60,
+    [int]$ShowRejects = 0,
     [switch]$CheckRpc,
     [switch]$WriteReports,
     [switch]$WriteRejections,
@@ -18,6 +19,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
     -Config $Config `
     -Loop `
     -Interval $Interval `
+    -ShowRejects $ShowRejects `
     -Dashboard `
     -ReloadConfigEachScan `
     -CheckRpc:$CheckRpc `

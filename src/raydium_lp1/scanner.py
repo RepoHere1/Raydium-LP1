@@ -736,6 +736,7 @@ def scan(
     stream_cfg = verdict_stream if verdict_stream is not None else verdicts.make_stream_config(enabled=False)
     if verdict_stream is not None and verdict_stream.enabled:
         verdict_stream.row_emit_count = 0
+        verdict_stream.rejects_suppressed = 0
 
     adapter = networks.get_adapter(config.network)
     if not adapter.supports_live:
@@ -797,6 +798,9 @@ def scan(
 
     for page in range(1, config.pages + 1):
         url = pool_list_url(config, page=page)
+        page_pass = 0
+        page_reject = 0
+        suppressed_at_page_start = stream_cfg.rejects_suppressed
         # Always announce the in-flight request so users can tell a slow
         # remote API apart from a hard hang.
         print(
@@ -807,11 +811,9 @@ def scan(
         )
         response = fetch_json(url, timeout=config.http_timeout_seconds)
         items = extract_pool_items(response)
+        page_pools = [normalize_pool(item, config.apr_field) for item in items]
         if stream_cfg.enabled:
             verdicts.print_verdict_column_headers(stream_cfg, page=page)
-        if page < config.pages and config.page_delay_seconds > 0:
-            time.sleep(config.page_delay_seconds)
-        page_pools = [normalize_pool(item, config.apr_field) for item in items]
         if config.verify_pool_on_chain:
             pool_verify.prefetch_account_owners(
                 [str(p.get("id") or "") for p in page_pools if p.get("id")],
@@ -819,7 +821,14 @@ def scan(
                 owner_cache=on_chain_owner_cache,
                 rpc_post=rpc_post,
             )
-        for pool in page_pools:
+        page_pool_total = len(page_pools)
+        for pool_idx, pool in enumerate(page_pools, start=1):
+            if page_pool_total > 400 and pool_idx % 250 == 0:
+                print(
+                    f"[scan] page {page}/{config.pages}: processed {pool_idx}/{page_pool_total} pools…",
+                    file=sys.stderr,
+                    flush=True,
+                )
             scanned += 1
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
             if config.lp_planning_enabled and pool.get("raw") is not None:
@@ -849,11 +858,13 @@ def scan(
                     rejection_counts[cat] += 1
                     reason_histogram[verify_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": verify_reasons})
+                    page_reject += 1
                     continue
             ok, reasons = filter_pool(pool, config)
             if not ok:
                 verdicts.emit_reject(public_pool, reasons, stream_cfg, idx=reject_idx)
                 reject_idx += 1
+                page_reject += 1
                 category = verdicts._classify_reason(reasons[0]) if reasons else "other"
                 rejection_counts[category] += 1
                 if reasons:
@@ -874,6 +885,7 @@ def scan(
                     if sell_reasons:
                         reason_histogram[sell_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": sell_reasons})
+                    page_reject += 1
                     continue
 
             mom_cfg = momentum.momentum_config_from_scanner(config)
@@ -888,10 +900,26 @@ def scan(
                     if mom_reasons:
                         reason_histogram[mom_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": mom_reasons})
+                    page_reject += 1
                     continue
 
             verdicts.emit_pass(public_pool, stream_cfg)
             candidates.append(public_pool)
+            page_pass += 1
+
+        suppressed_this_page = stream_cfg.rejects_suppressed - suppressed_at_page_start
+        if stream_cfg.enabled:
+            verdicts.print_page_verdict_rollup(
+                stream_cfg,
+                page=page,
+                total_pages=config.pages,
+                api_pool_count=len(page_pools),
+                passed=page_pass,
+                rejected=page_reject,
+                suppressed_this_page=suppressed_this_page,
+            )
+        if page < config.pages and config.page_delay_seconds > 0:
+            time.sleep(config.page_delay_seconds)
 
     health_summary = {"healthy": 0, "warning": 0, "critical": 0}
     triggered_alerts: list[dict[str, Any]] = []
