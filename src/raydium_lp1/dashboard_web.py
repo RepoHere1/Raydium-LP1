@@ -321,6 +321,12 @@ _CLIENT_JS = r"""
     var ls=d.last_scan||{}, sc=ls.scanned_count||0, c=ls.candidate_count||0, rej=ls.rejected_count||0;
     var rate=(c+rej)>0?(100*c/(c+rej)):0;
     $('#stamp').textContent='dash '+(d.generated_at||'?').replace('T',' ').slice(11,22)+'Z';
+    var snap=d.settings||{};
+    var snapNote='';
+    if(snap.min_apr!=null){
+      snapNote='<p style="color:var(--wm);font-size:.8rem;margin:0 0 .6rem">This funnel is from a scan that used <b>min_apr='+esc(String(snap.min_apr))+
+        '</b>, sort=<b>'+esc(String(snap.pool_sort_field||'(apr default)'))+'</b>. Form edits apply on the next finished scan.</p>';
+    }
     var bd=Object.entries(ls.rejection_breakdown||{}).sort(function(a,b){return b[1]-a[1];});
     var mx=Math.max.apply(null,bd.map(function(x){return x[1];}).concat([0]))||1;
     var bars=bd.slice(0,18).map(function(kv){
@@ -337,7 +343,7 @@ _CLIENT_JS = r"""
       return '<div><b>'+esc(p.setting_key||'')+'</b> — '+esc(p.direction||'')+' ('+esc(String(p.reject_share_pct))+'% · '+esc(p.category_driver||'')+')<br><small>'+
         esc(p.concrete_suggestion||p.rationale||'')+'</small></div>';
     }).join('');
-    $('#fu').innerHTML='<div class="kp"><div class="k"><span class="x">Scanned</span><span class="v">'+sc+'</span></div>'+
+    $('#fu').innerHTML=snapNote+'<div class="kp"><div class="k"><span class="x">Scanned</span><span class="v">'+sc+'</span></div>'+
       '<div class="k g"><span class="x">Candidates</span><span class="v">'+c+'</span></div>'+
       '<div class="k r"><span class="x">Rejected</span><span class="v">'+rej+'</span></div>'+
       '<div class="k"><span class="x">Pass share</span><span class="v">'+rate.toFixed(1)+'%</span></div></div>'+
@@ -395,6 +401,13 @@ _CLIENT_JS = r"""
     } else if(st.dashboard_mtime){ sync='<span class="live-ok">dashboard fresh</span>'; }
     else { sync='<span class="live-bad">no dashboard yet — run Scanner tab until first scan finishes</span>'; }
     if(hb.last_error) sync+='<br/><span class="live-bad">last error: '+esc(hb.last_error)+'</span>';
+    var drift=(st.settings_drift_keys||[]);
+    if(drift.length){
+      var snap=st.dashboard_scan_settings||{}, disk=st.settings_on_disk||{};
+      sync+='<br/><span class="live-bad"><b>Form ≠ funnel scan</b> — changed: '+esc(drift.join(', '))+
+        '. Funnel used min_apr='+esc(String(snap.min_apr))+' · disk has min_apr='+esc(String(disk.min_apr))+
+        '. Wait for Scanner to finish a new scan.</span>';
+    }
     el.innerHTML='<strong>settings</strong> '+esc(st.settings_path)+'<br/>mtime <span class="live-ok">'+esc(sm)+'</span><br/>'+
       '<strong>dashboard</strong> '+esc(st.dashboard_path)+'<br/>mtime '+esc(dm)+'<br/>'+
       '<strong>heartbeat</strong> '+esc(hb.phase||'idle')+' · '+esc(hb.updated_at||'—')+'<br/>'+sync;
@@ -466,6 +479,34 @@ def _status_payload(paths: WebPaths) -> dict[str, Any]:
     settings_mtime = _iso_mtime(paths.settings_path)
     phase = (heartbeat or {}).get("phase")
     scanning = phase in {"scan_start", "page_fetch", "page_failed"}
+    dash_blob = _read_json_file(paths.dashboard_path)
+    snap: dict[str, Any] = {}
+    if dash_blob:
+        snap_settings = dash_blob.get("settings") if isinstance(dash_blob.get("settings"), dict) else {}
+        snap = {
+            "generated_at": dash_blob.get("generated_at"),
+            "min_apr": snap_settings.get("min_apr"),
+            "min_liquidity_usd": snap_settings.get("min_liquidity_usd"),
+            "pool_sort_field": snap_settings.get("pool_sort_field"),
+            "pages": snap_settings.get("pages"),
+            "require_sell_route": snap_settings.get("require_sell_route"),
+        }
+    on_disk: dict[str, Any] = {}
+    try:
+        raw = load_settings_json(paths.settings_path)
+        on_disk = {
+            "min_apr": raw.get("min_apr"),
+            "min_liquidity_usd": raw.get("min_liquidity_usd"),
+            "pool_sort_field": raw.get("pool_sort_field"),
+            "pages": raw.get("pages"),
+            "require_sell_route": raw.get("require_sell_route"),
+        }
+    except (OSError, ValueError):
+        pass
+    drift_keys: list[str] = []
+    for key in ("min_apr", "min_liquidity_usd", "pool_sort_field", "pages", "require_sell_route"):
+        if snap and on_disk and snap.get(key) != on_disk.get(key):
+            drift_keys.append(key)
     return {
         "settings_path": str(paths.settings_path.resolve()),
         "settings_mtime": settings_mtime,
@@ -475,10 +516,13 @@ def _status_payload(paths: WebPaths) -> dict[str, Any]:
         "heartbeat": heartbeat,
         "settings_save_ack": save_ack,
         "scanner_scanning": scanning,
+        "dashboard_scan_settings": snap,
+        "settings_on_disk": on_disk,
+        "settings_drift_keys": drift_keys,
         "settings_apply": {
             "how": "POST /api/settings merges into settings.json (known keys only).",
             "scanner": "Scanner tab must use run_scan_dashboard.ps1 (--reload-config-each-scan).",
-            "when": "Next scan page (or loop start) — look for [scan] reloaded … in the Scanner tab.",
+            "when": "Funnel numbers update only after a full scan finishes (dashboard.json).",
         },
     }
 
