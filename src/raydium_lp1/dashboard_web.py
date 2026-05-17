@@ -421,7 +421,7 @@ _CLIENT_JS = r"""
           showBan('ban-ok','<b>[SUCCESS] Settings saved to disk</b><br/>File: '+esc(d.path||'')+
             '<br/>Updated: '+esc(keys||'(form fields)')+
             '<br/>mtime: <span class="live-ok">'+esc(d.settings_mtime||'?')+'</span><br/>'+
-            'Watch the <strong>Scanner</strong> tab for <code>[scan] reloaded …</code> on the next loop.');
+            'Watch the <strong>Scanner</strong> tab for <code>[scan] reloaded …</code> when the next page starts.');
           pollStatus();
         }).catch(function(e){showBan('ban-err','<b>Save failed</b><br/>'+esc(String(e)));});
     }catch(e){showBan('ban-err','<b>Save failed</b><br/>'+esc(String(e)));}
