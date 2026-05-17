@@ -205,8 +205,9 @@ button.primary{background:rgba(77,163,255,.2);border-color:#3d7fd6;color:#9fd0ff
 Save writes <strong>config/settings.json</strong>. Scanner tab must run <code>run_scan_dashboard.ps1</code>. After save, watch Scanner tab for <code>[scan] reloaded …</code>.</div>
 <div class="ban ban-hide" id="ban-ok"></div><div class="ban ban-hide" id="ban-warn"></div><div class="ban ban-hide" id="ban-err"></div>
 </div>
+<div id="js-fatal" class="ban ban-err" style="display:none;max-width:1340px;margin:0 auto .5rem"></div>
 <script type="application/json" id="boot">BOOT_JSON</script>
-<main><div><div class="cd"><h2>Funnel <a id="rj" href="api/dashboard" style="margin-left:auto;font-size:.73rem;color:var(--m);font-weight:400;text-decoration:none">raw JSON →</a></h2><div id="fu" class="bd"></div></div>
+<main><div><div class="cd"><h2>Funnel <a id="rj" href="api/dashboard" style="margin-left:auto;font-size:.73rem;color:var(--m);font-weight:400;text-decoration:none">raw JSON →</a></h2><div id="fu" class="bd"><p style="color:var(--m);margin:0">Loading funnel…</p></div></div>
 <div class="cd"><h2>Dry-run shortlist</h2><div id="li" class="bd"></div></div></div>
 <div class="cd"><h2>Settings file</h2><div class="bd"><div id="live" class="livebox">Loading…</div><div id="fo"></div></div></div></main>
 <script>
@@ -216,6 +217,10 @@ CLIENT_JS_HERE
 _CLIENT_JS = r"""
 'use strict';
 (function(){
+  window.onerror=function(msg,src,line){
+    var box=document.getElementById('js-fatal');
+    if(box){ box.style.display='block'; box.textContent='UI error: '+msg+' (line '+line+')'; }
+  };
   const boot = JSON.parse(document.getElementById('boot').textContent || '{}');
   const SECTIONS = boot.form_sections || [];
   function $(s,r=document){return r.querySelector(s);}
@@ -351,8 +356,14 @@ _CLIENT_JS = r"""
   }
 
   async function refresh(){
-    var dash=await gj('/api/dashboard');
-    renderFunnel(dash); renderList(dash.open_positions||[]);
+    try{
+      var dash=await gj('/api/dashboard');
+      renderFunnel(dash); renderList(dash.open_positions||[]);
+    }catch(e){
+      $('#fu').innerHTML='<p style="color:#fdb34b;margin:0"><b>Dashboard not ready</b> — '+esc(String(e))+
+        '<br/><small>Scanner tab must finish at least one full scan (writes reports/dashboard.json).</small></p>';
+      $('#li').innerHTML='<p style="color:var(--m);margin:0">Shortlist appears after first successful scan.</p>';
+    }
     try{
       var st=await gj('/api/status');
       if(st.scanner_scanning){
@@ -471,12 +482,19 @@ def _status_payload(paths: WebPaths) -> dict[str, Any]:
     }
 
 
+def _embed_json_in_html_script(payload: dict[str, Any]) -> str:
+    """Serialize JSON safe inside a ``<script>`` tag (no ``</script>`` breakout)."""
+
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return raw.replace("<", "\\u003c").replace(">", "\\u003e")
+
+
 def _page() -> bytes:
     boot_payload = {"form_sections": _FORM_SECTIONS}
     html = (
         _CSS_HTML.replace(
             "BOOT_JSON",
-            json.dumps(boot_payload, separators=(",", ":")),
+            _embed_json_in_html_script(boot_payload),
         ).replace(
             "CLIENT_JS_HERE",
             _CLIENT_JS,
@@ -562,7 +580,7 @@ def main(argv: list[str] | None = None) -> int:
                 return
             try:
                 merge_known_settings_patch(paths.settings_path, patch)
-            except (OSError, ValueError) exc:
+            except (OSError, ValueError) as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
             keys_patched = sorted(str(k) for k in patch.keys())

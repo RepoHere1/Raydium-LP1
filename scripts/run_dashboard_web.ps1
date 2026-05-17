@@ -27,5 +27,10 @@ if ($pythonCommand) {
 Write-Host "Dashboard UI: http://${ListenHost}:$Port/  (localhost only)" -ForegroundColor Cyan
 Write-Host "Pair with Window 1: .\scripts\run_scan_dashboard.ps1" -ForegroundColor DarkGray
 
+& $pythonExe @pythonPrefixArgs -c "from raydium_lp1.dashboard_web import main" 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "dashboard_web failed to import (SyntaxError?). git pull cursor/live-dashboard-web-dee0 then retry."
+}
+
 & $pythonExe @pythonPrefixArgs -m raydium_lp1.dashboard_web --host $ListenHost --port $Port @args
 exit $LASTEXITCODE
