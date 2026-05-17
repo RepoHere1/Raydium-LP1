@@ -34,8 +34,9 @@ Fallback separate windows: `.\run_dashboard_stack.ps1 -UseSeparateWindows`
 
 1. Browser → change fields → **Save settings → disk**.
 2. LOOK FOR green banner: `[SUCCESS] Settings saved to disk` and updated mtime in the gray settings box.
-3. Scanner tab → on the **next loop** (after current page batch): `[scan] reloaded config\settings.json · min_apr=...`
+3. Scanner tab → on the **next page** (or next loop start): `[scan] reloaded config\settings.json · min_apr=... hard_exit_tvl=...`
 4. Funnel/shortlist update only after a **full scan** writes `reports/dashboard.json` (not mid-page).
+5. **LOOK FOR** lines are not PowerShell commands — never paste them into the terminal.
 
 ## Diagnosis hints
 

@@ -696,9 +696,59 @@ def assess_capacity(
     }
 
 
+def _sellability_checker_for(config: ScannerConfig) -> Any:
+    if not config.require_sell_route:
+        return None
+    max_impact = config.max_route_price_impact_pct if config.max_route_price_impact_pct > 0 else 0.0
+
+    def _sell_check(p: dict) -> routes.SellabilityResult:
+        return routes.check_pool_sellability(
+            p,
+            base_symbols=tuple(s.upper() for s in sorted(config.allowed_quote_symbols)),
+            sources=config.route_sources,
+            max_route_price_impact_pct=max_impact,
+        )
+
+    return _sell_check
+
+
+def _settings_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _reload_config_if_changed(
+    path: Path,
+    config: ScannerConfig,
+    last_mtime: float,
+) -> tuple[ScannerConfig, float]:
+    """Reload settings from disk when the file mtime advances."""
+
+    mtime = _settings_mtime(path)
+    if mtime <= last_mtime + 1e-6:
+        return config, last_mtime
+    try:
+        new_cfg = ScannerConfig.from_file(path)
+    except ValueError as exc:
+        print(f"[scan] settings changed but reload failed: {exc}", file=sys.stderr, flush=True)
+        return config, last_mtime
+    print(
+        f"[scan] reloaded {path} · min_apr={new_cfg.min_apr} "
+        f"min_tvl={new_cfg.min_liquidity_usd} hard_exit_tvl={new_cfg.hard_exit_min_tvl_usd} "
+        f"pages={new_cfg.pages}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return new_cfg, mtime
+
+
 def scan(
     config: ScannerConfig,
     *,
+    config_path: Path | None = None,
+    reload_config_when_changed: bool = False,
     sellability_checker: Any = None,
     wallet_config: wallet_mod.WalletConfig | None = None,
     rpc_post: Any = None,
@@ -773,19 +823,10 @@ def scan(
             ),
         }
 
-    if sellability_checker is None and config.require_sell_route:
-        max_impact = config.max_route_price_impact_pct if config.max_route_price_impact_pct > 0 else 0.0
+    if sellability_checker is None:
+        sellability_checker = _sellability_checker_for(config)
 
-        def _sell_check(p: dict) -> routes.SellabilityResult:
-            return routes.check_pool_sellability(
-                p,
-                base_symbols=tuple(s.upper() for s in sorted(config.allowed_quote_symbols)),
-                sources=config.route_sources,
-                max_route_price_impact_pct=max_impact,
-            )
-
-        sellability_checker = _sell_check
-
+    settings_mtime = _settings_mtime(config_path) if config_path else 0.0
     pages_failed = 0
     dashboard_mod.write_scan_heartbeat(
         phase="scan_start",
@@ -793,7 +834,11 @@ def scan(
         scanned_so_far=0,
     )
 
-    for page in range(1, config.pages + 1):
+    page = 1
+    while page <= config.pages:
+        if config_path is not None and reload_config_when_changed:
+            config, settings_mtime = _reload_config_if_changed(config_path, config, settings_mtime)
+            sellability_checker = _sellability_checker_for(config)
         url = pool_list_url(config, page=page)
         page_pass = 0
         page_reject = 0
@@ -948,6 +993,7 @@ def scan(
             )
         if page < config.pages and config.page_delay_seconds > 0:
             time.sleep(config.page_delay_seconds)
+        page += 1
 
     dashboard_mod.write_scan_heartbeat(
         phase="scan_complete",
@@ -1634,6 +1680,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             report = scan(
                 config,
+                config_path=config_path if args.reload_config_each_scan else None,
+                reload_config_when_changed=args.reload_config_each_scan,
                 wallet_config=active_wallet,
                 verdict_stream=stream_cfg,
                 write_rejections_override=wr_override,

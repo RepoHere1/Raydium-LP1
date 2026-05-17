@@ -202,7 +202,7 @@ button.primary{background:rgba(77,163,255,.2);border-color:#3d7fd6;color:#9fd0ff
 <button type="button" id="reload">Reload data</button><button type="button" id="save" class="primary">Save settings → disk</button></div></header>
 <div class="rail">
 <div class="ban ban-info" id="ban-info"><b>Settings → scanner contract</b>
-Save writes <strong>config/settings.json</strong>. Scanner tab must run <code>run_scan_dashboard.ps1</code>. After save, watch Scanner tab for <code>[scan] reloaded …</code>.</div>
+Save writes <strong>config/settings.json</strong>. Scanner picks up changes on the <strong>next page</strong> (look for <code>[scan] reloaded …</code>). Funnel updates after a full scan finishes.</div>
 <div class="ban ban-hide" id="ban-ok"></div><div class="ban ban-hide" id="ban-warn"></div><div class="ban ban-hide" id="ban-err"></div>
 </div>
 <div id="js-fatal" class="ban ban-err" style="display:none;max-width:1340px;margin:0 auto .5rem"></div>
@@ -477,7 +477,7 @@ def _status_payload(paths: WebPaths) -> dict[str, Any]:
         "settings_apply": {
             "how": "POST /api/settings merges into settings.json (known keys only).",
             "scanner": "Scanner tab must use run_scan_dashboard.ps1 (--reload-config-each-scan).",
-            "when": "Next scan loop — look for [scan] reloaded … in the Scanner tab.",
+            "when": "Next scan page (or loop start) — look for [scan] reloaded … in the Scanner tab.",
         },
     }
 
