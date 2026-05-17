@@ -76,6 +76,30 @@ class ScanProgressTests(unittest.TestCase):
             scan(config)
         self.assertEqual(seen["timeout"], 7)
 
+    def test_scan_skips_failed_page_and_continues(self):
+        api_response = {"data": {"data": []}}
+        config = ScannerConfig(
+            min_apr=100,
+            require_sell_route=False,
+            track_liquidity_health=False,
+            pages=2,
+            page_delay_seconds=0.0,
+        )
+        captured = io.StringIO()
+
+        def fake_fetch(url, timeout=15):
+            if "page=1" in url or "page%3D1" in url:
+                raise RuntimeError("ssl read failed")
+            return api_response
+
+        with patch("raydium_lp1.scanner.fetch_json", side_effect=fake_fetch), patch(
+            "sys.stderr", captured
+        ):
+            report = scan(config)
+        self.assertEqual(report["pages_failed"], 1)
+        self.assertIn("page 1/2 FAILED", captured.getvalue())
+        self.assertIn("page 2/2", captured.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,7 @@ from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
 from raydium_lp1 import emergency, health, lp_range_planner, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1.http_fetch import fetch_json_get
 from raydium_lp1.http_json import load_json_from_urlopen_response
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
@@ -504,26 +505,15 @@ def extract_pool_items(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def fetch_json(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS) -> dict[str, Any]:
-    request = Request(
+    return fetch_json_get(
         url,
+        timeout=timeout,
         headers={
             "accept": "application/json",
             "accept-encoding": "identity",
-            "user-agent": "Raydium-LP1/0.6",
+            "user-agent": "Raydium-LP1/0.7",
         },
     )
-    try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - intentional public API read
-            return load_json_from_urlopen_response(response)
-    except HTTPError as exc:
-        raise RuntimeError(f"API returned HTTP {exc.code} for {url}") from exc
-    except URLError as exc:
-        reason = getattr(exc, "reason", exc)
-        raise RuntimeError(f"API request failed for {url}: {reason}") from exc
-    except TimeoutError as exc:
-        raise RuntimeError(f"API request timed out after {timeout}s for {url}") from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"API returned invalid JSON for {url}: {exc}") from exc
 
 
 def post_json(url: str, payload: dict[str, Any], timeout: int = 12) -> dict[str, Any]:
@@ -736,6 +726,7 @@ def scan(
     stream_cfg = verdict_stream if verdict_stream is not None else verdicts.make_stream_config(enabled=False)
     if verdict_stream is not None and verdict_stream.enabled:
         verdict_stream.row_emit_count = 0
+        verdict_stream.rejects_suppressed = 0
 
     adapter = networks.get_adapter(config.network)
     if not adapter.supports_live:
@@ -795,8 +786,18 @@ def scan(
 
         sellability_checker = _sell_check
 
+    pages_failed = 0
+    dashboard_mod.write_scan_heartbeat(
+        phase="scan_start",
+        pages_total=config.pages,
+        scanned_so_far=0,
+    )
+
     for page in range(1, config.pages + 1):
         url = pool_list_url(config, page=page)
+        page_pass = 0
+        page_reject = 0
+        suppressed_at_page_start = stream_cfg.rejects_suppressed
         # Always announce the in-flight request so users can tell a slow
         # remote API apart from a hard hang.
         print(
@@ -805,13 +806,42 @@ def scan(
             file=sys.stderr,
             flush=True,
         )
-        response = fetch_json(url, timeout=config.http_timeout_seconds)
+        dashboard_mod.write_scan_heartbeat(
+            phase="page_fetch",
+            pages_total=config.pages,
+            page=page,
+            scanned_so_far=scanned,
+            candidates_so_far=len(candidates),
+            rejected_so_far=len(rejected),
+            pages_failed=pages_failed,
+        )
+        try:
+            response = fetch_json(url, timeout=config.http_timeout_seconds)
+        except RuntimeError as exc:
+            pages_failed += 1
+            err = str(exc)
+            print(
+                f"[scan] page {page}/{config.pages} FAILED (skipping): {err}",
+                file=sys.stderr,
+                flush=True,
+            )
+            dashboard_mod.write_scan_heartbeat(
+                phase="page_failed",
+                pages_total=config.pages,
+                page=page,
+                scanned_so_far=scanned,
+                candidates_so_far=len(candidates),
+                rejected_so_far=len(rejected),
+                pages_failed=pages_failed,
+                last_error=err,
+            )
+            if page < config.pages and config.page_delay_seconds > 0:
+                time.sleep(config.page_delay_seconds)
+            continue
         items = extract_pool_items(response)
+        page_pools = [normalize_pool(item, config.apr_field) for item in items]
         if stream_cfg.enabled:
             verdicts.print_verdict_column_headers(stream_cfg, page=page)
-        if page < config.pages and config.page_delay_seconds > 0:
-            time.sleep(config.page_delay_seconds)
-        page_pools = [normalize_pool(item, config.apr_field) for item in items]
         if config.verify_pool_on_chain:
             pool_verify.prefetch_account_owners(
                 [str(p.get("id") or "") for p in page_pools if p.get("id")],
@@ -819,7 +849,14 @@ def scan(
                 owner_cache=on_chain_owner_cache,
                 rpc_post=rpc_post,
             )
-        for pool in page_pools:
+        page_pool_total = len(page_pools)
+        for pool_idx, pool in enumerate(page_pools, start=1):
+            if page_pool_total > 400 and pool_idx % 250 == 0:
+                print(
+                    f"[scan] page {page}/{config.pages}: processed {pool_idx}/{page_pool_total} pools…",
+                    file=sys.stderr,
+                    flush=True,
+                )
             scanned += 1
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
             if config.lp_planning_enabled and pool.get("raw") is not None:
@@ -849,11 +886,13 @@ def scan(
                     rejection_counts[cat] += 1
                     reason_histogram[verify_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": verify_reasons})
+                    page_reject += 1
                     continue
             ok, reasons = filter_pool(pool, config)
             if not ok:
                 verdicts.emit_reject(public_pool, reasons, stream_cfg, idx=reject_idx)
                 reject_idx += 1
+                page_reject += 1
                 category = verdicts._classify_reason(reasons[0]) if reasons else "other"
                 rejection_counts[category] += 1
                 if reasons:
@@ -874,6 +913,7 @@ def scan(
                     if sell_reasons:
                         reason_histogram[sell_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": sell_reasons})
+                    page_reject += 1
                     continue
 
             mom_cfg = momentum.momentum_config_from_scanner(config)
@@ -888,10 +928,42 @@ def scan(
                     if mom_reasons:
                         reason_histogram[mom_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": mom_reasons})
+                    page_reject += 1
                     continue
 
             verdicts.emit_pass(public_pool, stream_cfg)
             candidates.append(public_pool)
+            page_pass += 1
+
+        suppressed_this_page = stream_cfg.rejects_suppressed - suppressed_at_page_start
+        if stream_cfg.enabled:
+            verdicts.print_page_verdict_rollup(
+                stream_cfg,
+                page=page,
+                total_pages=config.pages,
+                api_pool_count=len(page_pools),
+                passed=page_pass,
+                rejected=page_reject,
+                suppressed_this_page=suppressed_this_page,
+            )
+        if page < config.pages and config.page_delay_seconds > 0:
+            time.sleep(config.page_delay_seconds)
+
+    dashboard_mod.write_scan_heartbeat(
+        phase="scan_complete",
+        pages_total=config.pages,
+        scanned_so_far=scanned,
+        candidates_so_far=len(candidates),
+        rejected_so_far=len(rejected),
+        pages_failed=pages_failed,
+    )
+    if pages_failed:
+        print(
+            f"[scan] warning: {pages_failed} page(s) failed (network/API); "
+            f"results are partial — consider lowering pages/page_size or raising http_timeout_seconds",
+            file=sys.stderr,
+            flush=True,
+        )
 
     health_summary = {"healthy": 0, "warning": 0, "critical": 0}
     triggered_alerts: list[dict[str, Any]] = []
@@ -1067,6 +1139,7 @@ def scan(
         "hard_exit_min_tvl_usd": config.hard_exit_min_tvl_usd,
         "lp_planning_enabled": config.lp_planning_enabled,
         "risk_profile": config.risk_profile,
+        "pages_failed": pages_failed,
         "scanned_count": scanned,
         "candidate_count": len(capped_candidates),
         "candidate_count_pre_capacity": len(candidates),
@@ -1551,6 +1624,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Config reload failed: {exc}", file=sys.stderr)
                 time.sleep(args.interval)
                 continue
+            print(
+                f"[scan] reloaded {config_path} · min_apr={config.min_apr} "
+                f"min_tvl={config.min_liquidity_usd} hard_exit_tvl={config.hard_exit_min_tvl_usd} "
+                f"pages={config.pages}",
+                file=sys.stderr,
+                flush=True,
+            )
         try:
             report = scan(
                 config,
@@ -1559,7 +1639,20 @@ def main(argv: list[str] | None = None) -> int:
                 write_rejections_override=wr_override,
             )
         except RuntimeError as exc:
-            print(f"Scan failed: {exc}", file=sys.stderr)
+            print(f"Scan failed: {exc}", file=sys.stderr, flush=True)
+            dashboard_mod.write_scan_heartbeat(
+                phase="scan_failed",
+                pages_total=config.pages,
+                last_error=str(exc),
+            )
+            if args.loop:
+                print(
+                    f"[scan] loop: retrying in {args.interval}s (dashboard.json unchanged until a full scan succeeds)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(args.interval)
+                continue
             return 1
 
         report["scan_diagnosis"] = dial_in_analyst.build_scan_diagnosis(config, report)

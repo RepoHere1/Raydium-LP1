@@ -55,7 +55,25 @@ python scripts\scan_raydium_lps.py --config config\settings.json --json 2>$null 
 After a scan, open:
 
 - `reports\dashboard.json` — includes `momentum_hot_top` (top 25 HOT), rejection breakdown, and `scan_diagnosis` for tuning filters
-- Loopback web UI: run `.\scripts\run_dashboard_web.ps1` then open `http://127.0.0.1:8844/` — pair the scanner with `--loop --dashboard --reload-config-each-scan` so settings edits apply each cycle
+- **Loopback web UI** (localhost only, no auth) — open **two** Windows Terminal / PowerShell tabs from the repo folder:
+
+  ```powershell
+  cd C:\Users\Taylor\Raydium-LP1
+  ```
+
+  **One command** (opens web UI in a new window, scanner runs in this one):
+
+  ```powershell
+  .\run_dashboard_stack.ps1
+  ```
+
+  Or: `.\scripts\run_scan_dashboard_stack.ps1`
+
+  Browser: http://127.0.0.1:8844/ (also printed when the stack starts)
+
+  **Two windows manually** — `.\scripts\run_scan_dashboard.ps1` plus `.\scripts\run_dashboard_web.ps1` in a second tab.
+
+  You can also pass flags through the main helper: `.\scripts\run_scan.ps1 -Loop -Dashboard -ReloadConfigEachScan`
 - `reports\momentum_sniffer.json` — full detective breakdown per pool
 - `reports\latest.json` — all candidates with `momentum` objects
 

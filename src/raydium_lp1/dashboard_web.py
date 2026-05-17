@@ -3,11 +3,12 @@
 ``GET /`` serves a single-page UI. ``GET /api/dashboard`` and ``GET /api/settings`` return JSON.
 ``POST /api/settings`` merges an object into ``config/settings.json`` (scanner-known keys only).
 
-Use with::
+Windows Terminal (PowerShell), two windows from repo root::
 
-    python -m raydium_lp1.dashboard_web
+    .\\scripts\\run_scan_dashboard.ps1
+    .\\scripts\\run_dashboard_web.ps1
 
-and run the scanner with ``--dashboard --loop --reload-config-each-scan`` while you tune gates.
+Then open http://127.0.0.1:8844/
 """
 
 from __future__ import annotations
@@ -16,15 +17,28 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from raydium_lp1.dashboard import DEFAULT_DASHBOARD_PATH
+from raydium_lp1.dashboard import (
+    DEFAULT_DASHBOARD_PATH,
+    SCAN_HEARTBEAT_PATH,
+    SETTINGS_SAVE_ACK_PATH,
+    write_settings_save_ack,
+)
 from raydium_lp1.settings_io import load_settings_json, merge_known_settings_patch
 from raydium_lp1.strategies import ALLOWED_STRATEGIES
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.json")
+
+
+def _iso_mtime(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat()
+
 
 _FORM_SECTIONS: list[dict[str, Any]] = [
     {
@@ -170,16 +184,31 @@ grid-template-columns:repeat(auto-fit,minmax(114px,1fr))}.k{border:1px solid var
 ul.z{margin:.45rem 0;color:var(--m);font-size:.84rem;padding-left:1rem;border-left:3px solid var(--line)}
 .pr div{padding:.32rem 0;border-bottom:1px dashed var(--line);font-size:.8rem;color:var(--m)}.pr div:last-child{border:0}
 .tb2{width:100%;font-size:.78rem;border-collapse:collapse}.tb2 th,.tb2 td{border-bottom:1px solid var(--line);padding:.32rem .4rem;text-align:left}
-.tb2 th{color:var(--m)}#st{margin-top:.6rem;font:.8rem var(--mono);color:var(--m)}#st.e{color:var(--no)}#st.o{color:var(--ok)}
-a{color:var(--a)}
+.tb2 th{color:var(--m)}a{color:var(--a)}
+.rail{max-width:1340px;margin:0 auto;padding:.7rem 1rem 0}
+.ban{border-radius:8px;padding:.72rem .95rem;margin:0 0 .5rem;border-left:4px solid;font-size:.86rem;line-height:1.45}
+.ban b{display:block;font-size:.7rem;letter-spacing:.07em;text-transform:uppercase;margin-bottom:.22rem}
+.ban-info{border-left-color:#56d4ff;background:rgba(86,212,255,.08);color:#c8e8ff}
+.ban-ok{border-left-color:var(--ok);background:rgba(61,220,132,.1);color:#c8f5dc}
+.ban-warn{border-left-color:var(--wm);background:rgba(255,193,77,.09);color:#ffe6b8}
+.ban-err{border-left-color:var(--no);background:rgba(255,107,107,.1);color:#ffd0d0}
+.ban-hide{display:none}
+.livebox{font-family:var(--mono);font-size:.76rem;background:#0f141c;border:1px solid var(--line);border-radius:8px;padding:.55rem .75rem;margin-bottom:.8rem;color:var(--m);line-height:1.55}
+.livebox strong{color:var(--txt)}.live-ok{color:var(--ok)}.live-bad{color:var(--no)}
+button.primary{background:rgba(77,163,255,.2);border-color:#3d7fd6;color:#9fd0ff;font-weight:650}
 </style></head><body>
-<header><h1>Raydium-LP1</h1><span class="p pl">127.0.0.1 only</span><span class="p" id="stamp">waiting…</span>
-<div class="tb"><label style="font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto 5s</label>
-<button type="button" id="reload">Reload</button><button type="button" id="save" class="p">Save settings</button></div></header>
+<header><h1>Raydium-LP1 · mission control</h1><span class="p pl">127.0.0.1 · local only</span><span class="p" id="stamp">waiting…</span>
+<div class="tb"><label style="font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto refresh 5s</label>
+<button type="button" id="reload">Reload data</button><button type="button" id="save" class="primary">Save settings → disk</button></div></header>
+<div class="rail">
+<div class="ban ban-info" id="ban-info"><b>Settings → scanner contract</b>
+Save writes <strong>config/settings.json</strong>. Scanner tab must run <code>run_scan_dashboard.ps1</code>. After save, watch Scanner tab for <code>[scan] reloaded …</code>.</div>
+<div class="ban ban-hide" id="ban-ok"></div><div class="ban ban-hide" id="ban-warn"></div><div class="ban ban-hide" id="ban-err"></div>
+</div>
 <script type="application/json" id="boot">BOOT_JSON</script>
 <main><div><div class="cd"><h2>Funnel <a id="rj" href="api/dashboard" style="margin-left:auto;font-size:.73rem;color:var(--m);font-weight:400;text-decoration:none">raw JSON →</a></h2><div id="fu" class="bd"></div></div>
 <div class="cd"><h2>Dry-run shortlist</h2><div id="li" class="bd"></div></div></div>
-<div class="cd"><h2>Settings</h2><div class="bd"><div id="fo"></div><div id="st"></div></div></div></main>
+<div class="cd"><h2>Settings file</h2><div class="bd"><div id="live" class="livebox">Loading…</div><div id="fo"></div></div></div></main>
 <script>
 CLIENT_JS_HERE
 </script></body></html>"""
@@ -324,29 +353,67 @@ _CLIENT_JS = r"""
   async function refresh(){
     var dash=await gj('/api/dashboard');
     renderFunnel(dash); renderList(dash.open_positions||[]);
+    try{
+      var st=await gj('/api/status');
+      if(st.scanner_scanning){
+        showBan('ban-warn','<b>Scanner running</b> Funnel/shortlist refresh when the current scan finishes (see heartbeat in settings box).');
+      }
+    }catch(e){}
   }
 
   async function loadSettings(){
     var s=await gj('/api/settings'); mount(s);
   }
 
-  function msg(t, ok){
-    var e=$('#st'); e.textContent=t; e.className=ok?'o':(t?'e':'');
+  function showBan(id, html){
+    ['ban-ok','ban-warn','ban-err'].forEach(function(b){
+      var el=$('#'+b); if(!el) return; if(b===id){ el.innerHTML=html; el.classList.remove('ban-hide'); }
+      else el.classList.add('ban-hide');
+    });
+  }
+  function renderLive(st){
+    var el=$('#live'); if(!el) return;
+    var sm=st.settings_mtime||'never'; var dm=st.dashboard_mtime||'waiting for scan';
+    var hb=st.heartbeat||{}; var sync='';
+    if(st.scanner_scanning){
+      sync='<span class="live-bad">Scanner busy — page '+esc(String(hb.page||'?'))+'/'+esc(String(hb.pages_total||'?'))+
+        ' · shortlist updates after scan_complete</span>';
+    } else if(st.settings_mtime && st.dashboard_mtime && st.settings_mtime > st.dashboard_mtime){
+      sync='<span class="live-ok">settings newer than dashboard — watch Scanner tab for [scan] reloaded …</span>';
+    } else if(st.dashboard_mtime){ sync='<span class="live-ok">dashboard fresh</span>'; }
+    else { sync='<span class="live-bad">no dashboard yet — run Scanner tab until first scan finishes</span>'; }
+    if(hb.last_error) sync+='<br/><span class="live-bad">last error: '+esc(hb.last_error)+'</span>';
+    el.innerHTML='<strong>settings</strong> '+esc(st.settings_path)+'<br/>mtime <span class="live-ok">'+esc(sm)+'</span><br/>'+
+      '<strong>dashboard</strong> '+esc(st.dashboard_path)+'<br/>mtime '+esc(dm)+'<br/>'+
+      '<strong>heartbeat</strong> '+esc(hb.phase||'idle')+' · '+esc(hb.updated_at||'—')+'<br/>'+sync;
+  }
+  async function pollStatus(){
+    try{ var st=await gj('/api/status'); renderLive(st); }catch(e){}
   }
 
-  document.getElementById('reload').onclick=function(){msg(''); refresh().catch(function(e){msg(String(e),false);}); loadSettings().catch(function(e){msg(String(e),false);});};
+  document.getElementById('reload').onclick=function(){
+    showBan(null,''); refresh().catch(function(e){showBan('ban-err','<b>Reload failed</b>'+esc(String(e)));});
+    loadSettings().catch(function(e){showBan('ban-err','<b>Settings load failed</b>'+esc(String(e)));});
+    pollStatus();
+  };
   document.getElementById('save').onclick=function(){
-    msg('Saving…',true);
+    showBan('ban-warn','<b>Saving…</b> Writing config/settings.json');
     try{
-      var body=JSON.stringify(collect());
+      var patch=collect();
+      var body=JSON.stringify(patch);
       fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:body})
         .then(function(r){return r.text().then(function(t){return {r:r,t:t};});})
         .then(function(x){
           var d; try{d=JSON.parse(x.t);}catch(e){throw new Error(x.t.slice(0,200));}
           if(!x.r.ok) throw new Error(d.error||x.t);
-          msg('Saved · next loop picks up if scanner uses --reload-config-each-scan',true);
-        }).catch(function(e){msg(String(e),false);});
-    }catch(e){msg(String(e),false);}
+          var keys=(d.keys_patched||[]).join(', ');
+          showBan('ban-ok','<b>[SUCCESS] Settings saved to disk</b><br/>File: '+esc(d.path||'')+
+            '<br/>Updated: '+esc(keys||'(form fields)')+
+            '<br/>mtime: <span class="live-ok">'+esc(d.settings_mtime||'?')+'</span><br/>'+
+            'Watch the <strong>Scanner</strong> tab for <code>[scan] reloaded …</code> on the next loop.');
+          pollStatus();
+        }).catch(function(e){showBan('ban-err','<b>Save failed</b><br/>'+esc(String(e)));});
+    }catch(e){showBan('ban-err','<b>Save failed</b><br/>'+esc(String(e)));}
   };
 
   var timer=null;
@@ -357,7 +424,8 @@ _CLIENT_JS = r"""
   document.getElementById('auto').onchange=arm;
 
   refresh().catch(function(e){$('#fu').innerHTML='<p style="color:#f88">'+esc(String(e))+'</p>';});
-  loadSettings().catch(function(e){msg(String(e),false);});
+  loadSettings().catch(function(e){showBan('ban-err','<b>Settings load failed</b>'+esc(String(e)));});
+  pollStatus(); setInterval(pollStatus, 12000);
   arm();
 })();
 """
@@ -367,6 +435,40 @@ _CLIENT_JS = r"""
 class WebPaths:
     dashboard_path: Path
     settings_path: Path
+
+
+def _read_json_file(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _status_payload(paths: WebPaths) -> dict[str, Any]:
+    heartbeat = _read_json_file(SCAN_HEARTBEAT_PATH)
+    save_ack = _read_json_file(SETTINGS_SAVE_ACK_PATH)
+    dash_mtime = _iso_mtime(paths.dashboard_path)
+    settings_mtime = _iso_mtime(paths.settings_path)
+    phase = (heartbeat or {}).get("phase")
+    scanning = phase in {"scan_start", "page_fetch", "page_failed"}
+    return {
+        "settings_path": str(paths.settings_path.resolve()),
+        "settings_mtime": settings_mtime,
+        "dashboard_path": str(paths.dashboard_path.resolve()),
+        "dashboard_mtime": dash_mtime,
+        "heartbeat_path": str(SCAN_HEARTBEAT_PATH.resolve()),
+        "heartbeat": heartbeat,
+        "settings_save_ack": save_ack,
+        "scanner_scanning": scanning,
+        "settings_apply": {
+            "how": "POST /api/settings merges into settings.json (known keys only).",
+            "scanner": "Scanner tab must use run_scan_dashboard.ps1 (--reload-config-each-scan).",
+            "when": "Next scan loop — look for [scan] reloaded … in the Scanner tab.",
+        },
+    }
 
 
 def _page() -> bytes:
@@ -441,6 +543,9 @@ def main(argv: list[str] | None = None) -> int:
                     return
                 self._send_json(200, data)
                 return
+            if path == "/api/status":
+                self._send_json(200, _status_payload(paths))
+                return
             self._send_json(404, {"error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
@@ -457,10 +562,21 @@ def main(argv: list[str] | None = None) -> int:
                 return
             try:
                 merge_known_settings_patch(paths.settings_path, patch)
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError) exc:
                 self._send_json(400, {"error": str(exc)})
                 return
-            self._send_json(200, {"ok": True, "path": str(paths.settings_path.resolve())})
+            keys_patched = sorted(str(k) for k in patch.keys())
+            write_settings_save_ack(keys_patched=keys_patched, settings_path=paths.settings_path)
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "path": str(paths.settings_path.resolve()),
+                    "settings_mtime": _iso_mtime(paths.settings_path),
+                    "keys_patched": keys_patched,
+                    "scanner_note": "Next scan loop reloads settings when run_scan_dashboard.ps1 is used.",
+                },
+            )
 
     httpd = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     print(f"Raydium-LP1 dashboard http://{args.host}:{args.port}/", flush=True)

@@ -1,0 +1,44 @@
+---
+description: How to talk to Taylor about Raydium-LP1 (Windows Terminal + web dashboard)
+alwaysApply: true
+---
+
+# Raydium-LP1 · user interface contract
+
+Taylor runs this repo on **Windows 11** with **Windows Terminal** and **PowerShell**. When giving operational steps:
+
+## Format (required)
+
+- **Plain prose** = explanation, diagnosis, “why”.
+- **Copy boxes only** = things Taylor must run or click. Each box must have exactly:
+  - **WHERE** — which tab or app (Main tab, «LP1 · Scanner», «LP1 · Web UI», Browser).
+  - **DO** — one concrete action (paste command, click button, change field).
+  - **LOOK FOR** — what success looks like (exact log line, banner text, mtime).
+
+Do not bury click-by-click steps inside paragraphs. Do not use boxes for reading-only context.
+
+## Standard stack (one command from main tab)
+
+Feature branch: `cursor/live-dashboard-web-dee0`.
+
+| WHERE | Role |
+|-------|------|
+| Main tab | Ran `.\run_dashboard_stack.ps1` — instructions only |
+| Tab «LP1 · Scanner» | Live scan → `reports\dashboard.json` |
+| Tab «LP1 · Web UI» | HTTP on port 8844 |
+| Browser | http://127.0.0.1:8844/ (only surface outside the terminal) |
+
+Fallback separate windows: `.\run_dashboard_stack.ps1 -UseSeparateWindows`
+
+## Settings contract
+
+1. Browser → change fields → **Save settings → disk**.
+2. LOOK FOR green banner: `[SUCCESS] Settings saved to disk` and updated mtime in the gray settings box.
+3. Scanner tab → on the **next loop** (after current page batch): `[scan] reloaded config\settings.json · min_apr=...`
+4. Funnel/shortlist update only after a **full scan** writes `reports/dashboard.json` (not mid-page).
+
+## Diagnosis hints
+
+- **All HARD TVL rejects**: `hard_exit_min_tvl_usd` too high for Raydium sort order (often APR-sorted tiny pools).
+- **Stale web UI**: scan crashed (SSL/API) or still running — check Scanner tab and `reports/scan_heartbeat.json` phase.
+- **50×1000 pages**: heavy; prefer fewer pages or smaller `page_size` if network errors repeat.

@@ -70,6 +70,8 @@ class StreamConfig:
     # Re-print the full table header (same column widths as data) every N rows (0 = off).
     header_repeat_rows: int = 25
     row_emit_count: int = field(default=0, repr=False)
+    # Reject lines skipped because max_rejections_shown was already reached.
+    rejects_suppressed: int = field(default=0, repr=False)
 
     def out(self) -> TextIO:
         # Default stderr: matches scanner progress logs and avoids "silent"
@@ -231,11 +233,14 @@ def emit_pass(pool: dict, cfg: StreamConfig) -> None:
     _maybe_repeat_header_row(cfg)
 
 
-def emit_reject(pool: dict, reasons: list[str], cfg: StreamConfig, *, idx: int = 0) -> None:
+def emit_reject(pool: dict, reasons: list[str], cfg: StreamConfig, *, idx: int = 0) -> bool:
+    """Emit one reject row. Returns False if suppressed by the global reject cap."""
+
     if not cfg.enabled:
-        return
+        return False
     if idx >= cfg.max_rejections_shown:
-        return
+        cfg.rejects_suppressed += 1
+        return False
     reason = reasons[0] if reasons else "unspecified"
     pid_w = max(32, min(64, int(cfg.pool_id_width)))
     line = _verdict_table_row("[REJ]", pool, reason, pool_id_width=pid_w)
@@ -248,6 +253,37 @@ def emit_reject(pool: dict, reasons: list[str], cfg: StreamConfig, *, idx: int =
         if cfg.color:
             more = f"{_DIM}{more}{_RESET}"
         _println_verdict(cfg, more)
+    return True
+
+
+def print_page_verdict_rollup(
+    cfg: StreamConfig,
+    *,
+    page: int,
+    total_pages: int,
+    api_pool_count: int,
+    passed: int,
+    rejected: int,
+    suppressed_this_page: int,
+) -> None:
+    """One-line summary so later pages are not mistaken for a hang when the reject cap is full."""
+
+    if not cfg.enabled:
+        return
+    msg = (
+        f"[scan] page {page}/{total_pages} done — API returned {api_pool_count} pools · "
+        f"{passed} pass · {rejected} reject"
+    )
+    if suppressed_this_page > 0:
+        msg += (
+            f" · {suppressed_this_page} reject line(s) hidden (cap {cfg.max_rejections_shown}; "
+            f"use --show-rejects 0 for unlimited or a higher N)"
+        )
+    elif api_pool_count == 0:
+        msg += " · (empty page — check pages/page_size or Raydium API)"
+    if cfg.color:
+        msg = f"{_DIM}{msg}{_RESET}"
+    _println_verdict(cfg, msg)
 
 
 def make_stream_config(

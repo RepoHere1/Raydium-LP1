@@ -27,6 +27,14 @@ class LPRangePlannerTests(unittest.TestCase):
         )
         self.assertGreaterEqual(w, 20.0, note)
 
+    def test_momentum_skew_exit_tier_without_detective(self):
+        sk, notes = lp_range_planner.momentum_skew(
+            {"tier": "exit_now"},
+            use_momentum=True,
+        )
+        self.assertLess(sk, 0.0)
+        self.assertIn("tier_exit_adjust", notes)
+
     def test_plan_includes_parallel_full_range(self):
         cfg = lp_range_planner.LPPlannerConfig(
             enabled=True,

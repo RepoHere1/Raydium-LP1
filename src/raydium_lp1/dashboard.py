@@ -20,6 +20,8 @@ from typing import Iterable
 from raydium_lp1 import emergency, health
 
 DEFAULT_DASHBOARD_PATH = Path("reports/dashboard.json")
+SCAN_HEARTBEAT_PATH = Path("reports/scan_heartbeat.json")
+SETTINGS_SAVE_ACK_PATH = Path("reports/settings_save_ack.json")
 RECENT_ALERT_COUNT = 5
 
 
@@ -183,6 +185,56 @@ def write_dashboard(data: DashboardData, path: Path = DEFAULT_DASHBOARD_PATH) ->
     path.parent.mkdir(parents=True, exist_ok=True)
     # sort_keys=False keeps rejection histogram / category order meaningful for UI consumers.
     path.write_text(json.dumps(data.to_dict(), indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
+def write_scan_heartbeat(
+    *,
+    phase: str,
+    pages_total: int | None = None,
+    page: int | None = None,
+    scanned_so_far: int = 0,
+    candidates_so_far: int = 0,
+    rejected_so_far: int = 0,
+    pages_failed: int = 0,
+    last_error: str | None = None,
+    path: Path = SCAN_HEARTBEAT_PATH,
+) -> None:
+    """Write lightweight scan progress so the web UI can show live/stale state."""
+
+    payload = {
+        "updated_at": _now_iso(),
+        "phase": phase,
+        "pages_total": pages_total,
+        "page": page,
+        "scanned_so_far": scanned_so_far,
+        "candidates_so_far": candidates_so_far,
+        "rejected_so_far": rejected_so_far,
+        "pages_failed": pages_failed,
+        "last_error": last_error,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def write_settings_save_ack(
+    *,
+    keys_patched: list[str],
+    settings_path: Path,
+    path: Path = SETTINGS_SAVE_ACK_PATH,
+) -> None:
+    payload = {
+        "saved_at": _now_iso(),
+        "settings_path": str(settings_path.resolve()),
+        "keys_patched": list(keys_patched),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _hr(char: str = "=", width: int = 64) -> str:

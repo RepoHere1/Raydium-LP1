@@ -11,7 +11,9 @@ param(
     [string]$VerdictLog = "",
     [switch]$NoVerdictLog,
     [int]$VerdictHeaderEvery = 25,
-    [switch]$SpawnWatcher
+    [switch]$SpawnWatcher,
+    [switch]$Dashboard,
+    [switch]$ReloadConfigEachScan
 )
 
 $ErrorActionPreference = "Stop"
@@ -140,6 +142,12 @@ if ($NoVerdictLog) {
 }
 if ($VerdictHeaderEvery -ne 25) {
     $scannerArgs += @("--verdict-header-every", "$VerdictHeaderEvery")
+}
+if ($Dashboard) {
+    $scannerArgs += "--dashboard"
+}
+if ($ReloadConfigEachScan) {
+    $scannerArgs += "--reload-config-each-scan"
 }
 $scannerArgs += @("--show-rejects", "$ShowRejects")
 
