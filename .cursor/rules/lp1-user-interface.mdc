@@ -17,6 +17,8 @@ Taylor runs this repo on **Windows 11** with **Windows Terminal** and **PowerShe
 
 Do not bury click-by-click steps inside paragraphs. Do not use boxes for reading-only context.
 
+**Critical:** `LOOK FOR:` / `CHECK:` lines are **never** PowerShell commands. In terminal banners emitted by `.ps1` scripts, use the prefix `CHECK (do not type):` instead of `LOOK FOR:` so users do not paste them into the shell.
+
 ## Standard stack (one command from main tab)
 
 Feature branch: `cursor/live-dashboard-web-dee0`.

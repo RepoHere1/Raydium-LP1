@@ -44,19 +44,64 @@ function Write-StackBanner {
     Write-Host $Line -ForegroundColor $Color
 }
 
+$script:WtOuterWindowOpened = $false
+
 function Build-ScanTabArguments {
-    $args = @(
+    $scanCliArgs = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit",
         "-File", $scanPs1,
         "-Config", $Config,
         "-Interval", "$Interval",
         "-ShowRejects", "$ShowRejects"
     )
-    if ($CheckRpc) { $args += "-CheckRpc" }
-    if ($WriteReports) { $args += "-WriteReports" }
-    if ($WriteRejections) { $args += "-WriteRejections" }
-    if ($SpawnWatcher) { $args += "-SpawnWatcher" }
-    return $args
+    if ($CheckRpc) { $scanCliArgs += "-CheckRpc" }
+    if ($WriteReports) { $scanCliArgs += "-WriteReports" }
+    if ($WriteRejections) { $scanCliArgs += "-WriteRejections" }
+    if ($SpawnWatcher) { $scanCliArgs += "-SpawnWatcher" }
+    return $scanCliArgs
+}
+
+function Start-PowerShellWindow {
+    param([string[]]$CliArgs)
+    Start-Process -FilePath $shell -ArgumentList $CliArgs -WorkingDirectory $RepoRoot | Out-Null
+}
+
+function Invoke-WtHostedTab {
+    param(
+        [string]$Title,
+        [string[]]$CliArgs
+    )
+    $wt = Get-Command wt.exe -ErrorAction SilentlyContinue
+    if (-not $wt) { return $false }
+
+    # Outside Windows Terminal, first spawn needs new-window or tabs land in a hidden MRU window.
+    $wtLead = @()
+    if ($env:WT_SESSION) {
+        $wtLead = @("-w", "0")
+    } elseif (-not $script:WtOuterWindowOpened) {
+        $wtLead = @("new-window")
+        $script:WtOuterWindowOpened = $true
+    } else {
+        $wtLead = @("-w", "0")
+    }
+
+    $wtAll = $wtLead + @(
+        "nt",
+        "--title", $Title,
+        "-d", $RepoRoot,
+        $shell
+    ) + $CliArgs
+
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & wt.exe @wtAll 2>&1 | ForEach-Object { Write-Host "  wt: $_" }
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+    if ($code -ne 0) {
+        Write-StackBanner "[WARN] wt.exe exit $code for tab '$Title' — trying separate window." "Yellow"
+        return $false
+    }
+    return $true
 }
 
 function Start-WebTab {
@@ -68,13 +113,11 @@ function Start-WebTab {
         "-ListenHost", $WebHost
     )
     if ($Mode -eq "wt") {
-        $wt = Get-Command wt.exe -ErrorAction SilentlyContinue
-        if (-not $wt) { throw "wt.exe (Windows Terminal) not found." }
-        & wt.exe -w 0 nt --title "LP1 · Web UI" -d $RepoRoot $shell @webArgs | Out-Null
-        return
+        if (Invoke-WtHostedTab -Title "LP1 - Web UI" -CliArgs $webArgs) { return }
+        Write-StackBanner "[INFO] wt tab failed — opening separate Web UI window." "DarkYellow"
     }
-    if ($Mode -eq "window") {
-        Start-Process -FilePath $shell -ArgumentList $webArgs -WorkingDirectory $RepoRoot | Out-Null
+    if ($Mode -eq "wt" -or $Mode -eq "window") {
+        Start-PowerShellWindow -CliArgs $webArgs
         return
     }
     throw "Unknown web tab mode: $Mode"
@@ -84,13 +127,11 @@ function Start-ScanTab {
     param([string]$Mode)
     $scanArgs = Build-ScanTabArguments
     if ($Mode -eq "wt") {
-        $wt = Get-Command wt.exe -ErrorAction SilentlyContinue
-        if (-not $wt) { throw "wt.exe (Windows Terminal) not found." }
-        & wt.exe -w 0 nt --title "LP1 · Scanner" -d $RepoRoot $shell @scanArgs | Out-Null
-        return
+        if (Invoke-WtHostedTab -Title "LP1 - Scanner" -CliArgs $scanArgs) { return }
+        Write-StackBanner "[INFO] wt tab failed — opening separate Scanner window." "DarkYellow"
     }
-    if ($Mode -eq "window") {
-        Start-Process -FilePath $shell -ArgumentList $scanArgs -WorkingDirectory $RepoRoot | Out-Null
+    if ($Mode -eq "wt" -or $Mode -eq "window") {
+        Start-PowerShellWindow -CliArgs $scanArgs
         return
     }
     throw "Unknown scan tab mode: $Mode"
@@ -151,23 +192,25 @@ if (-not $NoSpawnWeb) {
     Write-StackBanner "── Baby steps (copy boxes in chat use this shape) ──" "Cyan"
     Write-StackBanner "WHERE: Tab «LP1 · Scanner»" "White"
     Write-StackBanner "  DO: Leave it open — scan loop runs here." "White"
-    Write-StackBanner "  LOOK FOR: [scan] page 1/N ... then page rollups; after each loop [scan] reloaded config\settings.json ..." "Green"
+    Write-StackBanner "  CHECK (do not type into PowerShell): [scan] page 1/N ..." "Green"
     Write-Host ""
-    Write-StackBanner "WHERE: Tab «LP1 · Web UI»" "White"
+    Write-StackBanner "WHERE: Tab LP1 - Web UI (or second window if wt failed)" "White"
     Write-StackBanner "  DO: Leave it open — serves http://${WebHost}:$WebPort/" "White"
-    Write-StackBanner "  LOOK FOR: Raydium-LP1 dashboard http://... listening" "Green"
+    Write-StackBanner "  CHECK: Raydium-LP1 dashboard http://... listening" "Green"
     Write-Host ""
     Write-StackBanner "WHERE: Browser → http://${WebHost}:$WebPort/" "White"
     Write-StackBanner "  DO: Change a field (e.g. hard_exit_min_tvl_usd) → Save settings → disk" "White"
-    Write-StackBanner "  LOOK FOR: Green [SUCCESS] banner + settings mtime in gray box" "Green"
+    Write-StackBanner "  CHECK: Green [SUCCESS] banner + settings mtime in gray box" "Green"
     Write-Host ""
-    Write-StackBanner "WHERE: Tab «LP1 · Scanner» (again, after save)" "White"
-    Write-StackBanner "  DO: Wait for current page batch to finish, then next loop start" "White"
-    Write-StackBanner "  LOOK FOR: [scan] reloaded config\settings.json · min_apr=... hard_exit_tvl=..." "Green"
+    Write-StackBanner "WHERE: Scanner tab (after save)" "White"
+    Write-StackBanner "  DO: Wait for next page to start" "White"
+    Write-StackBanner "  CHECK: [scan] reloaded config\settings.json · hard_exit_tvl=..." "Green"
     Write-Host ""
     Write-StackBanner "WHERE: Browser (funnel + shortlist)" "White"
     Write-StackBanner "  DO: Auto-refresh 5s on, or Reload data" "White"
-    Write-StackBanner "  LOOK FOR: dash timestamp updates after a full scan (not mid-page)" "Green"
+    Write-StackBanner "  CHECK: dash timestamp updates after a full scan" "Green"
+    Write-Host ""
+    Write-StackBanner "No new tabs? Run: .\run_dashboard_stack.ps1 -UseSeparateWindows" "Yellow"
     Write-Host ""
     Write-StackBanner "  This tab = mission control only. Stop: Ctrl+C in Scanner + Web tabs." "DarkYellow"
     Write-Host ""
