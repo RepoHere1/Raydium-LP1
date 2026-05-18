@@ -58,11 +58,26 @@ textarea{min-height:56px;font-family:var(--mono);font-size:.75rem}
 .pos-row{padding:.4rem 0;border-bottom:1px solid #222;font-size:.78rem}
 .pos-row .sub{font-size:.72rem;color:var(--muted);margin-top:.15rem}
 a{color:var(--a);text-decoration:none}a:hover{text-decoration:underline}
+
+.opt-bar{max-width:1440px;margin:0 auto;padding:.45rem 1rem 0;display:flex;flex-wrap:wrap;gap:.65rem 1rem;align-items:flex-start;border-bottom:1px solid #222}
+.opt-toggle{display:flex;align-items:center;gap:.45rem;font-size:.82rem;white-space:nowrap}
+.opt-toggle input{accent-color:var(--yellow)}
+.opt-pulse{display:flex;flex-wrap:wrap;gap:.35rem .55rem;flex:1;min-width:200px}
+.pulse-chip{font-size:.7rem;padding:.22rem .45rem;border-radius:6px;border:1px solid #333;background:#0a0a0a;max-width:280px;line-height:1.3}
+.pulse-chip.ok{border-color:#2a4a3a;color:#9fddb0}.pulse-chip.warn{border-color:#5a4a20;color:#ffe08a}.pulse-chip.bad{border-color:#5a2a2a;color:#ffb4b4}
+.opt-reco{width:100%;font-size:.75rem;color:var(--muted);margin-top:.2rem}
+.catalog details{margin:.4rem 0}.catalog summary{cursor:pointer;color:var(--a);font-size:.8rem}
+.catalog ol{margin:.35rem 0 0 1rem;padding:0;font-size:.72rem;color:var(--muted);max-height:220px;overflow:auto}
 .settings-scroll{max-height:min(72vh,820px);overflow:auto;padding-right:.25rem}
 </style></head><body>
 <header><h1>Raydium-LP1 · mission control</h1><span class="tag live">127.0.0.1</span><span class="tag" id="stamp">loading…</span>
 <div class="tb"><label class="hdr"><input type="checkbox" id="auto" checked/> Auto 5s</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="primary">Save settings</button></div></header>
+<div class="opt-bar">
+  <label class="opt-toggle"><input type="checkbox" id="opt-auto"/> <b>Auto-tune</b> settings</label>
+  <div id="opt-pulse" class="opt-pulse">
+  <div id="opt-reco" class="opt-reco"></div>
+</div>
 <div class="ban-row">
 <div class="ban ban-info" id="ban-info"><b>How it works</b> Save updates settings. Scanner reloads on the next page. All panels refresh after each full scan.</div>
 <div class="ban ban-hide" id="ban-ok"></div><div class="ban ban-hide" id="ban-warn"></div><div class="ban ban-hide" id="ban-err"></div>
@@ -72,7 +87,7 @@ a{color:var(--a);text-decoration:none}a:hover{text-decoration:underline}
 <main class="page">
 <div class="row2">
   <div class="cd"><h2>Funnel <a href="/api/dashboard" style="margin-left:auto;font-size:.7rem;color:var(--muted)">json</a></h2><div id="fu" class="bd"><p class="hint">Loading…</p></div></div>
-  <div class="cd"><h2>Settings</h2><div class="bd settings-scroll"><div id="live" class="livebox">Loading…</div><div id="fo"></div></div></div>
+  <div class="cd"><h2>Settings</h2><div class="bd settings-scroll"><details class="catalog"><summary>All settings (numbered)</summary><ol id="catalog"></ol></details><div id="live" class="livebox">Loading…</div><div id="fo"></div></div></div>
 </div>
 <div class="cd"><h2>Candidates <span id="cand-note" style="font-weight:400;font-size:.72rem;color:var(--muted);margin-left:.35rem"></span></h2>
 <div id="cand" class="bd"><p class="hint">Waiting for scan…</p></div></div>
@@ -194,7 +209,7 @@ _CLIENT_JS = r"""
     var bd=Object.entries(ls.rejection_breakdown||{}).sort(function(a,b){return b[1]-a[1];});
     var mx=Math.max.apply(null,bd.map(function(x){return x[1];}).concat([0]))||1;
     var bars=bd.slice(0,10).map(function(kv){
-      return '<div class="bar"><div>'+esc(kv[0])+'</div><div class="tr"><div class="fil" style="width:'+((100*kv[1]/mx).toFixed(0))+'%"></div></div><motion style="text-align:right;color:var(--muted);font-family:var(--mono)">'+kv[1]+'</div></div>';
+      return '<div class="bar"><div>'+esc(kv[0])+'</div><div class="tr"><div class="fil" style="width:'+((100*kv[1]/mx).toFixed(0))+'%"></div></div><div style="text-align:right;color:var(--muted);font-family:var(--mono)">'+kv[1]+'</div></div>';
     }).join('');
     $('#fu').innerHTML=note+
       '<div class="kp"><div class="k"><span class="x">Scanned</span><span class="v">'+sc+'</span></div>'+
@@ -280,6 +295,52 @@ _CLIENT_JS = r"""
     $('#stamp').textContent=(d.generated_at||'?').replace('T',' ').slice(11,19)+'Z';
     renderFunnel(d,st); renderCandidates(d); renderPositions(d); renderAlerts(d); renderMomentum(d); renderScan(d);
   }
+
+  function renderCatalog(){
+    var cat=(boot.settings_catalog||[]);
+    var el=$('#catalog'); if(!el||!cat.length) return;
+    el.innerHTML=cat.map(function(it){
+      return '<li><b>'+esc(it.n)+'. '+esc(it.title)+'</b> — '+esc(it.detail)+'</li>';
+    }).join('');
+  }
+  function pulseClass(level){return level==='bad'?'bad':(level==='warn'?'warn':'ok');}
+  function renderOptimizer(opt){
+    if(!opt) return;
+    var auto=$('#opt-auto');
+    if(auto) auto.checked=!!opt.auto_apply_enabled;
+    var pulse=opt.market_pulse||[];
+    var pel=$('#opt-pulse');
+    if(pel){
+      pel.innerHTML=pulse.map(function(p){
+        return '<span class="pulse-chip '+pulseClass(p.level)+'" title="'+esc(p.text)+'"><b>'+esc(p.label)+'</b> '+esc(p.text)+'</span>';
+      }).join('');
+    }
+    var rec=$('#opt-reco');
+    if(rec){
+      var keys=Object.keys(opt.recommended_patch||{});
+      if(!keys.length) rec.textContent='Optimizer waiting for dashboard.json…';
+      else if(opt.auto_apply_enabled) rec.innerHTML='<span class="live-ok">Auto-tune ON</span> — last targets: '+keys.map(function(k){return esc(k)+'='+esc(String(opt.recommended_patch[k]));}).join(', ');
+      else rec.innerHTML='<span class="live-warn">Auto-tune OFF</span> — suggestions only: '+keys.slice(0,6).map(function(k){return esc(k)+'='+esc(String(opt.recommended_patch[k]));}).join(', ')+
+        (opt.budget_usd&&opt.budget_usd.example?'<br/>'+esc(opt.budget_usd.example):'');
+    }
+  }
+  async function pollOptimizer(){
+    try{
+      var opt=await gj('/api/optimizer');
+      renderOptimizer(opt);
+    }catch(e){}
+  }
+  var optAuto=$('#opt-auto');
+  if(optAuto){
+    optAuto.onchange=function(){
+      fetch('/api/optimizer/toggle',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({enabled:optAuto.checked})})
+        .then(function(r){return r.json();})
+        .then(function(d){renderOptimizer(d); showBan('ban-ok', optAuto.checked?'<b>Auto-tune ON</b>':'<b>Auto-tune OFF</b> (still analyzing)'); loadSettings().catch(function(){});})
+        .catch(function(e){showBan('ban-err',esc(String(e)));});
+    };
+  }
+
   async function refresh(){
     var st=null; try{st=await gj('/api/status');}catch(e){}
     try{

@@ -30,6 +30,14 @@ from raydium_lp1.dashboard import (
 )
 from raydium_lp1.dashboard_web_assets import _CLIENT_JS, _CSS_HTML
 from raydium_lp1.settings_io import load_settings_json, merge_known_settings_patch
+from raydium_lp1.settings_optimizer import (
+    DEFAULT_STATE_PATH as OPTIMIZER_STATE_PATH,
+    SETTINGS_CATALOG,
+    analyze,
+    apply_recommendations,
+    run_cycle,
+    set_auto_apply,
+)
 from raydium_lp1.strategies import ALLOWED_STRATEGIES
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.json")
@@ -151,6 +159,11 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "scan_tune_mode", "label": "Tune mode (TVL sort, no routes)", "type": "checkbox"},
             {"key": "scan_hyper_apr_mode", "label": "Hyper-APR mode (APR-ranked shortlist)", "type": "checkbox"},
             {"key": "sort_candidates_by_apr", "label": "Sort shortlist by APR", "type": "checkbox"},
+            {
+                "key": "settings_optimizer_auto_apply",
+                "label": "Auto-tune settings (optimizer)",
+                "type": "checkbox",
+            },
         ],
     },
 ]
@@ -268,8 +281,22 @@ def _embed_json_in_html_script(payload: dict[str, Any]) -> str:
     return raw.replace("<", "\\u003c").replace(">", "\\u003e")
 
 
+def _optimizer_api(paths: WebPaths, *, force_apply: bool = False) -> dict[str, Any]:
+    snap = run_cycle(settings_path=paths.settings_path, dashboard_path=paths.dashboard_path)
+    if force_apply:
+        apply_recommendations(snap, paths.settings_path, force=True)
+    state = snap.to_dict()
+    try:
+        current = load_settings_json(paths.settings_path)
+    except (OSError, ValueError):
+        current = {}
+    state["current_settings"] = {k: current.get(k) for k in snap.recommended_patch}
+    state["settings_catalog"] = SETTINGS_CATALOG
+    return state
+
+
 def _page() -> bytes:
-    boot_payload = {"form_sections": _FORM_SECTIONS}
+    boot_payload = {"form_sections": _FORM_SECTIONS, "settings_catalog": SETTINGS_CATALOG}
     html = (
         _CSS_HTML.replace(
             "BOOT_JSON",
@@ -348,10 +375,46 @@ def main(argv: list[str] | None = None) -> int:
             if path == "/api/status":
                 self._send_json(200, _status_payload(paths))
                 return
+            if path == "/api/optimizer":
+                try:
+                    self._send_json(200, _optimizer_api(paths))
+                except OSError as exc:
+                    self._send_json(500, {"error": str(exc)})
+                return
+            if path == "/api/settings/help":
+                self._send_json(200, {"catalog": SETTINGS_CATALOG})
+                return
             self._send_json(404, {"error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
             path = up.urlparse(self.path).path
+            if path == "/api/optimizer/toggle":
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                raw_body = self.rfile.read(length) if length > 0 else b"{}"
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except json.JSONDecodeError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                enabled = bool(body.get("enabled"))
+                try:
+                    set_auto_apply(enabled, paths.settings_path)
+                except (OSError, ValueError) as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                snap = run_cycle(settings_path=paths.settings_path, dashboard_path=paths.dashboard_path)
+                if enabled:
+                    apply_recommendations(snap, paths.settings_path, force=True)
+                self._send_json(200, snap.to_dict())
+                return
+            if path == "/api/optimizer/apply":
+                try:
+                    snap = run_cycle(settings_path=paths.settings_path, dashboard_path=paths.dashboard_path)
+                    applied = apply_recommendations(snap, paths.settings_path, force=True)
+                    self._send_json(200, {"ok": True, "applied": applied, "snapshot": snap.to_dict()})
+                except (OSError, ValueError) as exc:
+                    self._send_json(400, {"error": str(exc)})
+                return
             if path != "/api/settings":
                 self._send_json(404, {"error": "not found"})
                 return

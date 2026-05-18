@@ -1840,6 +1840,15 @@ def main(argv: list[str] | None = None) -> int:
                 alerts_path=Path(config.emergency_alerts_path),
             )
             dashboard_mod.write_dashboard(data)
+            try:
+                from raydium_lp1 import settings_optimizer
+
+                settings_optimizer.run_cycle(
+                    settings_path=config_path,
+                    dashboard_path=dashboard_mod.DEFAULT_DASHBOARD_PATH,
+                )
+            except OSError:
+                pass
             print("")
             dashboard_mod.print_dashboard(data)
 

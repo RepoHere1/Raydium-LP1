@@ -75,4 +75,5 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "spawn_verdict_watcher",
     "scan_tune_mode",
     "scan_hyper_apr_mode",
+    "settings_optimizer_auto_apply",
 )
