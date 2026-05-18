@@ -30,14 +30,14 @@ if ($ScannerOnly) {
     exit $LASTEXITCODE
 }
 
-$stackArgs = @(
-    "-Config", $config,
-    "-Interval", "$Interval",
-    "-ShowRejects", "$ShowRejects",
-    "-WebPort", "$WebPort",
-    "-WebHost", $WebHost
-)
-if ($UseSeparateWindows) { $stackArgs += "-UseSeparateWindows" }
+$stackParams = @{
+    Config       = $config
+    Interval     = $Interval
+    ShowRejects  = $ShowRejects
+    WebPort      = $WebPort
+    WebHost      = $WebHost
+}
+if ($UseSeparateWindows) { $stackParams["UseSeparateWindows"] = $true }
 
-& (Join-Path $here "run_scan_dashboard_stack.ps1") @stackArgs @args
+& (Join-Path $here "run_scan_dashboard_stack.ps1") @stackParams
 exit $LASTEXITCODE
