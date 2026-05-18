@@ -184,14 +184,25 @@ _CLIENT_JS = r"""
   }
   function poolAddressesHtml(p){
     var pool=String(p.pool_id||'');
+    var lp=String(p.lp_mint_address||'');
+    var mkt=String(p.market_id||'');
+    var rurl=String(p.raydium_add_url||'');
     var tokens=tokenMintRows(p);
-    var html='<div class="addr-row"><div class="addr-cell pool-cell"><span class="addr-label">Pool</span><span class="addr-full">'+esc(pool)+'</span></div>';
+    var html='<div class="addr-row"><div class="addr-cell pool-cell"><span class="addr-label">Pool state (Raydium id)</span><span class="addr-full">'+esc(pool)+'</span>';
+    if(rurl) html+=' <a href="'+esc(rurl)+'" target="_blank" rel="noopener" style="font-size:.68rem">Open on Raydium</a>';
+    html+='</div>';
     if(tokens.length){
       for(var ti=0;ti<tokens.length;ti++){
-        html+='<div class="addr-cell token-cell"><span class="addr-label">'+esc(tokens[ti].label)+'</span><span class="addr-full">'+esc(tokens[ti].addr)+'</span></div>';
+        html+='<div class="addr-cell token-cell"><span class="addr-label">'+esc(tokens[ti].label)+' mint</span><span class="addr-full">'+esc(tokens[ti].addr)+'</span></div>';
       }
     }
     html+='</div>';
+    if(lp&&lp!==pool){
+      html+='<p class="hint" style="margin:.25rem 0 0"><span class="addr-label">LP receipt mint (not the pool)</span> <span class="addr-full" style="display:inline">'+esc(lp)+'</span></p>';
+    }
+    if(mkt){
+      html+='<p class="hint" style="margin:.15rem 0 0"><span class="addr-label">OpenBook market</span> <span class="addr-full" style="display:inline">'+esc(mkt)+'</span></p>';
+    }
     return html;
   }
   function poolAddressOnlyHtml(poolId){
@@ -306,7 +317,8 @@ _CLIENT_JS = r"""
   }
   function feedNote(d,st){
     var ls=d.last_scan||{}, feed=ls.feed||{}, parts=[sortNote(d.settings||{})];
-    if(feed.is_partial&&feed.page) parts.push('LIVE page '+feed.page+'/'+(feed.pages_total||'?'));
+    if(feed.api_error) parts.push('API error — set pool_type=all');
+    else if(feed.is_partial&&feed.page) parts.push('LIVE page '+feed.page+'/'+(feed.pages_total||'?'));
     else{
       var at=(ls.scanned_at||d.generated_at||'').replace('T',' ').slice(0,19);
       if(at) parts.push('scan '+at+'Z');

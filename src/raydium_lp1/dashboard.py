@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterable
 
-from raydium_lp1 import emergency, health
+from raydium_lp1 import emergency, health, pool_verify
 
 DEFAULT_DASHBOARD_PATH = Path("reports/dashboard.json")
 SCAN_HEARTBEAT_PATH = Path("reports/scan_heartbeat.json")
@@ -120,14 +120,20 @@ def build_dashboard(
         for candidate in report.get("candidates", [])[: report.get("candidate_count", 0)]:
             h = candidate.get("health") or {}
             mom = candidate.get("momentum") or {}
+            pool_id = str(candidate.get("id") or "")
             positions.append(
                 {
-                    "pool_id": candidate.get("id"),
+                    "pool_id": pool_id,
                     "pair": f"{candidate.get('mint_a_symbol', '')}/{candidate.get('mint_b_symbol', '')}",
                     "mint_a": candidate.get("mint_a", ""),
                     "mint_b": candidate.get("mint_b", ""),
                     "mint_a_symbol": candidate.get("mint_a_symbol", ""),
                     "mint_b_symbol": candidate.get("mint_b_symbol", ""),
+                    "lp_mint_address": candidate.get("lp_mint_address", ""),
+                    "market_id": candidate.get("market_id", ""),
+                    "program_id": candidate.get("program_id", ""),
+                    "pool_type": candidate.get("type", ""),
+                    "raydium_add_url": pool_verify.raydium_ui_url(pool_id) if pool_id else "",
                     "apr": candidate.get("apr"),
                     "liquidity_usd": candidate.get("liquidity_usd"),
                     "volume_24h_usd": candidate.get("volume_24h_usd"),

@@ -3,6 +3,7 @@
   "network": "solana",
   "strategy": "custom",
   "scan_hyper_apr_mode": true,
+  "pool_type": "all",
   "pool_sort_field": "liquidity",
   "sort_type": "desc",
   "apr_field": "apr24h",

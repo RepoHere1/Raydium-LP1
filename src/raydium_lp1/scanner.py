@@ -30,6 +30,7 @@ from raydium_lp1.http_json import load_json_from_urlopen_response
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
+DEFAULT_POOL_TYPE = "all"
 DEFAULT_CONFIG_PATH = Path("config/settings.json")
 FALLBACK_CONFIG_PATH = Path("config/filters.example.json")
 DEFAULT_ENV_PATH = Path(".env")
@@ -72,7 +73,7 @@ class ScannerConfig:
     pages: int = 1
     http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS
     page_delay_seconds: float = DEFAULT_PAGE_DELAY_SECONDS
-    pool_type: str = "all"
+    pool_type: str = DEFAULT_POOL_TYPE
     sort_type: str = "desc"
     min_liquidity_usd: float = 1_000.0
     min_volume_24h_usd: float = 100.0
@@ -175,7 +176,7 @@ class ScannerConfig:
             pages=_clamp_pages(int(raw_with_strategy.get("pages", cls.pages))),
             http_timeout_seconds=max(3, int(raw_with_strategy.get("http_timeout_seconds", DEFAULT_HTTP_TIMEOUT_SECONDS))),
             page_delay_seconds=max(0.0, float(raw_with_strategy.get("page_delay_seconds", DEFAULT_PAGE_DELAY_SECONDS))),
-            pool_type=str(raw_with_strategy.get("pool_type", cls.pool_type)),
+            pool_type=effective_pool_type(str(raw_with_strategy.get("pool_type", cls.pool_type))),
             sort_type=str(raw_with_strategy.get("sort_type", cls.sort_type)),
             min_liquidity_usd=float(raw_with_strategy.get("min_liquidity_usd", cls.min_liquidity_usd)),
             min_volume_24h_usd=float(raw_with_strategy.get("min_volume_24h_usd", cls.min_volume_24h_usd)),
@@ -272,6 +273,13 @@ def _clamp_pages(requested: int) -> int:
         )
         return MAX_PAGES_HARD_CEILING
     return requested
+
+
+def effective_pool_type(pool_type: str | None) -> str:
+    """Raydium list API returns HTTP 500 when ``poolType`` is empty — use ``all``."""
+
+    value = str(pool_type or "").strip()
+    return value if value else DEFAULT_POOL_TYPE
 
 
 def _clamp_page_size(requested: int) -> int:
@@ -465,6 +473,7 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
     lp_mint_address = str(lp_mint_obj.get("address") or "")
     cfg_obj = pool.get("config") if isinstance(pool.get("config"), dict) else {}
     config_account_id = str(cfg_obj.get("id") or "")
+    market_id = str(pool.get("marketId") or pool.get("market_id") or "")
     pool_state_id = str(nested_get(pool, "poolId", "ammId", "id", default=""))
 
     return {
@@ -494,6 +503,7 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
         "mint_a_tags": list(mint_a.get("tags") or []) if isinstance(mint_a, dict) else [],
         "mint_b_tags": list(mint_b.get("tags") or []) if isinstance(mint_b, dict) else [],
         "lp_mint_address": lp_mint_address,
+        "market_id": market_id,
         "config_account_id": config_account_id,
         "raw": pool,
     }
@@ -655,7 +665,7 @@ def print_scan_config_warnings(config: ScannerConfig, *, stream_cfg: verdicts.St
 
 def pool_list_url(config: ScannerConfig, page: int = 1) -> str:
     params = {
-        "poolType": config.pool_type,
+        "poolType": effective_pool_type(config.pool_type),
         "poolSortField": raydium_pool_sort_param(config),
         "sortType": config.sort_type,
         "pageSize": config.page_size,
@@ -979,6 +989,7 @@ def scan(
             )
             if page < config.pages and config.page_delay_seconds > 0:
                 time.sleep(config.page_delay_seconds)
+            page += 1
             continue
         items = extract_pool_items(response)
         page_pools = [normalize_pool(item, config.apr_field) for item in items]
@@ -1132,6 +1143,14 @@ def scan(
             file=sys.stderr,
             flush=True,
         )
+    if pages_failed >= config.pages and scanned == 0:
+        print(
+            "[scan] ERROR: Raydium returned no pool pages (check pool_type=all in settings — "
+            "empty poolType causes HTTP 500). Candidates cleared for this cycle.",
+            file=sys.stderr,
+            flush=True,
+        )
+        candidates.clear()
 
     health_summary = {"healthy": 0, "warning": 0, "critical": 0}
     triggered_alerts: list[dict[str, Any]] = []
@@ -1342,10 +1361,12 @@ def scan(
         "sort_candidates_by_momentum": config.sort_candidates_by_momentum,
         "pages_total": config.pages,
         "scan_feed": {
-            "phase": "complete",
+            "phase": "api_error" if pages_failed >= config.pages and scanned == 0 else "complete",
             "page": config.pages,
             "pages_total": config.pages,
             "is_partial": False,
+            "pages_failed": pages_failed,
+            "api_error": pages_failed >= config.pages and scanned == 0,
         },
     }
 

@@ -103,5 +103,7 @@ def merge_known_settings_patch(path: Path, patch: Mapping[str, Any]) -> dict[str
     prev = load_settings_json(path)
     merged = dict(prev)
     merged.update(pk)
+    if "pool_type" in merged and not str(merged.get("pool_type") or "").strip():
+        merged["pool_type"] = "all"
     write_settings_json(path, merged)
     return merged

@@ -67,7 +67,12 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "sort_type", "label": "Sort direction", "type": "select", "options": ["desc", "asc"]},
             {"key": "pages", "label": "Pages fetched", "type": "number"},
             {"key": "page_size", "label": "Page size", "type": "number"},
-            {"key": "pool_type", "label": "pool_type", "type": "text"},
+            {
+                "key": "pool_type",
+                "label": "pool_type (Raydium)",
+                "type": "select",
+                "options": ["all", "standard", "concentrated", "stable"],
+            },
             {"key": "page_delay_seconds", "label": "Page delay (s)", "type": "number", "step": "any"},
             {"key": "http_timeout_seconds", "label": "HTTP timeout", "type": "number"},
         ],
