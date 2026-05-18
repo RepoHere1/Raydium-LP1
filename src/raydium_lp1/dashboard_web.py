@@ -335,7 +335,13 @@ def main(argv: list[str] | None = None) -> int:
 
         def _send_json(self, code: int, obj: Any) -> None:
             raw = json.dumps(obj, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-            self._send(code, raw, "application/json; charset=utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.end_headers()
+            self.wfile.write(raw)
 
         def do_GET(self) -> None:  # noqa: N802
             path = up.urlparse(self.path).path

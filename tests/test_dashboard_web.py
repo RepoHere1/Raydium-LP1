@@ -26,6 +26,8 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("tuning-panel", page)
         self.assertIn("addr-row", page)
         self.assertIn("setTuningUi", page)
+        self.assertIn("feedNote", page)
+        self.assertIn("schedulePoll", page)
 
 
 class DashboardWebDriftTests(unittest.TestCase):

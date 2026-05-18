@@ -96,7 +96,7 @@ a{color:var(--a);text-decoration:none}a:hover{text-decoration:underline}
 @media(max-width:720px){.addr-row{flex-wrap:wrap}.addr-cell.token-cell{border-left:none;padding-left:0;border-top:1px solid #333;padding-top:.45rem}}
 </style></head><body>
 <header><h1>Raydium-LP1 · mission control</h1><span class="tag live">127.0.0.1</span><span class="tag" id="stamp">loading…</span>
-<div class="tb"><label class="hdr"><input type="checkbox" id="auto" checked/> Auto 5s</label>
+<div class="tb"><label class="hdr"><input type="checkbox" id="auto" checked/> Auto refresh</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="primary">Save settings</button></div></header>
 <div class="tuning-wrap">
   <div class="cd tuning-panel" id="tuning-panel">
@@ -277,7 +277,9 @@ _CLIENT_JS = r"""
     return patch;
   }
   async function gj(url,opt){
-    var r=await fetch(url,opt), t=await r.text(), d;
+    var u=url;
+    if(u.indexOf('/api/')===0){u+=(u.indexOf('?')>=0?'&':'?')+'_='+Date.now();}
+    var r=await fetch(u,opt||{cache:'no-store'}), t=await r.text(), d;
     try{d=JSON.parse(t);}catch(e){throw new Error((t||'').slice(0,120));}
     if(!r.ok) throw new Error(d.error||t||r.status);
     return d;
@@ -302,17 +304,28 @@ _CLIENT_JS = r"""
       '<div class="k"><span class="x">Pass</span><span class="v">'+rate.toFixed(1)+'%</span></div></div>'+
       (bars?'<div class="sg">Reject categories</div>'+bars:'');
   }
-  function renderCandidates(d){
+  function feedNote(d,st){
+    var ls=d.last_scan||{}, feed=ls.feed||{}, parts=[sortNote(d.settings||{})];
+    if(feed.is_partial&&feed.page) parts.push('LIVE page '+feed.page+'/'+(feed.pages_total||'?'));
+    else{
+      var at=(ls.scanned_at||d.generated_at||'').replace('T',' ').slice(0,19);
+      if(at) parts.push('scan '+at+'Z');
+    }
+    if(st&&st.dashboard_mtime) parts.push('updated '+String(st.dashboard_mtime).replace('T',' ').slice(11,19)+'Z');
+    return parts.join(' · ');
+  }
+  function renderCandidates(d,st){
     var rows=(d.open_positions||[]).slice();
     rows.sort(function(a,b){return (Number(b.apr)||0)-(Number(a.apr)||0);});
-    var note=sortNote(d.settings||{});
-    $('#cand-note').textContent='('+note+')';
+    var feed=(d.last_scan||{}).feed||{};
+    var live=feed.is_partial;
+    $('#cand-note').textContent='('+feedNote(d,st)+')';
     if(!rows.length){$('#cand').innerHTML='<p class="hint">No candidates yet.</p>';return;}
     $('#cand').innerHTML='<table class="tb2"><thead><tr><th>Pair</th><th class="num">APR%</th><th class="num">TVL</th><th class="num">VOL24</th><th>Mom</th><th>Health</th><th>Pool + token mints</th></tr></thead><tbody>'+
       rows.map(function(p,i){
         var mom=(p.momentum_score!=null)?esc(String(p.momentum_score))+' '+esc(String(p.momentum_tier||'')):'—';
         return '<tr><td>'+esc(p.pair||'')+'</td><td class="num">'+aprPct(p.apr)+'</td><td class="num">'+money(p.liquidity_usd)+'</td><td class="num">'+money(p.volume_24h_usd)+'</td><td>'+mom+'</td><td>'+pill(p.health)+'</td><td class="addr-td">'+poolAddressesHtml(p)+'</td></tr>';
-      }).join('')+'</tbody></table><p class="hint">Full pool + token mints (select to copy). SOL/WSOL mint hidden.</p>';
+      }).join('')+'</tbody></table><p class="hint">'+(live?'<span class="live-warn">Live feed</span> — list grows each Raydium page. ':'')+'Full pool + token mints (select to copy). SOL/WSOL mint hidden.</p>';
   }
   function renderPositions(d){
     var rows=d.open_positions||[];
@@ -377,7 +390,7 @@ _CLIENT_JS = r"""
   }
   function renderAll(d,st){
     $('#stamp').textContent=(d.generated_at||'?').replace('T',' ').slice(11,19)+'Z';
-    renderFunnel(d,st); renderCandidates(d); renderPositions(d); renderAlerts(d); renderMomentum(d); renderScan(d);
+    renderFunnel(d,st); renderCandidates(d,st); renderPositions(d); renderAlerts(d); renderMomentum(d); renderScan(d);
   }
 
   function renderCatalog(){
@@ -443,8 +456,13 @@ _CLIENT_JS = r"""
       $('#cand').innerHTML='<p class="hint">Candidates appear after first scan.</p>';
     }
     try{
-      if(st&&st.scanner_scanning) showBan('ban-warn','<b>Scanner running</b> — tables update when scan completes.');
+      if(st&&st.scanner_scanning){
+        var hb=st.heartbeat||{};
+        showBan('ban-warn','<b>Scan in progress</b> — candidates refresh live after each Raydium page ('+
+          esc(hb.page||'?')+'/'+esc(hb.pages_total||'?')+', '+esc(hb.candidates_so_far||0)+' pass so far).');
+      }
     }catch(e){}
+    return st;
   }
   async function loadSettings(){var s=await gj('/api/settings'); mount(s);}
   async function pollStatus(){try{var st=await gj('/api/status'); renderLive(st);}catch(e){}}
@@ -462,9 +480,18 @@ _CLIENT_JS = r"""
         }).catch(function(e){showBan('ban-err',esc(String(e)));});
     }catch(e){showBan('ban-err',esc(String(e)));}
   };
-  var timer=null;
-  function arm(){clearInterval(timer); if($('#auto').checked) timer=setInterval(function(){refresh().catch(function(){});},5000);}
-  $('#auto').onchange=arm;
-  refresh().catch(function(){}); loadSettings().catch(function(){}); pollStatus(); pollOptimizer(); setInterval(pollStatus,12000); setInterval(pollOptimizer,12000); arm();
+  var pollTimer=null;
+  function schedulePoll(){
+    clearTimeout(pollTimer);
+    if(!$('#auto').checked) return;
+    refresh().then(function(st){
+      var ms=(st&&st.scanner_scanning)?2000:5000;
+      pollTimer=setTimeout(schedulePoll,ms);
+    }).catch(function(){ pollTimer=setTimeout(schedulePoll,5000); });
+  }
+  $('#auto').onchange=function(){schedulePoll();};
+  refresh().then(function(){schedulePoll();}).catch(function(){schedulePoll();});
+  loadSettings().catch(function(){}); pollStatus(); pollOptimizer();
+  setInterval(pollStatus,8000); setInterval(pollOptimizer,12000);
 })();
 """

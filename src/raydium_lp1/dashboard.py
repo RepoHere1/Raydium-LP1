@@ -161,6 +161,15 @@ def build_dashboard(
     diag = report.get("scan_diagnosis")
     diagnosis_out = diag if isinstance(diag, dict) else {}
 
+    feed = report.get("scan_feed")
+    if not isinstance(feed, dict):
+        feed = {
+            "phase": "complete",
+            "page": report.get("pages_total"),
+            "pages_total": report.get("pages_total"),
+            "is_partial": False,
+        }
+
     last_scan = {
         "scanned_at": report.get("scanned_at"),
         "scanned_count": report.get("scanned_count", 0),
@@ -174,6 +183,7 @@ def build_dashboard(
         "rejection_breakdown": breakdown,
         "rejection_reason_histogram": hist_out,
         "scan_diagnosis": diagnosis_out,
+        "feed": feed,
     }
 
     return DashboardData(
@@ -192,6 +202,54 @@ def write_dashboard(data: DashboardData, path: Path = DEFAULT_DASHBOARD_PATH) ->
     path.parent.mkdir(parents=True, exist_ok=True)
     # sort_keys=False keeps rejection histogram / category order meaningful for UI consumers.
     path.write_text(json.dumps(data.to_dict(), indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
+def write_live_scan_dashboard(
+    *,
+    config,
+    candidates: list[dict],
+    scanned_count: int,
+    rejected_count: int,
+    rejection_breakdown: dict[str, int] | None = None,
+    scan_phase: str = "scanning",
+    scan_page: int | None = None,
+    pages_total: int | None = None,
+    raydium_api_base: str = "",
+    sort_by_apr: bool = False,
+    path: Path = DEFAULT_DASHBOARD_PATH,
+) -> None:
+    """Write ``dashboard.json`` mid-scan so the web UI can show a live candidate feed."""
+
+    cands = list(candidates)
+    if sort_by_apr:
+        cands.sort(key=lambda p: float(p.get("apr") or 0), reverse=True)
+
+    report: dict = {
+        "scanned_at": _now_iso(),
+        "scanned_count": scanned_count,
+        "candidate_count": len(cands),
+        "candidate_count_pre_capacity": len(cands),
+        "candidates_truncated": 0,
+        "rejected_count": rejected_count,
+        "rejection_breakdown": dict(rejection_breakdown or {}),
+        "rejection_reason_histogram": {},
+        "candidates": cands,
+        "health_summary": {},
+        "triggered_alerts": [],
+        "raydium_api_base": raydium_api_base,
+        "momentum_hot_top": [],
+        "wallet_capacity": {},
+        "scan_diagnosis": {},
+        "pages_total": pages_total,
+        "scan_feed": {
+            "phase": scan_phase,
+            "page": scan_page,
+            "pages_total": pages_total,
+            "is_partial": scan_phase not in {"complete", "scan_complete"},
+        },
+    }
+    data = build_dashboard(config=config, report=report)
+    write_dashboard(data, path=path)
 
 
 def write_scan_heartbeat(

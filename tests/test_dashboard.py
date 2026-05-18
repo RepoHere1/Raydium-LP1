@@ -68,6 +68,38 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertIn("liquidity small", data.last_scan["rejection_reason_histogram"])
         self.assertEqual(data.last_scan["scan_diagnosis"]["scan_signal"], "test")
 
+    def test_write_live_scan_dashboard_sets_partial_feed(self):
+        config = ScannerConfig(sort_candidates_by_apr=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "dashboard.json"
+            dashboard.write_live_scan_dashboard(
+                config=config,
+                candidates=[
+                    {
+                        "id": "pool-a",
+                        "mint_a_symbol": "SOL",
+                        "mint_b_symbol": "AAA",
+                        "mint_a": "So11111111111111111111111111111111111111112",
+                        "mint_b": "MintA",
+                        "apr": 80.0,
+                        "liquidity_usd": 500000.0,
+                        "volume_24h_usd": 10000.0,
+                    }
+                ],
+                scanned_count=50,
+                rejected_count=40,
+                rejection_breakdown={"apr_below_threshold": 30},
+                scan_phase="scanning",
+                scan_page=2,
+                pages_total=10,
+                path=path,
+            )
+            blob = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue(blob["last_scan"]["feed"]["is_partial"])
+        self.assertEqual(blob["last_scan"]["feed"]["page"], 2)
+        self.assertEqual(len(blob["open_positions"]), 1)
+        self.assertNotEqual(blob["generated_at"], "")
+
     def test_render_text_has_expected_sections(self):
         config = ScannerConfig()
         data = dashboard.build_dashboard(config=config, report=self._report(),

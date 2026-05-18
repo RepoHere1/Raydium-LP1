@@ -837,6 +837,7 @@ def scan(
     rpc_post: Any = None,
     verdict_stream: verdicts.StreamConfig | None = None,
     write_rejections_override: bool | None = None,
+    live_dashboard: bool = True,
 ) -> dict[str, Any]:
     """Run a single scan pass.
 
@@ -1095,6 +1096,23 @@ def scan(
                 rejected=page_reject,
                 suppressed_this_page=suppressed_this_page,
             )
+        if live_dashboard:
+            try:
+                dashboard_mod.write_live_scan_dashboard(
+                    config=config,
+                    candidates=candidates,
+                    scanned_count=scanned,
+                    rejected_count=len(rejected),
+                    rejection_breakdown={str(k): int(v) for k, v in rejection_counts.items()},
+                    scan_phase="scanning",
+                    scan_page=page,
+                    pages_total=config.pages,
+                    raydium_api_base=config.raydium_api_base,
+                    sort_by_apr=config.sort_candidates_by_apr,
+                )
+            except OSError:
+                pass
+
         if page < config.pages and config.page_delay_seconds > 0:
             time.sleep(config.page_delay_seconds)
         page += 1
@@ -1322,6 +1340,13 @@ def scan(
         "scan_hyper_apr_mode": config.scan_hyper_apr_mode,
         "sort_candidates_by_apr": config.sort_candidates_by_apr,
         "sort_candidates_by_momentum": config.sort_candidates_by_momentum,
+        "pages_total": config.pages,
+        "scan_feed": {
+            "phase": "complete",
+            "page": config.pages,
+            "pages_total": config.pages,
+            "is_partial": False,
+        },
     }
 
 
