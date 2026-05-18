@@ -124,6 +124,8 @@ class ScannerConfig:
     momentum_sweet_max_pool_age_hours: float = 168.0
     momentum_min_tvl_usd: float = 0.0
     sort_candidates_by_momentum: bool = True
+    # When momentum is off, rank the shortlist by Raydium ``day.apr`` (highest first).
+    sort_candidates_by_apr: bool = False
     momentum_top_hot: int = 25
     momentum_detective_enabled: bool = True
     momentum_probe_market_lists: bool = True
@@ -140,6 +142,8 @@ class ScannerConfig:
     risk_profile: str = "balanced"  # balanced | degen
     # Fast candidate discovery: TVL sort, no Jupiter route probes, no on-chain verify.
     scan_tune_mode: bool = False
+    # High-APR discovery: liquid pools first, APR-ranked shortlist (matches raydium.io day.apr).
+    scan_hyper_apr_mode: bool = False
 
     def __post_init__(self) -> None:
         """Drop invalid RPC URLs from any construction path (not only ``from_file``)."""
@@ -234,6 +238,7 @@ class ScannerConfig:
             ),
             momentum_min_tvl_usd=float(raw_with_strategy.get("momentum_min_tvl_usd", 0.0)),
             sort_candidates_by_momentum=bool(raw_with_strategy.get("sort_candidates_by_momentum", True)),
+            sort_candidates_by_apr=bool(raw_with_strategy.get("sort_candidates_by_apr", False)),
             momentum_top_hot=max(1, int(raw_with_strategy.get("momentum_top_hot", 25))),
             momentum_detective_enabled=bool(raw_with_strategy.get("momentum_detective_enabled", True)),
             momentum_probe_market_lists=bool(raw_with_strategy.get("momentum_probe_market_lists", True)),
@@ -248,6 +253,7 @@ class ScannerConfig:
             lp_max_positions_per_mint=max(1, int(raw_with_strategy.get("lp_max_positions_per_mint", 2))),
             risk_profile=str(raw_with_strategy.get("risk_profile") or "balanced"),
             scan_tune_mode=bool(raw_with_strategy.get("scan_tune_mode", False)),
+            scan_hyper_apr_mode=bool(raw_with_strategy.get("scan_hyper_apr_mode", False)),
         )
 
 
@@ -577,8 +583,23 @@ def raydium_pool_sort_param(config: ScannerConfig) -> str:
 
 
 def effective_scan_config(config: ScannerConfig) -> ScannerConfig:
-    """Apply fast tune overrides (TVL sort, no route/RPC verify)."""
+    """Apply fast tune / hyper-APR overrides (no route/RPC verify during discovery)."""
 
+    if config.scan_hyper_apr_mode:
+        sort_field = (config.pool_sort_field or "").strip() or "liquidity"
+        return replace(
+            config,
+            pool_sort_field=sort_field,
+            require_sell_route=False,
+            verify_pool_on_chain=False,
+            verify_pool_raydium_api=False,
+            require_verified_raydium_pool=False,
+            momentum_enabled=False,
+            momentum_detective_enabled=False,
+            momentum_probe_market_lists=False,
+            sort_candidates_by_momentum=False,
+            sort_candidates_by_apr=True,
+        )
     if not config.scan_tune_mode:
         return config
     sort_field = (config.pool_sort_field or "").strip() or "liquidity"
@@ -592,6 +613,8 @@ def effective_scan_config(config: ScannerConfig) -> ScannerConfig:
         momentum_enabled=False,
         momentum_detective_enabled=False,
         momentum_probe_market_lists=False,
+        sort_candidates_by_momentum=False,
+        sort_candidates_by_apr=True,
     )
 
 
@@ -601,10 +624,20 @@ def print_scan_config_warnings(config: ScannerConfig, *, stream_cfg: verdicts.St
     if not stream_cfg or not stream_cfg.enabled:
         return
     sort_by = raydium_pool_sort_param(config)
+    if config.scan_hyper_apr_mode:
+        print(
+            "[scan] HYPER-APR MODE — Raydium list by "
+            f"{sort_by}; shortlist ranked by day.apr (same % as raydium.io). "
+            f"min_apr={config.min_apr} min_liquidity_usd={config.min_liquidity_usd:,.0f}; "
+            "no Jupiter route probes.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
     if config.scan_tune_mode:
         print(
             "[scan] TUNE MODE — sorted by "
-            f"{sort_by}, no sell-route probes, no on-chain verify (fast candidate discovery).",
+            f"{sort_by}, shortlist ranked by day.apr; no sell-route probes, no on-chain verify.",
             file=sys.stderr,
             flush=True,
         )
@@ -1130,6 +1163,8 @@ def scan(
                                     or (p.get("momentum") or {}).get("score") or 0),
                 reverse=True,
             )
+    elif config.sort_candidates_by_apr and candidates:
+        candidates.sort(key=lambda p: float(p.get("apr") or 0), reverse=True)
         momentum_hot_top = momentum_detective.build_hot_leaderboard(
             candidates, top_n=config.momentum_top_hot
         )
@@ -1283,6 +1318,10 @@ def scan(
         "momentum_hold_hours": config.momentum_hold_hours,
         "momentum_hot_top": momentum_hot_top,
         "momentum_market_pulse_sizes": {k: len(v) for k, v in market_pulse.items()},
+        "scan_tune_mode": config.scan_tune_mode,
+        "scan_hyper_apr_mode": config.scan_hyper_apr_mode,
+        "sort_candidates_by_apr": config.sort_candidates_by_apr,
+        "sort_candidates_by_momentum": config.sort_candidates_by_momentum,
     }
 
 
@@ -1358,7 +1397,13 @@ def print_report(report: dict[str, Any]) -> None:
         print_reject_dial_in_hints(report)
         return
 
-    print("\nCandidates (dry-run watch list; sorted by momentum when enabled)")
+    if report.get("sort_candidates_by_apr"):
+        sort_note = "sorted by Raydium day.apr (highest first)"
+    elif report.get("momentum_enabled") and report.get("sort_candidates_by_momentum", True):
+        sort_note = "sorted by momentum score"
+    else:
+        sort_note = "Raydium page order"
+    print(f"\nCandidates (dry-run watch list; {sort_note})")
     if report.get("momentum_enabled"):
         hold = report.get("momentum_hold_hours", 24)
         print(f"  Momentum hold bias: ~{hold:.0f}h — exit when health=critical or momentum tier=exit_now")

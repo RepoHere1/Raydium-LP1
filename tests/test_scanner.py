@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from raydium_lp1.scanner import (
     ScannerConfig,
+    effective_scan_config,
     extract_pool_items,
     filter_pool,
     load_dotenv,
@@ -168,6 +169,21 @@ class ScannerTests(unittest.TestCase):
             write_reports(report, Path(tempdir))
             self.assertTrue((Path(tempdir) / "latest.json").exists())
             self.assertTrue((Path(tempdir) / "candidates.csv").exists())
+
+
+class EffectiveScanConfigTests(unittest.TestCase):
+    def test_tune_mode_enables_apr_shortlist_sort(self):
+        cfg = ScannerConfig(scan_tune_mode=True, sort_candidates_by_apr=False)
+        effective = effective_scan_config(cfg)
+        self.assertTrue(effective.sort_candidates_by_apr)
+        self.assertFalse(effective.sort_candidates_by_momentum)
+
+    def test_hyper_apr_mode_keeps_liquidity_sort_and_apr_rank(self):
+        cfg = ScannerConfig(scan_hyper_apr_mode=True, pool_sort_field="", min_apr=50)
+        effective = effective_scan_config(cfg)
+        self.assertEqual(effective.pool_sort_field, "liquidity")
+        self.assertTrue(effective.sort_candidates_by_apr)
+        self.assertFalse(effective.require_sell_route)
 
 
 if __name__ == "__main__":

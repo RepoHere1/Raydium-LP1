@@ -228,6 +228,11 @@ _CLIENT_JS = r"""
   function $(s,r=document){return r.querySelector(s);}
   function esc(t){var d=document.createElement('div');d.textContent=t==null?'':String(t);return d.innerHTML;}
   function num(n){return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0});}
+  function aprPct(n){
+    var x=Number(n);
+    if(!isFinite(x)) return '0';
+    return x.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:2});
+  }
 
   function displayFor(f, raw){
     var k=f.key;
@@ -364,7 +369,7 @@ _CLIENT_JS = r"""
     if(!rows||!rows.length){$('#li').innerHTML='<p style="color:var(--m);margin:0">No candidates.</p>';return;}
     $('#li').innerHTML='<table class="tb2"><thead><tr><th>Pair</th><th>APR</th><th>TVL</th><th>VOL24</th><th>Mom</th><th>Pool</th></tr></thead><tbody>'+
       rows.slice(0,48).map(function(p){
-        return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'%</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+
+        return '<tr><td>'+esc(p.pair||'')+'</td><td>'+aprPct(p.apr)+'%</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+
           (p.momentum_score!=null?esc(String(p.momentum_score))+' '+esc(String(p.momentum_tier||'')):'')+'</td>'+
           '<td style="font-family:var(--mono);font-size:.72rem">'+esc(p.pool_id||p.id||'')+'</td></tr>';
       }).join('')+'</tbody></table>';
