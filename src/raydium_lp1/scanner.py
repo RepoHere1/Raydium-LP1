@@ -862,6 +862,15 @@ def scan(
     """
 
     config = effective_scan_config(config)
+    fixed_pool_type = effective_pool_type(config.pool_type)
+    if fixed_pool_type != str(config.pool_type or "").strip():
+        print(
+            f"[scan] fixed empty pool_type → {fixed_pool_type!r} "
+            f"(Raydium returns HTTP 500 for poolType=)",
+            file=sys.stderr,
+            flush=True,
+        )
+    config = replace(config, pool_type=fixed_pool_type)
 
     from collections import Counter as _Counter
     candidates: list[dict[str, Any]] = []
@@ -956,6 +965,13 @@ def scan(
         suppressed_at_page_start = stream_cfg.rejects_suppressed
         # Always announce the in-flight request so users can tell a slow
         # remote API apart from a hard hang.
+        if page == 1:
+            print(
+                f"[scan] Raydium list poolType={effective_pool_type(config.pool_type)!r} "
+                f"(settings pool_type={config.pool_type!r})",
+                file=sys.stderr,
+                flush=True,
+            )
         print(
             f"[scan] page {page}/{config.pages} (page_size={config.page_size}, "
             f"sort={raydium_pool_sort_param(config)}, timeout={config.http_timeout_seconds}s)...",
@@ -1740,6 +1756,16 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["RAYDIUM_LP1_STRATEGY"] = args.strategy
     config_path = resolve_config_path(args.config)
     try:
+        from raydium_lp1.settings_io import repair_settings_file_if_needed
+
+        repaired = repair_settings_file_if_needed(config_path)
+        if repaired:
+            print(
+                f"[scan] repaired {config_path}: {', '.join(repaired)} "
+                f"(empty pool_type breaks Raydium list API)",
+                file=sys.stderr,
+                flush=True,
+            )
         config = ScannerConfig.from_file(config_path)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

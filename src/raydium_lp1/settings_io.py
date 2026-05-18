@@ -20,6 +20,33 @@ def read_settings_text(path: Path) -> str:
     return raw.decode("utf-8")
 
 
+def sanitize_settings_dict(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Fix values that break Raydium API or the scanner (empty poolType → HTTP 500)."""
+
+    out = dict(data)
+    if not str(out.get("pool_type") or "").strip():
+        out["pool_type"] = "all"
+    if not str(out.get("pool_sort_field") or "").strip():
+        out["pool_sort_field"] = "liquidity"
+    return out
+
+
+def repair_settings_file_if_needed(path: Path) -> list[str]:
+    """Persist sanitized settings when disk has known-bad values; return keys changed."""
+
+    if not path.exists():
+        return []
+    text = read_settings_text(path)
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        return []
+    fixed = sanitize_settings_dict(data)
+    changed = sorted(k for k in fixed if data.get(k) != fixed.get(k))
+    if changed:
+        write_settings_json(path, fixed)
+    return changed
+
+
 def load_settings_json(path: Path) -> dict[str, Any]:
     """Parse settings JSON; raise ValueError with line context on failure."""
 
@@ -38,7 +65,7 @@ def load_settings_json(path: Path) -> dict[str, Any]:
             "at too low a -Depth (contains @{...} blobs). "
             "Run: .\\scripts\\repair_settings.ps1 -ApplyMomentumTemplate"
         )
-    return data
+    return sanitize_settings_dict(data)
 
 
 def format_json_decode_error(path: Path, text: str, exc: json.JSONDecodeError) -> str:
@@ -103,7 +130,6 @@ def merge_known_settings_patch(path: Path, patch: Mapping[str, Any]) -> dict[str
     prev = load_settings_json(path)
     merged = dict(prev)
     merged.update(pk)
-    if "pool_type" in merged and not str(merged.get("pool_type") or "").strip():
-        merged["pool_type"] = "all"
+    merged = sanitize_settings_dict(merged)
     write_settings_json(path, merged)
     return merged
