@@ -1,22 +1,43 @@
-# High-APR discovery — liquid Raydium pools, shortlist ranked by day.apr (matches raydium.io %).
-#
-#   cd C:\Users\Taylor\Raydium-LP1
-#   .\scripts\run_hyper_apr_scan.ps1
+# Hyper-APR discovery: Scanner + Web UI tabs + browser (default).
+# Scanner-only (no UI): .\scripts\run_hyper_apr_scan.ps1 -ScannerOnly
 param(
     [int]$Interval = 60,
-    [int]$ShowRejects = 0
+    [int]$ShowRejects = 0,
+    [int]$WebPort = 8844,
+    [string]$WebHost = "127.0.0.1",
+    [switch]$ScannerOnly,
+    [switch]$UseSeparateWindows
 )
 
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$config = Join-Path (Split-Path -Parent $here) "config\settings.hyper_apr.json"
+$repo = Split-Path -Parent $here
+$config = Join-Path $repo "config\settings.hyper_apr.json"
+
+if (-not (Test-Path -LiteralPath $config)) {
+    throw "Missing $config — git pull origin cursor/live-dashboard-web-dee0"
+}
 
 Write-Host ""
-Write-Host "=== HYPER-APR SCAN (TVL-ranked pages, APR-sorted shortlist) ===" -ForegroundColor Cyan
+Write-Host "=== HYPER-APR (Raydium day.apr, liquid pools) ===" -ForegroundColor Cyan
 Write-Host "Config: $config" -ForegroundColor DarkGray
-Write-Host "APR = Raydium pool.day.apr (same as the liquidity table on raydium.io)." -ForegroundColor DarkGray
-Write-Host "Do NOT paste lines that start with WHERE, CHECK, or LOOK into PowerShell." -ForegroundColor Yellow
+Write-Host "Do NOT paste WHERE / CHECK / LOOK lines into PowerShell." -ForegroundColor Yellow
 Write-Host ""
 
-& (Join-Path $here "run_scan_dashboard.ps1") -Config $config -Interval $Interval -ShowRejects $ShowRejects @args
+if ($ScannerOnly) {
+    Write-Host "[INFO] Scanner only — start Web UI separately: .\scripts\run_dashboard_web.ps1" -ForegroundColor DarkYellow
+    & (Join-Path $here "run_scan_dashboard.ps1") -Config $config -Interval $Interval -ShowRejects $ShowRejects @args
+    exit $LASTEXITCODE
+}
+
+$stackArgs = @(
+    "-Config", $config,
+    "-Interval", "$Interval",
+    "-ShowRejects", "$ShowRejects",
+    "-WebPort", "$WebPort",
+    "-WebHost", $WebHost
+)
+if ($UseSeparateWindows) { $stackArgs += "-UseSeparateWindows" }
+
+& (Join-Path $here "run_scan_dashboard_stack.ps1") @stackArgs @args
 exit $LASTEXITCODE

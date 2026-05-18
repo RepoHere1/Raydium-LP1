@@ -148,6 +148,8 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "scan_loop_interval_seconds", "label": "Loop interval hint (s)", "type": "number"},
             {"key": "spawn_verdict_watcher", "label": "Spawn verdict watcher", "type": "checkbox"},
             {"key": "scan_tune_mode", "label": "Tune mode (TVL sort, no routes)", "type": "checkbox"},
+            {"key": "scan_hyper_apr_mode", "label": "Hyper-APR mode (APR-ranked shortlist)", "type": "checkbox"},
+            {"key": "sort_candidates_by_apr", "label": "Sort shortlist by APR", "type": "checkbox"},
         ],
     },
 ]
@@ -155,52 +157,69 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
 _CSS_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Raydium-LP1 · funnel & settings</title>
 <style>
-:root{--bg:#0e1218;--panel:#171d27;--line:#293241;--txt:#eaf0fa;--m:#93a4ba;--a:#4596ff;--ok:#39d698;--no:#ff6b6b;--wm:#fdb34b;
+:root{--page:#fff;--page-txt:#1a2230;--page-muted:#5a6578;--line:#d8dee8;--a:#2563eb;--ok:#0d9f6e;--no:#d92d20;--wm:#b45309;
+--pitch:#000;--pitch-txt:#f2f4f8;--pitch-muted:#9aa8bc;--yellow:#e6c200;
 --sans:ui-sans-serif,system-ui,sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 600px at 10% -6%,#1a2638,#0e1218 55%);color:var(--txt);
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--page-txt);
 font:14px/1.45 var(--sans)}header{padding:.85rem 1rem;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;
-gap:.5rem 1rem;align-items:center;background:#131a26}h1{font-size:1.06rem;margin:0}
-.p{font-size:.65rem;letter-spacing:.06em;color:var(--m);border:1px solid var(--line);border-radius:999px;padding:.15rem .5rem;text-transform:uppercase}
-.pl{border-color:#5a4930;color:var(--wm)}.tb{margin-left:auto;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
-button{font:inherit;border-radius:8px;border:1px solid var(--line);background:#242d3d;color:var(--txt);padding:.4rem .8rem;cursor:pointer}
-button.p{background:rgba(69,150,255,.2);border-color:#3576c9;color:#8ec5ff;font-weight:600}
+gap:.5rem 1rem;align-items:center;background:#f7f8fa}h1{font-size:1.06rem;margin:0;color:var(--page-txt)}
+.p{font-size:.65rem;letter-spacing:.06em;color:var(--page-muted);border:1px solid var(--line);border-radius:999px;padding:.15rem .5rem;text-transform:uppercase}
+.pl{border-color:#e6c200;color:#8a6d00;background:#fffbeb}.tb{margin-left:auto;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+button{font:inherit;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--page-txt);padding:.4rem .8rem;cursor:pointer}
+button.p{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;font-weight:600}
 main{padding:1rem;max-width:1340px;margin:0 auto;display:grid;gap:1rem}@media(min-width:1060px){
 main{grid-template-columns:minmax(0,1.06fr) minmax(328px,.94fr)}}
-.cd{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
-.cd>h2{margin:0;padding:.62rem .9rem;background:#151c29;border-bottom:1px solid var(--line);font-size:.93rem;display:flex}
-.bd{padding:.88rem}.sg{font-size:.65rem;color:var(--m);margin:.72rem 0 .35rem;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.cd{border:1px solid var(--line);border-radius:12px;background:#f7f8fa;overflow:hidden}
+.cd-lite{background:#fff}
+.cd-pitch{background:var(--pitch);border:3px solid var(--yellow);border-radius:12px;color:var(--pitch-txt);box-shadow:0 0 0 1px rgba(230,194,0,.35)}
+.cd-pitch>h2{margin:0;padding:.62rem .9rem;background:var(--pitch);border-bottom:1px solid #2a2a2a;font-size:.93rem;display:flex;color:var(--pitch-txt)}
+.cd-pitch .bd{background:var(--pitch)}
+.cd-pitch .sg{color:var(--pitch-muted)}.cd-pitch .lb{color:var(--pitch-muted)}.cd-pitch .lb.h{color:var(--pitch-txt)}
+.cd-pitch input,.cd-pitch select,.cd-pitch textarea{background:#141414;border-color:#444;color:var(--pitch-txt)}
+.cd-pitch .k{border-color:#333;background:#0d0d0d}.cd-pitch .k span.x{color:var(--pitch-muted)}.cd-pitch .k span.v{color:var(--pitch-txt)}
+.cd-pitch .k.g .v{color:#5ee9a8}.cd-pitch .k.r .v{color:#ff8a80}
+.cd-pitch .tr{background:#1a1a1a;border-color:#333}.cd-pitch .ta th,.cd-pitch .ta td,.cd-pitch .tb2 th,.cd-pitch .tb2 td{border-color:#333}
+.cd-pitch .ta th,.cd-pitch .tb2 th{color:var(--pitch-muted)}.cd-pitch .ta td.c{color:var(--pitch-muted)}
+.cd-pitch ul.z{color:var(--pitch-muted);border-color:#444}.cd-pitch .pr div{color:var(--pitch-muted);border-color:#333}
+.cd-pitch .bar{color:var(--pitch-txt)}.cd-pitch a{color:#7eb8ff}
+.cd-pitch .livebox{background:#0a0a0a;border-color:#444;color:var(--pitch-muted)}.cd-pitch .livebox strong{color:var(--pitch-txt)}
+.cd-pitch .drift-warn{background:#2a2208;border-color:var(--yellow);color:#ffe08a}
+.cd>h2{margin:0;padding:.62rem .9rem;background:#eef1f6;border-bottom:1px solid var(--line);font-size:.93rem;display:flex}
+.cd-lite>h2{background:#f3f4f6}
+.bd{padding:.88rem}.sg{font-size:.65rem;color:var(--page-muted);margin:.72rem 0 .35rem;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
 .sg:first-child{margin-top:0}.fg{display:grid;grid-template-columns:repeat(auto-fill,minmax(204px,1fr));gap:.72rem}
-.lb{display:flex;flex-direction:column;gap:.25rem;font-size:.62rem;color:var(--m);text-transform:uppercase;letter-spacing:.04em}
-.lb.h{flex-direction:row;text-transform:none;letter-spacing:normal;font-size:.84rem;color:var(--txt);align-items:center;gap:.45rem}
-input,select,textarea{font:inherit;border-radius:8px;border:1px solid var(--line);background:#212a3b;color:var(--txt);padding:.38rem .5rem}
+.lb{display:flex;flex-direction:column;gap:.25rem;font-size:.62rem;color:var(--page-muted);text-transform:uppercase;letter-spacing:.04em}
+.lb.h{flex-direction:row;text-transform:none;letter-spacing:normal;font-size:.84rem;color:var(--page-txt);align-items:center;gap:.45rem}
+input,select,textarea{font:inherit;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--page-txt);padding:.38rem .5rem}
 textarea{min-height:64px;font-family:var(--mono);font-size:.8rem}.kp{display:grid;gap:.52rem;margin-bottom:.85rem;
-grid-template-columns:repeat(auto-fit,minmax(114px,1fr))}.k{border:1px solid var(--line);border-radius:8px;background:#202838;padding:.5rem .65rem}
-.k span.x{display:block;font-size:.61rem;color:var(--m);letter-spacing:.05em;text-transform:uppercase}
+grid-template-columns:repeat(auto-fit,minmax(114px,1fr))}.k{border:1px solid var(--line);border-radius:8px;background:#fff;padding:.5rem .65rem}
+.k span.x{display:block;font-size:.61rem;color:var(--page-muted);letter-spacing:.05em;text-transform:uppercase}
 .k span.v{font-size:1.12rem;font-weight:600;font-variant-numeric:tabular-nums}.k.g .v{color:var(--ok)}.k.r .v{color:var(--no)}
 .bar{display:grid;grid-template-columns:minmax(0,168px) 1fr 2.25rem;font-size:.8rem;gap:.45rem;margin:.32rem 0;align-items:center}
-.tr{height:7px;border-radius:4px;background:#1e2739;border:1px solid var(--line);overflow:hidden}
+.tr{height:7px;border-radius:4px;background:#e8ecf2;border:1px solid var(--line);overflow:hidden}
 .fil{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--a),#9fd0ff)}
 .ta{width:100%;border-collapse:collapse;font-size:.8rem}.ta th,.ta td{padding:.28rem .4rem;border-bottom:1px solid var(--line)}
-.ta th{text-align:left;color:var(--m);font-weight:500;font-size:.74rem}.ta td.c{font-family:var(--mono);color:var(--m);width:2.75rem}
-ul.z{margin:.45rem 0;color:var(--m);font-size:.84rem;padding-left:1rem;border-left:3px solid var(--line)}
-.pr div{padding:.32rem 0;border-bottom:1px dashed var(--line);font-size:.8rem;color:var(--m)}.pr div:last-child{border:0}
+.ta th{text-align:left;color:var(--page-muted);font-weight:500;font-size:.74rem}.ta td.c{font-family:var(--mono);color:var(--page-muted);width:2.75rem}
+ul.z{margin:.45rem 0;color:var(--page-muted);font-size:.84rem;padding-left:1rem;border-left:3px solid var(--line)}
+.pr div{padding:.32rem 0;border-bottom:1px dashed var(--line);font-size:.8rem;color:var(--page-muted)}.pr div:last-child{border:0}
 .tb2{width:100%;font-size:.78rem;border-collapse:collapse}.tb2 th,.tb2 td{border-bottom:1px solid var(--line);padding:.32rem .4rem;text-align:left}
-.tb2 th{color:var(--m)}a{color:var(--a)}
+.tb2 th{color:var(--page-muted)}a{color:var(--a)}
 .rail{max-width:1340px;margin:0 auto;padding:.7rem 1rem 0}
 .ban{border-radius:8px;padding:.72rem .95rem;margin:0 0 .5rem;border-left:4px solid;font-size:.86rem;line-height:1.45}
 .ban b{display:block;font-size:.7rem;letter-spacing:.07em;text-transform:uppercase;margin-bottom:.22rem}
-.ban-info{border-left-color:#56d4ff;background:rgba(86,212,255,.08);color:#c8e8ff}
-.ban-ok{border-left-color:var(--ok);background:rgba(61,220,132,.1);color:#c8f5dc}
-.ban-warn{border-left-color:var(--wm);background:rgba(255,193,77,.09);color:#ffe6b8}
-.ban-err{border-left-color:var(--no);background:rgba(255,107,107,.1);color:#ffd0d0}
+.ban-info{border-left-color:#2563eb;background:#eff6ff;color:#1e3a5f}
+.ban-ok{border-left-color:var(--ok);background:#ecfdf5;color:#065f46}
+.ban-warn{border-left-color:var(--wm);background:#fffbeb;color:#78350f}
+.ban-err{border-left-color:var(--no);background:#fef2f2;color:#7f1d1d}
 .ban-hide{display:none}
-.livebox{font-family:var(--mono);font-size:.76rem;background:#0f141c;border:1px solid var(--line);border-radius:8px;padding:.55rem .75rem;margin-bottom:.8rem;color:var(--m);line-height:1.55}
-.livebox strong{color:var(--txt)}.live-ok{color:var(--ok)}.live-bad{color:var(--no)}
-.drift-warn{background:#3a2818;border:1px solid #c97a2a;color:#fdb34b;font-size:.82rem;margin:0 0 .65rem;padding:.55rem .7rem;border-radius:6px;line-height:1.35}
-button.primary{background:rgba(77,163,255,.2);border-color:#3d7fd6;color:#9fd0ff;font-weight:650}
+.livebox{font-family:var(--mono);font-size:.76rem;background:#f3f4f6;border:1px solid var(--line);border-radius:8px;padding:.55rem .75rem;margin-bottom:.8rem;color:var(--page-muted);line-height:1.55}
+.livebox strong{color:var(--page-txt)}.live-ok{color:var(--ok)}.live-bad{color:var(--no)}
+.drift-warn{background:#fffbeb;border:1px solid #e6c200;color:#78350f;font-size:.82rem;margin:0 0 .65rem;padding:.55rem .7rem;border-radius:6px;line-height:1.35}
+button.primary{background:#eff6ff;border-color:#2563eb;color:#1d4ed8;font-weight:650}
+label.hdr-auto{font-size:.8rem;color:var(--page-muted)}
 </style></head><body>
 <header><h1>Raydium-LP1 · mission control</h1><span class="p pl">127.0.0.1 · local only</span><span class="p" id="stamp">waiting…</span>
-<div class="tb"><label style="font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto refresh 5s</label>
+<div class="tb"><label class="hdr-auto"><input type="checkbox" id="auto" checked/> Auto refresh 5s</label>
 <button type="button" id="reload">Reload data</button><button type="button" id="save" class="primary">Save settings → disk</button></div></header>
 <div class="rail">
 <div class="ban ban-info" id="ban-info"><b>Settings → scanner contract</b>
@@ -209,9 +228,9 @@ Save writes <strong>config/settings.json</strong>. Scanner picks up changes on t
 </div>
 <div id="js-fatal" class="ban ban-err" style="display:none;max-width:1340px;margin:0 auto .5rem"></div>
 <script type="application/json" id="boot">BOOT_JSON</script>
-<main><div><div class="cd"><h2>Funnel <a id="rj" href="api/dashboard" style="margin-left:auto;font-size:.73rem;color:var(--m);font-weight:400;text-decoration:none">raw JSON →</a></h2><div id="fu" class="bd"><p style="color:var(--m);margin:0">Loading funnel…</p></div></div>
-<div class="cd"><h2>Dry-run shortlist</h2><div id="li" class="bd"></div></div></div>
-<div class="cd"><h2>Settings file</h2><div class="bd"><div id="live" class="livebox">Loading…</div><div id="fo"></div></div></div></main>
+<main><div><div class="cd cd-pitch"><h2>Funnel <a id="rj" href="/api/dashboard" style="margin-left:auto;font-size:.73rem;color:var(--pitch-muted);font-weight:400;text-decoration:none">raw JSON →</a></h2><div id="fu" class="bd"><p style="color:var(--pitch-muted);margin:0">Loading funnel…</p></div></div>
+<div class="cd cd-lite"><h2>Dry-run shortlist</h2><div id="li" class="bd"><p style="color:var(--page-muted);margin:0">Waiting for scan…</p></div></div>
+<div class="cd cd-pitch"><h2>Settings file</h2><div class="bd"><div id="live" class="livebox">Loading…</div><div id="fo"></div></div></div></main>
 <script>
 CLIENT_JS_HERE
 </script></body></html>"""
@@ -223,7 +242,12 @@ _CLIENT_JS = r"""
     var box=document.getElementById('js-fatal');
     if(box){ box.style.display='block'; box.textContent='UI error: '+msg+' (line '+line+')'; }
   };
-  const boot = JSON.parse(document.getElementById('boot').textContent || '{}');
+  var bootEl=document.getElementById('boot');
+  var boot={};
+  try{ boot=JSON.parse(bootEl&&bootEl.textContent?bootEl.textContent:'{}'); }catch(e){
+    var fatal=document.getElementById('js-fatal');
+    if(fatal){ fatal.style.display='block'; fatal.textContent='Boot JSON parse error: '+e; }
+  }
   const SECTIONS = boot.form_sections || [];
   function $(s,r=document){return r.querySelector(s);}
   function esc(t){var d=document.createElement('div');d.textContent=t==null?'':String(t);return d.innerHTML;}
@@ -337,16 +361,16 @@ _CLIENT_JS = r"""
         '. Reject lines like &quot;apr 0.00 below 1.00&quot; are from the <em>old</em> scan, not your form. '+
         'Wait for Scanner to finish one full scan (heartbeat scan_complete).</p>';
     } else if(snap.min_apr!=null){
-      snapNote='<p style="color:var(--wm);font-size:.8rem;margin:0 0 .6rem">This funnel matches the last scan: <b>min_apr='+esc(String(snap.min_apr))+
+      snapNote='<p style="color:#ffe08a;font-size:.8rem;margin:0 0 .6rem">This funnel matches the last scan: <b>min_apr='+esc(String(snap.min_apr))+
         '</b>, sort=<b>'+esc(String(snap.pool_sort_field||'(apr default)'))+'</b>.</p>';
     }
     var bd=Object.entries(ls.rejection_breakdown||{}).sort(function(a,b){return b[1]-a[1];});
     var mx=Math.max.apply(null,bd.map(function(x){return x[1];}).concat([0]))||1;
     var bars=bd.slice(0,18).map(function(kv){
       return '<div class="bar"><div title="'+esc(kv[0])+'">'+esc(kv[0])+'</div><div class="tr"><div class="fil" style="width:'+
-        ((100*kv[1]/mx).toFixed(1))+'%"></div></div><div style="font-family:var(--mono);font-size:.72rem;color:var(--m);text-align:right">'+kv[1]+'</div></div>';
+        ((100*kv[1]/mx).toFixed(1))+'%"></div></div><div style="font-family:var(--mono);font-size:.72rem;color:var(--pitch-muted);text-align:right">'+kv[1]+'</div></div>';
     }).join('');
-    if(!bars) bars='<p style="color:var(--m);margin:.2rem 0">No breakdown yet.</p>';
+    if(!bars) bars='<p style="color:var(--pitch-muted);margin:.2rem 0">No breakdown yet.</p>';
     var hist=Object.entries(ls.rejection_reason_histogram||{}).slice(0,26);
     var ht=hist.length?('<div class="sg">Exact first reasons</div><table class="ta"><thead><tr><th class="c">#</th><th>reason</th></tr></thead><tbody>'+
       hist.map(function(kv){return '<tr><td class="c">'+kv[1]+'</td><td>'+esc(kv[0])+'</td></tr>';}).join('')+'</tbody></table>'):'';
@@ -366,7 +390,7 @@ _CLIENT_JS = r"""
   }
 
   function renderList(rows){
-    if(!rows||!rows.length){$('#li').innerHTML='<p style="color:var(--m);margin:0">No candidates.</p>';return;}
+    if(!rows||!rows.length){$('#li').innerHTML='<p style="color:var(--page-muted);margin:0">No candidates.</p>';return;}
     $('#li').innerHTML='<table class="tb2"><thead><tr><th>Pair</th><th>APR</th><th>TVL</th><th>VOL24</th><th>Mom</th><th>Pool</th></tr></thead><tbody>'+
       rows.slice(0,48).map(function(p){
         return '<tr><td>'+esc(p.pair||'')+'</td><td>'+aprPct(p.apr)+'%</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+
@@ -384,7 +408,7 @@ _CLIENT_JS = r"""
     }catch(e){
       $('#fu').innerHTML='<p style="color:#fdb34b;margin:0"><b>Dashboard not ready</b> — '+esc(String(e))+
         '<br/><small>Scanner tab must finish at least one full scan (writes reports/dashboard.json).</small></p>';
-      $('#li').innerHTML='<p style="color:var(--m);margin:0">Shortlist appears after first successful scan.</p>';
+      $('#li').innerHTML='<p style="color:var(--page-muted);margin:0">Shortlist appears after first successful scan.</p>';
     }
     try{
       var st=await gj('/api/status');
@@ -632,7 +656,12 @@ def main(argv: list[str] | None = None) -> int:
         def do_GET(self) -> None:  # noqa: N802
             path = up.urlparse(self.path).path
             if path == "/":
-                self._send(200, blob["page"], "text/html; charset=utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(blob["page"])))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(blob["page"])
                 return
             if path == "/api/dashboard":
                 dpath = paths.dashboard_path

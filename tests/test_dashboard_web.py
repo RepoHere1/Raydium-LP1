@@ -13,6 +13,9 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("form_sections", page)
         self.assertIn("Save settings", page)
         self.assertIn("Stale funnel", page)
+        self.assertIn("cd-pitch", page)
+        self.assertIn("background:var(--page)", page)
+        self.assertIn("border:3px solid var(--yellow)", page)
 
 
 class DashboardWebDriftTests(unittest.TestCase):
