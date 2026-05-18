@@ -356,8 +356,12 @@ def token_symbol(token: Any) -> str:
 
 
 def token_mint(token: Any) -> str:
+    """SPL token mint only — never use generic ``id`` (pool/config accounts also have ``id``)."""
+
     if isinstance(token, dict):
-        return str(token.get("address") or token.get("mint") or token.get("id") or "")
+        addr = token.get("address") or token.get("mint")
+        if addr:
+            return str(addr)
     return ""
 
 

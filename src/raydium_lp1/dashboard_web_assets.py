@@ -131,10 +131,10 @@ a{color:var(--a);text-decoration:none}a:hover{text-decoration:underline}
   <div class="cd"><h2>Funnel <a href="/api/dashboard" style="margin-left:auto;font-size:.7rem;color:var(--muted)">json</a></h2><div id="fu" class="bd"><p class="hint">Loading…</p></div></div>
   <div class="cd"><h2>Settings</h2><div class="bd settings-scroll"><details class="catalog"><summary>All settings (numbered)</summary><ol id="catalog"></ol></details><div id="live" class="livebox">Loading…</div><div id="fo"></div></div></div>
 </div>
-<div class="cd"><h2>Candidates <span id="cand-note" style="font-weight:400;font-size:.72rem;color:var(--muted);margin-left:.35rem"></span></h2>
+<div class="cd"><h2>Candidates <span style="font-weight:400;font-size:.72rem;color:var(--muted)">scan shortlist</span> <span id="cand-note" style="font-weight:400;font-size:.72rem;color:var(--muted);margin-left:.35rem"></span></h2>
 <div id="cand" class="bd"><p class="hint">Waiting for scan…</p></div></div>
 <div class="row2">
-  <div class="cd"><h2>Open positions (dry-run)</h2><div id="pos" class="bd"><p class="hint">—</p></div></div>
+  <div class="cd"><h2>Open positions <span style="font-weight:400;font-size:.72rem;color:var(--muted)">simulated wallet slots</span></h2><div id="pos" class="bd"><p class="hint">—</p></div></div>
   <div class="cd"><h2>Recent alerts</h2><div class="bd"><p class="hint"><b>CRITICAL</b> = liquidity health emergency (TVL down ≥30% from entry and/or volume collapsed). Dry-run: swap-back plan logged only.</p><div id="alerts"></div>
 </div>
 <div class="row2">
@@ -174,11 +174,16 @@ _CLIENT_JS = r"""
     if(s==='SOL'||s==='WSOL') return true;
     return mint&&String(mint)===WSOL_MINT;
   }
+  function isPoolishAddr(p,addr){
+    if(!addr) return true;
+    var a=String(addr);
+    return a===String(p.pool_id||'')||a===String(p.lp_mint_address||'')||a===String(p.market_id||'');
+  }
   function tokenMintRows(p){
     var rows=[];
-    if(p.mint_a&&!isSolSide(p.mint_a_symbol,p.mint_a))
+    if(p.mint_a&&!isSolSide(p.mint_a_symbol,p.mint_a)&&!isPoolishAddr(p,p.mint_a))
       rows.push({label:p.mint_a_symbol||'Token A',addr:p.mint_a});
-    if(p.mint_b&&!isSolSide(p.mint_b_symbol,p.mint_b))
+    if(p.mint_b&&!isSolSide(p.mint_b_symbol,p.mint_b)&&!isPoolishAddr(p,p.mint_b))
       rows.push({label:p.mint_b_symbol||'Token B',addr:p.mint_b});
     return rows;
   }
@@ -188,7 +193,8 @@ _CLIENT_JS = r"""
     var mkt=String(p.market_id||'');
     var rurl=String(p.raydium_add_url||'');
     var tokens=tokenMintRows(p);
-    var html='<div class="addr-row"><div class="addr-cell pool-cell"><span class="addr-label">Pool state (Raydium id)</span><span class="addr-full">'+esc(pool)+'</span>';
+    var html='<div class="addr-row"><div class="addr-cell pool-cell"><span class="addr-label">Pool state (Raydium program account)</span><span class="addr-full">'+esc(pool)+'</span>';
+    if(p.program_label) html+='<span class="hint" style="display:block;margin-top:.12rem;font-size:.62rem">'+esc(p.program_label)+' pool — Solscan may label this Account/Wallet; it is not your wallet or the token mint.</span>';
     if(rurl) html+=' <a href="'+esc(rurl)+'" target="_blank" rel="noopener" style="font-size:.68rem">Open on Raydium</a>';
     html+='</div>';
     if(tokens.length){
@@ -327,7 +333,7 @@ _CLIENT_JS = r"""
     return parts.join(' · ');
   }
   function renderCandidates(d,st){
-    var rows=(d.open_positions||[]).slice();
+    var rows=(d.candidates||[]).slice();
     rows.sort(function(a,b){return (Number(b.apr)||0)-(Number(a.apr)||0);});
     var feed=(d.last_scan||{}).feed||{};
     var live=feed.is_partial;
@@ -341,7 +347,7 @@ _CLIENT_JS = r"""
   }
   function renderPositions(d){
     var rows=d.open_positions||[];
-    if(!rows.length){$('#pos').innerHTML='<p class="hint">None</p>';return;}
+    if(!rows.length){var nc=(d.candidates||[]).length; $('#pos').innerHTML='<p class="hint">No simulated wallet slots (max_positions=0 or unfunded). Full scan shortlist: '+nc+' pool(s) in <b>Candidates</b>.</p>';return;}
     $('#pos').innerHTML=rows.map(function(p){
       var reasons=(p.health_reasons||[]).map(function(r){return esc(r);}).join('; ');
       return '<div class="pos-row"><b>'+esc(p.pair||'')+'</b> '+pill(p.health)+' APR '+aprPct(p.apr)+'% TVL $'+money(p.liquidity_usd)+

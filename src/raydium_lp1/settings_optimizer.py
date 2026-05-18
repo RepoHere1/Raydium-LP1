@@ -160,7 +160,7 @@ def budget_usd_breakdown(settings: Mapping[str, Any], *, sol_usd: float = DEFAUL
 
 
 def _candidate_rows(dashboard: Mapping[str, Any]) -> list[dict[str, Any]]:
-    rows = list(dashboard.get("open_positions") or [])
+    rows = list(dashboard.get("candidates") or dashboard.get("open_positions") or [])
     if rows:
         return rows
     return []

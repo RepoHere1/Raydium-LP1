@@ -55,7 +55,9 @@ class DashboardBuildTests(unittest.TestCase):
                 rpc_health=[{"url": "https://rpc", "ok": True}],
             )
         self.assertEqual(data.settings["strategy"], "aggressive")
+        self.assertEqual(len(data.candidates), 1)
         self.assertEqual(len(data.open_positions), 1)
+        self.assertEqual(data.candidates[0]["pair"], "SOL/TKN")
         self.assertEqual(data.open_positions[0]["pair"], "SOL/TKN")
         self.assertEqual(data.open_positions[0]["pool_id"], "pool-1")
         self.assertEqual(data.open_positions[0]["mint_b"], "TokenMint1111111111111111111111111111111111")
@@ -67,6 +69,35 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertEqual(data.last_scan["rejection_breakdown"]["apr_below_threshold"], 10)
         self.assertIn("liquidity small", data.last_scan["rejection_reason_histogram"])
         self.assertEqual(data.last_scan["scan_diagnosis"]["scan_signal"], "test")
+
+    def test_candidates_and_open_positions_differ_when_capped(self):
+        report = self._report()
+        report["candidate_count"] = 3
+        report["candidates"] = [
+            {
+                "id": f"pool-{i}",
+                "mint_a_symbol": "SOL",
+                "mint_b_symbol": f"T{i}",
+                "mint_a": "So11111111111111111111111111111111111111112",
+                "mint_b": f"Mint{i}",
+                "apr": 100.0 - i,
+                "liquidity_usd": 5000.0,
+                "volume_24h_usd": 1000.0,
+                "health": {"score": "healthy", "reasons": []},
+            }
+            for i in range(3)
+        ]
+        config = ScannerConfig(dry_run=True, position_size_sol=0.1)
+        data = dashboard.build_dashboard(config=config, report=report)
+        self.assertEqual(len(data.candidates), 3)
+        self.assertEqual(len(data.open_positions), 3)
+
+        report["wallet_capacity"] = {
+            "capacity": {"max_positions": 1, "position_size_sol": 0.1, "reserved_sol": 0.02},
+        }
+        data2 = dashboard.build_dashboard(config=config, report=report)
+        self.assertEqual(len(data2.candidates), 3)
+        self.assertEqual(len(data2.open_positions), 1)
 
     def test_write_live_scan_dashboard_sets_partial_feed(self):
         config = ScannerConfig(sort_candidates_by_apr=True)
@@ -97,7 +128,7 @@ class DashboardBuildTests(unittest.TestCase):
             blob = json.loads(path.read_text(encoding="utf-8"))
         self.assertTrue(blob["last_scan"]["feed"]["is_partial"])
         self.assertEqual(blob["last_scan"]["feed"]["page"], 2)
-        self.assertEqual(len(blob["open_positions"]), 1)
+        self.assertEqual(len(blob["candidates"]), 1)
         self.assertNotEqual(blob["generated_at"], "")
 
     def test_render_text_has_expected_sections(self):

@@ -132,6 +132,17 @@ class LiveApiParsingTests(unittest.TestCase):
         self.assertEqual(pool["market_id"], "Mkt1111111111111111111111111111111111111111")
         self.assertEqual(pool["lp_mint_address"], "LpMint1111111111111111111111111111111111")
 
+    def test_token_mint_never_uses_config_id(self):
+        bad = {
+            "id": "pool-real-id",
+            "mintA": {"id": "BgxH5ifebqHDuiADWKhLjXGP5hWZeZLoCdmeWJLkRqLP", "symbol": "SOL"},
+            "mintB": {"address": "TokenMint1111111111111111111111111111111111", "symbol": "X"},
+        }
+        pool = normalize_pool(bad, "apr24h")
+        self.assertEqual(pool["id"], "pool-real-id")
+        self.assertEqual(pool["mint_a"], "")
+        self.assertEqual(pool["mint_b"], "TokenMint1111111111111111111111111111111111")
+
     def test_pool_state_prefers_pool_id_over_generic_id(self):
         trimmed = {
             "poolId": "PreferredPoolId111111111111111111111111111111",

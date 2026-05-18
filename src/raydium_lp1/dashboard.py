@@ -30,6 +30,7 @@ class DashboardData:
     generated_at: str
     settings: dict
     wallet_capacity: dict
+    candidates: list[dict]
     open_positions: list[dict]
     momentum_hot_top: list[dict]
     recent_alerts: list[dict]
@@ -41,12 +42,43 @@ class DashboardData:
             "generated_at": self.generated_at,
             "settings": dict(self.settings),
             "wallet_capacity": dict(self.wallet_capacity),
+            "candidates": list(self.candidates),
             "open_positions": list(self.open_positions),
             "momentum_hot_top": list(self.momentum_hot_top),
             "recent_alerts": list(self.recent_alerts),
             "rpc_health": list(self.rpc_health),
             "last_scan": dict(self.last_scan),
         }
+
+
+def _row_from_candidate(candidate: dict, *, dry_run: bool) -> dict:
+    h = candidate.get("health") or {}
+    mom = candidate.get("momentum") or {}
+    pool_id = str(candidate.get("id") or "")
+    program_id = str(candidate.get("program_id") or "")
+    return {
+        "pool_id": pool_id,
+        "pair": f"{candidate.get('mint_a_symbol', '')}/{candidate.get('mint_b_symbol', '')}",
+        "mint_a": candidate.get("mint_a", ""),
+        "mint_b": candidate.get("mint_b", ""),
+        "mint_a_symbol": candidate.get("mint_a_symbol", ""),
+        "mint_b_symbol": candidate.get("mint_b_symbol", ""),
+        "lp_mint_address": candidate.get("lp_mint_address", ""),
+        "market_id": candidate.get("market_id", ""),
+        "program_id": program_id,
+        "program_label": pool_verify.program_label(program_id) or program_id[:8],
+        "pool_type": candidate.get("type", ""),
+        "raydium_add_url": pool_verify.raydium_ui_url(pool_id) if pool_id else "",
+        "apr": candidate.get("apr"),
+        "liquidity_usd": candidate.get("liquidity_usd"),
+        "volume_24h_usd": candidate.get("volume_24h_usd"),
+        "health": h.get("score", "healthy"),
+        "health_reasons": h.get("reasons", []),
+        "momentum_score": mom.get("score"),
+        "momentum_tier": mom.get("tier"),
+        "momentum_exit_watch": mom.get("exit_watch"),
+        "dry_run": dry_run,
+    }
 
 
 def _now_iso() -> str:
@@ -113,38 +145,20 @@ def build_dashboard(
     }
 
     wallet_capacity = dict(report.get("wallet_capacity") or {})
+    dry_run = bool(settings.get("dry_run", True))
+    cap = wallet_capacity.get("capacity") if isinstance(wallet_capacity.get("capacity"), dict) else {}
+    max_positions = int(cap.get("max_positions") or 0)
 
-    positions = list(open_positions) if open_positions is not None else []
-    if not positions:
-        # In dry-run we treat candidates as the would-be open positions.
-        for candidate in report.get("candidates", [])[: report.get("candidate_count", 0)]:
-            h = candidate.get("health") or {}
-            mom = candidate.get("momentum") or {}
-            pool_id = str(candidate.get("id") or "")
-            positions.append(
-                {
-                    "pool_id": pool_id,
-                    "pair": f"{candidate.get('mint_a_symbol', '')}/{candidate.get('mint_b_symbol', '')}",
-                    "mint_a": candidate.get("mint_a", ""),
-                    "mint_b": candidate.get("mint_b", ""),
-                    "mint_a_symbol": candidate.get("mint_a_symbol", ""),
-                    "mint_b_symbol": candidate.get("mint_b_symbol", ""),
-                    "lp_mint_address": candidate.get("lp_mint_address", ""),
-                    "market_id": candidate.get("market_id", ""),
-                    "program_id": candidate.get("program_id", ""),
-                    "pool_type": candidate.get("type", ""),
-                    "raydium_add_url": pool_verify.raydium_ui_url(pool_id) if pool_id else "",
-                    "apr": candidate.get("apr"),
-                    "liquidity_usd": candidate.get("liquidity_usd"),
-                    "volume_24h_usd": candidate.get("volume_24h_usd"),
-                    "health": h.get("score", "healthy"),
-                    "health_reasons": h.get("reasons", []),
-                    "momentum_score": mom.get("score"),
-                    "momentum_tier": mom.get("tier"),
-                    "momentum_exit_watch": mom.get("exit_watch"),
-                    "dry_run": True,
-                }
-            )
+    raw_candidates = list(report.get("candidates", [])[: report.get("candidate_count", 0)])
+    candidate_rows = [_row_from_candidate(c, dry_run=dry_run) for c in raw_candidates]
+
+    if open_positions is not None:
+        positions = list(open_positions)
+    elif dry_run:
+        # Dry-run: shortlist lives in ``candidates``; positions = simulated wallet slots only.
+        positions = candidate_rows[:max_positions] if max_positions > 0 else []
+    else:
+        positions = candidate_rows[:max_positions] if max_positions > 0 else candidate_rows
 
     recent_alerts = emergency.load_alerts(alerts_path)
     if recent_alerts:
@@ -196,6 +210,7 @@ def build_dashboard(
         generated_at=_now_iso(),
         settings=settings,
         wallet_capacity=wallet_capacity,
+        candidates=candidate_rows,
         open_positions=positions,
         momentum_hot_top=list(report.get("momentum_hot_top") or []),
         recent_alerts=recent_alerts,
@@ -404,9 +419,21 @@ def render_dashboard_text(data: DashboardData) -> str:
             lines.append("       !! exit_watch")
 
     lines.append("")
-    lines.append(f"Open positions (dry-run): {len(data.open_positions)}")
+    lines.append(f"Candidates (scan shortlist): {len(data.candidates)}")
+    for row in data.candidates[:15]:
+        lines.append(
+            f"  - {row.get('pair', '?'):<20} "
+            f"APR {float(row.get('apr') or 0):>8.1f}% "
+            f"TVL ${float(row.get('liquidity_usd') or 0):>10,.0f} "
+            f"pool={row.get('pool_id', '?')}"
+        )
+    if len(data.candidates) > 15:
+        lines.append(f"  … +{len(data.candidates) - 15} more")
+
+    lines.append("")
+    lines.append(f"Open positions (simulated wallet slots): {len(data.open_positions)}")
     if not data.open_positions:
-        lines.append("  (none)")
+        lines.append("  (none — fund SOL / lower reserve, or see Candidates for full shortlist)")
     for position in data.open_positions:
         mom_s = position.get("momentum_score")
         mom_txt = f"MOM={mom_s:.0f} {position.get('momentum_tier', '')}" if mom_s is not None else ""
