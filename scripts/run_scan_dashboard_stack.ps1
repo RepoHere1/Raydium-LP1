@@ -110,7 +110,8 @@ function Start-WebTab {
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit",
         "-File", $webPs1,
         "-Port", "$WebPort",
-        "-ListenHost", $WebHost
+        "-ListenHost", $WebHost,
+        "-Settings", $Config
     )
     if ($Mode -eq "wt") {
         if (Invoke-WtHostedTab -Title "LP1 - Web UI" -CliArgs $webArgs) { return }

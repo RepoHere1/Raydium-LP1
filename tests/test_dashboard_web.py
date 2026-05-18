@@ -12,10 +12,12 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("Raydium-LP1 · mission control", page)
         self.assertIn("form_sections", page)
         self.assertIn("Save settings", page)
-        self.assertIn("Stale funnel", page)
-        self.assertIn("cd-pitch", page)
-        self.assertIn("background:var(--page)", page)
+        self.assertIn("row2", page)
+        self.assertIn("--bg:#000", page)
         self.assertIn("border:3px solid var(--yellow)", page)
+        self.assertIn("Recent alerts", page)
+        self.assertIn("CRITICAL", page)
+        self.assertIn("Candidates", page)
 
 
 class DashboardWebDriftTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 param(
     [int]$Port = 8844,
-    [string]$ListenHost = "127.0.0.1"
+    [string]$ListenHost = "127.0.0.1",
+    [string]$Settings = "config\settings.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,8 +30,8 @@ Write-Host "Pair with Window 1: .\scripts\run_scan_dashboard.ps1" -ForegroundCol
 
 & $pythonExe @pythonPrefixArgs -c "from raydium_lp1.dashboard_web import main" 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    throw "dashboard_web failed to import (SyntaxError?). git pull cursor/live-dashboard-web-dee0 then retry."
+    throw "dashboard_web failed to import. Run: git pull origin cursor/live-dashboard-web-dee0"
 }
 
-& $pythonExe @pythonPrefixArgs -m raydium_lp1.dashboard_web --host $ListenHost --port $Port @args
+& $pythonExe @pythonPrefixArgs -m raydium_lp1.dashboard_web --host $ListenHost --port $Port --settings $Settings @args
 exit $LASTEXITCODE
