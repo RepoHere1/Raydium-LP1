@@ -22,6 +22,10 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("addr-full", page)
         self.assertIn("poolAddressesHtml", page)
         self.assertIn("SOL/WSOL mint hidden", page)
+        self.assertIn("TUNING", page)
+        self.assertIn("tuning-panel", page)
+        self.assertIn("addr-row", page)
+        self.assertIn("setTuningUi", page)
 
 
 class DashboardWebDriftTests(unittest.TestCase):

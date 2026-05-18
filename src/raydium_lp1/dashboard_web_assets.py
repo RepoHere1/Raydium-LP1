@@ -59,28 +59,66 @@ textarea{min-height:56px;font-family:var(--mono);font-size:.75rem}
 .pos-row .sub{font-size:.72rem;color:var(--muted);margin-top:.15rem}
 a{color:var(--a);text-decoration:none}a:hover{text-decoration:underline}
 
-.opt-bar{max-width:1440px;margin:0 auto;padding:.45rem 1rem 0;display:flex;flex-wrap:wrap;gap:.65rem 1rem;align-items:flex-start;border-bottom:1px solid #222}
-.opt-toggle{display:flex;align-items:center;gap:.45rem;font-size:.82rem;white-space:nowrap}
-.opt-toggle input{accent-color:var(--yellow)}
-.opt-pulse{display:flex;flex-wrap:wrap;gap:.35rem .55rem;flex:1;min-width:200px}
+.tuning-wrap{max-width:1440px;margin:0 auto;padding:.65rem 1rem 0}
+.tuning-panel{border-width:3px}
+.tuning-panel>h2{font-size:1rem;letter-spacing:.12em;color:#ffe566}
+.tuning-bd{padding:.85rem 1rem!important}
+.tuning-head{display:flex;flex-wrap:wrap;gap:.75rem 1.25rem;align-items:center;justify-content:space-between;margin-bottom:.55rem}
+.tuning-lead{flex:1;min-width:200px}
+.tuning-lead .tuning-kicker{font-size:.62rem;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin:0 0 .2rem}
+.tuning-lead p{margin:0;font-size:.8rem;color:#c8d4e8;line-height:1.45;max-width:52rem}
+.tuning-switch-wrap{display:flex;align-items:center;gap:.65rem;flex-shrink:0}
+.tuning-switch{position:relative;display:inline-flex;align-items:center;gap:.55rem;cursor:pointer;user-select:none}
+.tuning-switch input{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
+.tuning-track{width:4.5rem;height:2rem;border-radius:999px;border:2px solid #555;background:#1a1a1a;position:relative;transition:border-color .15s,background .15s}
+.tuning-thumb{position:absolute;top:2px;left:2px;width:calc(2rem - 8px);height:calc(2rem - 8px);border-radius:50%;background:#666;transition:transform .15s,background .15s}
+.tuning-switch input:checked+.tuning-track{border-color:var(--ok);background:#0f2a18}
+.tuning-switch input:checked+.tuning-track .tuning-thumb{transform:translateX(2.35rem);background:var(--ok)}
+.tuning-state{font-size:1.15rem;font-weight:800;letter-spacing:.08em;min-width:2.5rem;text-align:center}
+.tuning-state.off{color:var(--muted)}
+.tuning-state.on{color:var(--ok)}
+.tuning-panel.tuning-active{border-color:var(--ok);box-shadow:0 0 0 1px #1a3a28 inset}
+.tuning-panel.tuning-active>h2{color:var(--ok)}
+.opt-pulse{display:flex;flex-wrap:wrap;gap:.35rem .55rem;margin:.45rem 0}
 .pulse-chip{font-size:.7rem;padding:.22rem .45rem;border-radius:6px;border:1px solid #333;background:#0a0a0a;max-width:280px;line-height:1.3}
 .pulse-chip.ok{border-color:#2a4a3a;color:#9fddb0}.pulse-chip.warn{border-color:#5a4a20;color:#ffe08a}.pulse-chip.bad{border-color:#5a2a2a;color:#ffb4b4}
-.opt-reco{width:100%;font-size:.75rem;color:var(--muted);margin-top:.2rem}
+.opt-reco{font-size:.76rem;color:var(--muted);margin:.35rem 0 0;padding:.45rem .55rem;border-radius:6px;border:1px dashed #333;background:#0a0a0a;line-height:1.45}
 .catalog details{margin:.4rem 0}.catalog summary{cursor:pointer;color:var(--a);font-size:.8rem}
 .catalog ol{margin:.35rem 0 0 1rem;padding:0;font-size:.72rem;color:var(--muted);max-height:220px;overflow:auto}
 .settings-scroll{max-height:min(72vh,820px);overflow:auto;padding-right:.25rem}
-.addr-col{min-width:280px;max-width:420px;vertical-align:top}
-.addr-full{display:block;font-family:var(--mono);font-size:.68rem;word-break:break-all;user-select:all;line-height:1.35;color:#d4e4ff}
-.addr-block{margin:.3rem 0 0}
-.addr-label{font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.addr-row{display:flex;flex-wrap:nowrap;gap:.65rem 1rem;align-items:flex-start;min-width:min(100%,520px)}
+.addr-cell{flex:1 1 0;min-width:0}
+.addr-cell.pool-cell{flex:1.15 1 0}
+.addr-cell.token-cell{flex:1 1 0;border-left:1px solid #333;padding-left:.75rem}
+.addr-full{display:block;font-family:var(--mono);font-size:.68rem;word-break:break-all;user-select:all;line-height:1.35;color:#d4e4ff;white-space:normal}
+.addr-label{display:block;font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.12rem}
+.tb2 td.addr-td{vertical-align:top;padding:.45rem .5rem}
+@media(max-width:720px){.addr-row{flex-wrap:wrap}.addr-cell.token-cell{border-left:none;padding-left:0;border-top:1px solid #333;padding-top:.45rem}}
 </style></head><body>
 <header><h1>Raydium-LP1 · mission control</h1><span class="tag live">127.0.0.1</span><span class="tag" id="stamp">loading…</span>
 <div class="tb"><label class="hdr"><input type="checkbox" id="auto" checked/> Auto 5s</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="primary">Save settings</button></div></header>
-<div class="opt-bar">
-  <label class="opt-toggle"><input type="checkbox" id="opt-auto"/> <b>Auto-tune</b> settings</label>
-  <div id="opt-pulse" class="opt-pulse">
-  <div id="opt-reco" class="opt-reco"></div>
+<div class="tuning-wrap">
+  <div class="cd tuning-panel" id="tuning-panel">
+    <h2>TUNING</h2>
+    <div class="bd tuning-bd">
+      <div class="tuning-head">
+        <div class="tuning-lead">
+          <p class="tuning-kicker">Settings optimizer</p>
+          <p><b>Apply scan recommendations to your settings file.</b> When <b>ON</b>, the optimizer merges suggested filter changes into <code>settings.json</code> after each scan. When <b>OFF</b>, you only see suggestions — manual values are not overwritten.</p>
+        </div>
+        <div class="tuning-switch-wrap">
+          <label class="tuning-switch" id="tuning-switch" title="Toggle automatic settings tuning">
+            <input type="checkbox" id="opt-auto"/>
+            <span class="tuning-track"><span class="tuning-thumb"></span></span>
+          </label>
+          <span class="tuning-state off" id="tuning-state">OFF</span>
+        </div>
+      </div>
+      <div id="opt-pulse" class="opt-pulse"></div>
+      <div id="opt-reco" class="opt-reco">Market pulse loads after first scan…</div>
+    </div>
+  </div>
 </div>
 <div class="ban-row">
 <div class="ban ban-info" id="ban-info"><b>How it works</b> Save updates settings. Scanner reloads on the next page. All panels refresh after each full scan.</div>
@@ -146,20 +184,31 @@ _CLIENT_JS = r"""
   }
   function poolAddressesHtml(p){
     var pool=String(p.pool_id||'');
-    var html='<span class="addr-label">Pool</span><span class="addr-full">'+esc(pool)+'</span>';
     var tokens=tokenMintRows(p);
+    var html='<div class="addr-row"><div class="addr-cell pool-cell"><span class="addr-label">Pool</span><span class="addr-full">'+esc(pool)+'</span></div>';
     if(tokens.length){
-      html+='<div class="addr-block">';
       for(var ti=0;ti<tokens.length;ti++){
-        html+='<span class="addr-label">'+esc(tokens[ti].label)+'</span><span class="addr-full">'+esc(tokens[ti].addr)+'</span>';
+        html+='<div class="addr-cell token-cell"><span class="addr-label">'+esc(tokens[ti].label)+'</span><span class="addr-full">'+esc(tokens[ti].addr)+'</span></div>';
       }
-      html+='</div>';
     }
-    return '<div class="addr-col">'+html+'</div>';
+    html+='</div>';
+    return html;
   }
   function poolAddressOnlyHtml(poolId){
     var pool=String(poolId||'');
-    return '<div class="addr-col"><span class="addr-label">Pool</span><span class="addr-full">'+esc(pool)+'</span></div>';
+    return '<div class="addr-row"><div class="addr-cell pool-cell"><span class="addr-label">Pool</span><span class="addr-full">'+esc(pool)+'</span></div></div>';
+  }
+  function setTuningUi(on){
+    var panel=$('#tuning-panel'), state=$('#tuning-state'), sw=$('#opt-auto');
+    if(sw) sw.checked=!!on;
+    if(state){
+      state.textContent=on?'ON':'OFF';
+      state.className='tuning-state '+(on?'on':'off');
+    }
+    if(panel){
+      if(on) panel.classList.add('tuning-active');
+      else panel.classList.remove('tuning-active');
+    }
   }
   function sortNote(s){
     if(s&&s.sort_candidates_by_apr) return 'sorted by Raydium day.apr (highest first)';
@@ -262,7 +311,7 @@ _CLIENT_JS = r"""
     $('#cand').innerHTML='<table class="tb2"><thead><tr><th>Pair</th><th class="num">APR%</th><th class="num">TVL</th><th class="num">VOL24</th><th>Mom</th><th>Health</th><th>Pool + token mints</th></tr></thead><tbody>'+
       rows.map(function(p,i){
         var mom=(p.momentum_score!=null)?esc(String(p.momentum_score))+' '+esc(String(p.momentum_tier||'')):'—';
-        return '<tr><td>'+esc(p.pair||'')+'</td><td class="num">'+aprPct(p.apr)+'</td><td class="num">'+money(p.liquidity_usd)+'</td><td class="num">'+money(p.volume_24h_usd)+'</td><td>'+mom+'</td><td>'+pill(p.health)+'</td><td>'+poolAddressesHtml(p)+'</td></tr>';
+        return '<tr><td>'+esc(p.pair||'')+'</td><td class="num">'+aprPct(p.apr)+'</td><td class="num">'+money(p.liquidity_usd)+'</td><td class="num">'+money(p.volume_24h_usd)+'</td><td>'+mom+'</td><td>'+pill(p.health)+'</td><td class="addr-td">'+poolAddressesHtml(p)+'</td></tr>';
       }).join('')+'</tbody></table><p class="hint">Full pool + token mints (select to copy). SOL/WSOL mint hidden.</p>';
   }
   function renderPositions(d){
@@ -341,21 +390,20 @@ _CLIENT_JS = r"""
   function pulseClass(level){return level==='bad'?'bad':(level==='warn'?'warn':'ok');}
   function renderOptimizer(opt){
     if(!opt) return;
-    var auto=$('#opt-auto');
-    if(auto) auto.checked=!!opt.auto_apply_enabled;
+    setTuningUi(!!opt.auto_apply_enabled);
     var pulse=opt.market_pulse||[];
     var pel=$('#opt-pulse');
     if(pel){
-      pel.innerHTML=pulse.map(function(p){
+      pel.innerHTML=pulse.length?pulse.map(function(p){
         return '<span class="pulse-chip '+pulseClass(p.level)+'" title="'+esc(p.text)+'"><b>'+esc(p.label)+'</b> '+esc(p.text)+'</span>';
-      }).join('');
+      }).join(''):'<span class="pulse-chip warn">Waiting for scan data</span>';
     }
     var rec=$('#opt-reco');
     if(rec){
       var keys=Object.keys(opt.recommended_patch||{});
-      if(!keys.length) rec.textContent='Optimizer waiting for dashboard.json…';
-      else if(opt.auto_apply_enabled) rec.innerHTML='<span class="live-ok">Auto-tune ON</span> — last targets: '+keys.map(function(k){return esc(k)+'='+esc(String(opt.recommended_patch[k]));}).join(', ');
-      else rec.innerHTML='<span class="live-warn">Auto-tune OFF</span> — suggestions only: '+keys.slice(0,6).map(function(k){return esc(k)+'='+esc(String(opt.recommended_patch[k]));}).join(', ')+
+      if(!keys.length) rec.textContent='TUNING: no recommendations yet — run a scan first.';
+      else if(opt.auto_apply_enabled) rec.innerHTML='<b class="live-ok">TUNING ON</b> — writing to settings after each scan: '+keys.map(function(k){return esc(k)+'='+esc(String(opt.recommended_patch[k]));}).join(', ');
+      else rec.innerHTML='<b class="live-warn">TUNING OFF</b> — suggested only (will not change your file): '+keys.slice(0,8).map(function(k){return esc(k)+'='+esc(String(opt.recommended_patch[k]));}).join(', ')+
         (opt.budget_usd&&opt.budget_usd.example?'<br/>'+esc(opt.budget_usd.example):'');
     }
   }
@@ -368,11 +416,19 @@ _CLIENT_JS = r"""
   var optAuto=$('#opt-auto');
   if(optAuto){
     optAuto.onchange=function(){
+      var enabling=optAuto.checked;
+      setTuningUi(enabling);
       fetch('/api/optimizer/toggle',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({enabled:optAuto.checked})})
+        body:JSON.stringify({enabled:enabling})})
         .then(function(r){return r.json();})
-        .then(function(d){renderOptimizer(d); showBan('ban-ok', optAuto.checked?'<b>Auto-tune ON</b>':'<b>Auto-tune OFF</b> (still analyzing)'); loadSettings().catch(function(){});})
-        .catch(function(e){showBan('ban-err',esc(String(e)));});
+        .then(function(d){
+          renderOptimizer(d);
+          showBan('ban-ok', enabling
+            ?'<b>TUNING ON</b> — optimizer will update settings.json after each scan.'
+            :'<b>TUNING OFF</b> — your manual settings will not be overwritten (suggestions still shown).');
+          loadSettings().catch(function(){});
+        })
+        .catch(function(e){setTuningUi(!enabling); showBan('ban-err',esc(String(e)));});
     };
   }
 
@@ -409,6 +465,6 @@ _CLIENT_JS = r"""
   var timer=null;
   function arm(){clearInterval(timer); if($('#auto').checked) timer=setInterval(function(){refresh().catch(function(){});},5000);}
   $('#auto').onchange=arm;
-  refresh().catch(function(){}); loadSettings().catch(function(){}); pollStatus(); setInterval(pollStatus,12000); arm();
+  refresh().catch(function(){}); loadSettings().catch(function(){}); pollStatus(); pollOptimizer(); setInterval(pollStatus,12000); setInterval(pollOptimizer,12000); arm();
 })();
 """
