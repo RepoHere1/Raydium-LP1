@@ -33,7 +33,6 @@ from raydium_lp1.settings_io import load_settings_json, merge_known_settings_pat
 from raydium_lp1.settings_optimizer import (
     DEFAULT_STATE_PATH as OPTIMIZER_STATE_PATH,
     SETTINGS_CATALOG,
-    analyze,
     apply_recommendations,
     run_cycle,
     set_auto_apply,

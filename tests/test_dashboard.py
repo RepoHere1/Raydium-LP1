@@ -26,6 +26,8 @@ class DashboardBuildTests(unittest.TestCase):
             "candidates": [
                 {
                     "id": "pool-1",
+                    "mint_a": "So11111111111111111111111111111111111111112",
+                    "mint_b": "TokenMint1111111111111111111111111111111111",
                     "mint_a_symbol": "SOL",
                     "mint_b_symbol": "TKN",
                     "apr": 1500.0,
@@ -55,6 +57,9 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertEqual(data.settings["strategy"], "aggressive")
         self.assertEqual(len(data.open_positions), 1)
         self.assertEqual(data.open_positions[0]["pair"], "SOL/TKN")
+        self.assertEqual(data.open_positions[0]["pool_id"], "pool-1")
+        self.assertEqual(data.open_positions[0]["mint_b"], "TokenMint1111111111111111111111111111111111")
+        self.assertEqual(data.open_positions[0]["mint_a_symbol"], "SOL")
         self.assertEqual(len(data.recent_alerts), 1)
         self.assertEqual(data.last_scan["candidates_truncated"], 3)
         self.assertEqual(data.wallet_capacity["capacity"]["max_positions"], 4)

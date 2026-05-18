@@ -124,6 +124,10 @@ def build_dashboard(
                 {
                     "pool_id": candidate.get("id"),
                     "pair": f"{candidate.get('mint_a_symbol', '')}/{candidate.get('mint_b_symbol', '')}",
+                    "mint_a": candidate.get("mint_a", ""),
+                    "mint_b": candidate.get("mint_b", ""),
+                    "mint_a_symbol": candidate.get("mint_a_symbol", ""),
+                    "mint_b_symbol": candidate.get("mint_b_symbol", ""),
                     "apr": candidate.get("apr"),
                     "liquidity_usd": candidate.get("liquidity_usd"),
                     "volume_24h_usd": candidate.get("volume_24h_usd"),

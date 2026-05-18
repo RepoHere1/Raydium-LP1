@@ -18,6 +18,10 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("Recent alerts", page)
         self.assertIn("CRITICAL", page)
         self.assertIn("Candidates", page)
+        self.assertIn("Pool + token mints", page)
+        self.assertIn("addr-full", page)
+        self.assertIn("poolAddressesHtml", page)
+        self.assertIn("SOL/WSOL mint hidden", page)
 
 
 class DashboardWebDriftTests(unittest.TestCase):

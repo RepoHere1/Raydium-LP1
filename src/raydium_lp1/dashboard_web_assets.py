@@ -69,6 +69,10 @@ a{color:var(--a);text-decoration:none}a:hover{text-decoration:underline}
 .catalog details{margin:.4rem 0}.catalog summary{cursor:pointer;color:var(--a);font-size:.8rem}
 .catalog ol{margin:.35rem 0 0 1rem;padding:0;font-size:.72rem;color:var(--muted);max-height:220px;overflow:auto}
 .settings-scroll{max-height:min(72vh,820px);overflow:auto;padding-right:.25rem}
+.addr-col{min-width:280px;max-width:420px;vertical-align:top}
+.addr-full{display:block;font-family:var(--mono);font-size:.68rem;word-break:break-all;user-select:all;line-height:1.35;color:#d4e4ff}
+.addr-block{margin:.3rem 0 0}
+.addr-label{font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 </style></head><body>
 <header><h1>Raydium-LP1 · mission control</h1><span class="tag live">127.0.0.1</span><span class="tag" id="stamp">loading…</span>
 <div class="tb"><label class="hdr"><input type="checkbox" id="auto" checked/> Auto 5s</label>
@@ -125,6 +129,37 @@ _CLIENT_JS = r"""
     if(s==='critical') return '<span class="pill bad">critical</span>';
     if(s==='warning') return '<span class="pill warn">warning</span>';
     return '<span class="pill ok">healthy</span>';
+  }
+  var WSOL_MINT='So11111111111111111111111111111111111111112';
+  function isSolSide(sym,mint){
+    var s=String(sym||'').toUpperCase();
+    if(s==='SOL'||s==='WSOL') return true;
+    return mint&&String(mint)===WSOL_MINT;
+  }
+  function tokenMintRows(p){
+    var rows=[];
+    if(p.mint_a&&!isSolSide(p.mint_a_symbol,p.mint_a))
+      rows.push({label:p.mint_a_symbol||'Token A',addr:p.mint_a});
+    if(p.mint_b&&!isSolSide(p.mint_b_symbol,p.mint_b))
+      rows.push({label:p.mint_b_symbol||'Token B',addr:p.mint_b});
+    return rows;
+  }
+  function poolAddressesHtml(p){
+    var pool=String(p.pool_id||'');
+    var html='<span class="addr-label">Pool</span><span class="addr-full">'+esc(pool)+'</span>';
+    var tokens=tokenMintRows(p);
+    if(tokens.length){
+      html+='<div class="addr-block">';
+      for(var ti=0;ti<tokens.length;ti++){
+        html+='<span class="addr-label">'+esc(tokens[ti].label)+'</span><span class="addr-full">'+esc(tokens[ti].addr)+'</span>';
+      }
+      html+='</div>';
+    }
+    return '<div class="addr-col">'+html+'</div>';
+  }
+  function poolAddressOnlyHtml(poolId){
+    var pool=String(poolId||'');
+    return '<div class="addr-col"><span class="addr-label">Pool</span><span class="addr-full">'+esc(pool)+'</span></div>';
   }
   function sortNote(s){
     if(s&&s.sort_candidates_by_apr) return 'sorted by Raydium day.apr (highest first)';
@@ -216,7 +251,7 @@ _CLIENT_JS = r"""
       '<div class="k g"><span class="x">Candidates</span><span class="v">'+c+'</span></div>'+
       '<div class="k r"><span class="x">Rejected</span><span class="v">'+rej+'</span></div>'+
       '<div class="k"><span class="x">Pass</span><span class="v">'+rate.toFixed(1)+'%</span></div></div>'+
-      (bars?'<motion class="sg">Reject categories</div>'+bars:'');
+      (bars?'<div class="sg">Reject categories</div>'+bars:'');
   }
   function renderCandidates(d){
     var rows=(d.open_positions||[]).slice();
@@ -224,11 +259,11 @@ _CLIENT_JS = r"""
     var note=sortNote(d.settings||{});
     $('#cand-note').textContent='('+note+')';
     if(!rows.length){$('#cand').innerHTML='<p class="hint">No candidates yet.</p>';return;}
-    $('#cand').innerHTML='<table class="tb2"><thead><tr><th>Pair</th><th class="num">APR%</th><th class="num">TVL</th><th class="num">VOL24</th><th>Mom</th><th>Health</th><th>Pool state</th></tr></thead><tbody>'+
+    $('#cand').innerHTML='<table class="tb2"><thead><tr><th>Pair</th><th class="num">APR%</th><th class="num">TVL</th><th class="num">VOL24</th><th>Mom</th><th>Health</th><th>Pool + token mints</th></tr></thead><tbody>'+
       rows.map(function(p,i){
         var mom=(p.momentum_score!=null)?esc(String(p.momentum_score))+' '+esc(String(p.momentum_tier||'')):'—';
-        return '<tr><td>'+esc(p.pair||'')+'</td><td class="num">'+aprPct(p.apr)+'</td><td class="num">'+money(p.liquidity_usd)+'</td><td class="num">'+money(p.volume_24h_usd)+'</td><td>'+mom+'</td><td>'+pill(p.health)+'</td><td class="mono">'+esc(p.pool_id||'')+'</td></tr>';
-      }).join('')+'</tbody></table><p class="hint">Dry-run only — no wallet signing.</p>';
+        return '<tr><td>'+esc(p.pair||'')+'</td><td class="num">'+aprPct(p.apr)+'</td><td class="num">'+money(p.liquidity_usd)+'</td><td class="num">'+money(p.volume_24h_usd)+'</td><td>'+mom+'</td><td>'+pill(p.health)+'</td><td>'+poolAddressesHtml(p)+'</td></tr>';
+      }).join('')+'</tbody></table><p class="hint">Full pool + token mints (select to copy). SOL/WSOL mint hidden.</p>';
   }
   function renderPositions(d){
     var rows=d.open_positions||[];
@@ -236,7 +271,7 @@ _CLIENT_JS = r"""
     $('#pos').innerHTML=rows.map(function(p){
       var reasons=(p.health_reasons||[]).map(function(r){return esc(r);}).join('; ');
       return '<div class="pos-row"><b>'+esc(p.pair||'')+'</b> '+pill(p.health)+' APR '+aprPct(p.apr)+'% TVL $'+money(p.liquidity_usd)+
-        '<div class="sub">pool '+esc(p.pool_id||'')+(reasons?'<br/>'+reasons:'')+'</div></div>';
+        '<div class="sub">'+poolAddressesHtml(p)+(reasons?'<br/>'+reasons:'')+'</div></div>';
     }).join('');
   }
   function renderAlerts(d){
@@ -247,7 +282,7 @@ _CLIENT_JS = r"""
       var cls=sev==='critical'?'alert-row bad':'alert-row';
       var rs=(a.reasons||[]).slice(0,2).join(' · ');
       return '<div class="'+cls+'">'+esc((a.timestamp||'').replace('T',' ').slice(0,19))+'Z <b>'+esc(String(a.severity||'').toUpperCase())+'</b> '+esc(a.pair||'')+
-        ' pool='+esc(a.pool_id||'')+(rs?'<br/><span style="color:var(--muted)">'+esc(rs)+'</span>':'')+'</div>';
+        '<div style="margin-top:.25rem">'+poolAddressOnlyHtml(a.pool_id)+(rs?'<span style="color:var(--muted);display:block;margin-top:.2rem">'+esc(rs)+'</span>':'')+'</div></div>';
     }).join('');
   }
   function renderMomentum(d){
