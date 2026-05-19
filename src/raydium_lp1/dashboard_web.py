@@ -48,6 +48,25 @@ def _iso_mtime(path: Path) -> str | None:
     return datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat()
 
 
+def _mtime_epoch(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _dashboard_stale(paths: WebPaths, *, skew_seconds: float = 2.0) -> bool:
+    """True when settings were saved after the last dashboard.json write."""
+
+    settings_ts = _mtime_epoch(paths.settings_path)
+    dash_ts = _mtime_epoch(paths.dashboard_path)
+    if settings_ts is None or dash_ts is None:
+        return False
+    return settings_ts > dash_ts + skew_seconds
+
+
 _FORM_SECTIONS: list[dict[str, Any]] = [
     {
         "title": "Liquidity gates",
@@ -248,21 +267,30 @@ def _settings_save_warnings(on_disk: dict[str, Any]) -> list[str]:
 
 
 def _status_payload(paths: WebPaths) -> dict[str, Any]:
+    from raydium_lp1.settings_io import validate_settings_file
+
     heartbeat = _read_json_file(SCAN_HEARTBEAT_PATH)
     save_ack = _read_json_file(SETTINGS_SAVE_ACK_PATH)
     dash_mtime = _iso_mtime(paths.dashboard_path)
     settings_mtime = _iso_mtime(paths.settings_path)
+    settings_ok, settings_err = validate_settings_file(paths.settings_path)
     phase = (heartbeat or {}).get("phase")
     scanning = phase in {"scan_start", "page_fetch", "page_failed"}
     dash_blob = _read_json_file(paths.dashboard_path)
     snap = _snapshot_settings_from_dashboard(dash_blob)
-    on_disk = _settings_on_disk_summary(paths.settings_path)
-    drift_keys = _settings_drift_keys(snap, on_disk)
+    on_disk = _settings_on_disk_summary(paths.settings_path) if settings_ok else {}
+    drift_keys = _settings_drift_keys(snap, on_disk) if settings_ok else []
+    stale = _dashboard_stale(paths)
+    settings_name = paths.settings_path.name
     return {
         "settings_path": str(paths.settings_path.resolve()),
+        "settings_file": settings_name,
         "settings_mtime": settings_mtime,
+        "settings_valid": settings_ok,
+        "settings_error": None if settings_ok else settings_err,
         "dashboard_path": str(paths.dashboard_path.resolve()),
         "dashboard_mtime": dash_mtime,
+        "dashboard_stale": stale,
         "heartbeat_path": str(SCAN_HEARTBEAT_PATH.resolve()),
         "heartbeat": heartbeat,
         "settings_save_ack": save_ack,
@@ -271,7 +299,7 @@ def _status_payload(paths: WebPaths) -> dict[str, Any]:
         "settings_on_disk": on_disk,
         "settings_drift_keys": drift_keys,
         "settings_apply": {
-            "how": "POST /api/settings merges into settings.json (known keys only).",
+            "how": f"POST /api/settings merges into {settings_name} (known keys only).",
             "scanner": "Scanner tab must use run_scan_dashboard.ps1 (--reload-config-each-scan).",
             "when": "Funnel numbers update only after a full scan finishes (dashboard.json).",
         },
@@ -299,8 +327,12 @@ def _optimizer_api(paths: WebPaths, *, force_apply: bool = False) -> dict[str, A
     return state
 
 
-def _page() -> bytes:
-    boot_payload = {"form_sections": _FORM_SECTIONS, "settings_catalog": SETTINGS_CATALOG}
+def _page(settings_path: Path = DEFAULT_SETTINGS_PATH) -> bytes:
+    boot_payload = {
+        "form_sections": _FORM_SECTIONS,
+        "settings_catalog": SETTINGS_CATALOG,
+        "settings_file": settings_path.name,
+    }
     html = (
         _CSS_HTML.replace(
             "BOOT_JSON",
@@ -325,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
 
     paths = WebPaths(dashboard_path=args.dashboard, settings_path=args.settings)
 
-    blob = {"page": _page()}
+    blob = {"page": _page(paths.settings_path)}
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: Any) -> None:
@@ -411,14 +443,31 @@ def main(argv: list[str] | None = None) -> int:
                     return
                 enabled = bool(body.get("enabled"))
                 try:
+                    from raydium_lp1.settings_io import repair_settings_file_if_needed
+
+                    repaired = repair_settings_file_if_needed(paths.settings_path)
+                    if repaired:
+                        print(
+                            f"[web] repaired {paths.settings_path.name}: {', '.join(repaired)}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                     set_auto_apply(enabled, paths.settings_path)
                 except (OSError, ValueError) as exc:
-                    self._send_json(400, {"error": str(exc)})
+                    self._send_json(
+                        400,
+                        {
+                            "error": str(exc),
+                            "hint": "Run .\\scripts\\fix_pool_type.ps1 -ResetScanFilters if settings has git conflict markers.",
+                        },
+                    )
                     return
                 snap = run_cycle(settings_path=paths.settings_path, dashboard_path=paths.dashboard_path)
                 if enabled:
                     apply_recommendations(snap, paths.settings_path, force=True)
-                self._send_json(200, snap.to_dict())
+                out = snap.to_dict()
+                out["settings_file"] = paths.settings_path.name
+                self._send_json(200, out)
                 return
             if path == "/api/optimizer/apply":
                 try:

@@ -15,8 +15,10 @@ $py = if (Get-Command py -ErrorAction SilentlyContinue) { @("py", "-3") } else {
 $resetFlag = if ($ResetScanFilters) { "True" } else { "False" }
 & @py -c @"
 from pathlib import Path
-from raydium_lp1.settings_io import repair_settings_file_if_needed, load_settings_json, write_settings_json
+from raydium_lp1.settings_io import repair_settings_file_if_needed, load_settings_json, write_settings_json, settings_text_has_git_conflict, read_settings_text
 p = Path(r'$Config')
+if p.exists() and settings_text_has_git_conflict(read_settings_text(p)):
+    print('git conflict markers found — resolving …')
 changed = repair_settings_file_if_needed(p)
 reset = $resetFlag
 if reset:

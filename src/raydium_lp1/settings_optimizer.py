@@ -427,6 +427,9 @@ def run_cycle(
 
 
 def set_auto_apply(enabled: bool, settings_path: Path) -> None:
+    from raydium_lp1.settings_io import repair_settings_file_if_needed
+
+    repair_settings_file_if_needed(settings_path)
     merge_known_settings_patch(
         settings_path,
         {"settings_optimizer_auto_apply": bool(enabled)},

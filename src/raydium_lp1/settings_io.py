@@ -11,6 +11,42 @@ from raydium_lp1.settings_schema import KNOWN_SETTINGS_KEYS
 
 # PowerShell ConvertTo-Json sometimes emits @{...} when -Depth is too low.
 _PS_HASHTABLE_RE = re.compile(r"@\{[^}]*\}")
+_GIT_CONFLICT_RE = re.compile(
+    r"<<<<<<<[^\n]*\n(.*?)=======\n(.*?)>>>>>>>[^\n]*",
+    re.DOTALL,
+)
+
+# Minimal hyper-APR discovery preset (used when git conflict leaves no valid JSON).
+HYPER_APR_DEFAULTS: dict[str, Any] = {
+    "dry_run": True,
+    "network": "solana",
+    "strategy": "custom",
+    "scan_hyper_apr_mode": True,
+    "pool_type": "all",
+    "pool_sort_field": "liquidity",
+    "sort_type": "desc",
+    "apr_field": "apr24h",
+    "min_apr": 50,
+    "pages": 10,
+    "page_size": 100,
+    "min_liquidity_usd": 250000,
+    "min_volume_24h_usd": 5000,
+    "hard_exit_min_tvl_usd": 0,
+    "require_sell_route": False,
+    "verify_pool_on_chain": False,
+    "verify_pool_raydium_api": False,
+    "require_verified_raydium_pool": False,
+    "momentum_enabled": False,
+    "momentum_detective_enabled": False,
+    "momentum_probe_market_lists": False,
+    "sort_candidates_by_momentum": False,
+    "sort_candidates_by_apr": True,
+    "write_rejections": False,
+    "settings_optimizer_auto_apply": False,
+    "allowed_quote_symbols": ["SOL", "USDC", "USDT"],
+    "route_sources": ["jupiter", "raydium"],
+    "solana_rpc_urls": [],
+}
 
 
 def read_settings_text(path: Path) -> str:
@@ -25,6 +61,45 @@ def _clean_path_value(value: Any, default: str) -> str:
     if not raw or raw in {".", "./", ".\\"}:
         return default
     return raw
+
+
+def settings_text_has_git_conflict(text: str) -> bool:
+    return "<<<<<<<" in text and "=======" in text and ">>>>>>>" in text
+
+
+def parse_git_conflict_settings(text: str) -> dict[str, Any] | None:
+    """Extract JSON from either side of a git merge conflict in a settings file."""
+
+    match = _GIT_CONFLICT_RE.search(text)
+    if not match:
+        return None
+    for chunk in (match.group(1).strip(), match.group(2).strip()):
+        if not chunk:
+            continue
+        try:
+            data = json.loads(chunk)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def resolve_git_conflict_settings(path: Path) -> list[str]:
+    """Rewrite a conflicted settings file to valid JSON; return change markers."""
+
+    text = read_settings_text(path)
+    if not settings_text_has_git_conflict(text):
+        return []
+    data = parse_git_conflict_settings(text)
+    if data is None:
+        data = dict(HYPER_APR_DEFAULTS)
+        source = "hyper_apr_defaults"
+    else:
+        source = "conflict_side"
+    fixed = sanitize_settings_dict(data)
+    write_settings_json(path, fixed)
+    return [f"_git_conflict_resolved_{source}"]
 
 
 def sanitize_settings_dict(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -54,6 +129,8 @@ def repair_settings_file_if_needed(path: Path) -> list[str]:
     if not path.exists():
         return []
     text = read_settings_text(path)
+    if settings_text_has_git_conflict(text):
+        return resolve_git_conflict_settings(path)
     data = json.loads(text)
     if not isinstance(data, dict):
         return []
@@ -70,6 +147,11 @@ def load_settings_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Settings file not found: {path.resolve()}")
     text = read_settings_text(path)
+    if settings_text_has_git_conflict(text):
+        raise ValueError(
+            f"{path.resolve()} has git merge conflict markers (<<<<<<<). "
+            "Run: .\\scripts\\fix_pool_type.ps1 -ResetScanFilters"
+        )
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -107,6 +189,8 @@ def format_json_decode_error(path: Path, text: str, exc: json.JSONDecodeError) -
             "  • Trailing comma after the last property (JSON does not allow it).",
             "  • // comments — remove them; only plain JSON is valid.",
             "",
+            "Git merge conflict after stash pop:",
+            "  .\\scripts\\fix_pool_type.ps1 -ResetScanFilters",
             "Repair from a known-good template (backs up your file first):",
             "  .\\scripts\\repair_settings.ps1 -ApplyMomentumTemplate",
             "Or merge missing keys without rewriting everything:",

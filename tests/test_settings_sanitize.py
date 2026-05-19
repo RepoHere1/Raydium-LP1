@@ -6,8 +6,11 @@ from pathlib import Path
 from raydium_lp1.settings_io import (
     load_settings_json,
     merge_known_settings_patch,
+    parse_git_conflict_settings,
     repair_settings_file_if_needed,
+    resolve_git_conflict_settings,
     sanitize_settings_dict,
+    settings_text_has_git_conflict,
 )
 
 
@@ -28,6 +31,23 @@ class SettingsSanitizeTests(unittest.TestCase):
             changed = repair_settings_file_if_needed(path)
             self.assertIn("pool_type", changed)
             self.assertEqual(json.loads(path.read_text())["pool_type"], "all")
+
+    def test_git_conflict_resolves_to_valid_json(self):
+        conflict = """<<<<<<< Updated upstream
+{"pool_type": "all", "min_apr": 50}
+=======
+{"pool_type": "", "min_apr": 99}
+>>>>>>> Stashed changes
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text(conflict, encoding="utf-8")
+            self.assertTrue(settings_text_has_git_conflict(conflict))
+            parsed = parse_git_conflict_settings(conflict)
+            self.assertEqual(parsed["pool_type"], "all")
+            changed = resolve_git_conflict_settings(path)
+            self.assertTrue(any("conflict" in c for c in changed))
+            self.assertEqual(load_settings_json(path)["pool_type"], "all")
 
     def test_merge_patch_coerces_blank_pool_type(self):
         with tempfile.TemporaryDirectory() as tmp:

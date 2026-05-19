@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -28,6 +29,36 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("setTuningUi", page)
         self.assertIn("feedNote", page)
         self.assertIn("schedulePoll", page)
+
+
+class DashboardWebStatusTests(unittest.TestCase):
+    def test_dashboard_stale_when_settings_newer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            settings = tmp_path / "settings.json"
+            dash = tmp_path / "dashboard.json"
+            settings.write_text('{"min_apr": 1}\n', encoding="utf-8")
+            dash.write_text('{"generated_at": "t"}\n', encoding="utf-8")
+            import os
+            import time
+
+            old = time.time() - 30
+            os.utime(dash, (old, old))
+            paths = dashboard_web.WebPaths(dashboard_path=dash, settings_path=settings)
+            self.assertTrue(dashboard_web._dashboard_stale(paths))
+
+    def test_status_flags_invalid_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            settings = tmp_path / "settings.json"
+            settings.write_text("<<<<<<< conflict\n", encoding="utf-8")
+            paths = dashboard_web.WebPaths(
+                dashboard_path=tmp_path / "missing.json",
+                settings_path=settings,
+            )
+            st = dashboard_web._status_payload(paths)
+            self.assertFalse(st["settings_valid"])
+            self.assertIn("conflict", (st["settings_error"] or "").lower())
 
 
 class DashboardWebDriftTests(unittest.TestCase):

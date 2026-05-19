@@ -105,7 +105,7 @@ a{color:var(--a);text-decoration:none}a:hover{text-decoration:underline}
       <div class="tuning-head">
         <div class="tuning-lead">
           <p class="tuning-kicker">Settings optimizer</p>
-          <p><b>Apply scan recommendations to your settings file.</b> When <b>ON</b>, the optimizer merges suggested filter changes into <code>settings.json</code> after each scan. When <b>OFF</b>, you only see suggestions — manual values are not overwritten.</p>
+          <p><b>Apply scan recommendations to your settings file.</b> When <b>ON</b>, the optimizer merges suggested filter changes into <code id="tuning-settings-file">settings.json</code> after each scan. When <b>OFF</b>, you only see suggestions — manual values are not overwritten.</p>
         </div>
         <div class="tuning-switch-wrap">
           <label class="tuning-switch" id="tuning-switch" title="Toggle automatic settings tuning">
@@ -306,8 +306,14 @@ _CLIENT_JS = r"""
     if(u.indexOf('/api/')===0){u+=(u.indexOf('?')>=0?'&':'?')+'_='+Date.now();}
     var r=await fetch(u,opt||{cache:'no-store'}), t=await r.text(), d;
     try{d=JSON.parse(t);}catch(e){throw new Error((t||'').slice(0,120));}
-    if(!r.ok) throw new Error(d.error||t||r.status);
+    if(!r.ok) throw new Error((d&&d.error)||(d&&d.hint)||t||String(r.status));
     return d;
+  }
+  async function postJson(url,body){
+    return gj(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  }
+  function settingsFileLabel(st){
+    return (st&&st.settings_file)||(boot.settings_file)||'settings.json';
   }
   function renderFunnel(d,st){
     var ls=d.last_scan||{}, sc=ls.scanned_count||0, c=ls.candidate_count||0, rej=ls.rejected_count||0;
@@ -399,13 +405,22 @@ _CLIENT_JS = r"""
   }
   function renderLive(st){
     var el=$('#live'); if(!el)return;
-    var hb=st.heartbeat||{}, sync='';
-    if(st.scanner_scanning) sync='<span class="live-bad">Scanning page '+esc(hb.page||'?')+'/'+esc(hb.pages_total||'?')+'</span>';
-    else if(st.dashboard_mtime) sync='<span class="live-ok">Dashboard fresh</span>';
-    else sync='<span class="live-bad">Waiting for first scan</span>';
+    var hb=st.heartbeat||{}, sync='', sf=settingsFileLabel(st);
+    var tf=$('#tuning-settings-file'); if(tf) tf.textContent=sf;
+    if(st.settings_valid===false){
+      sync='<span class="live-bad"><b>Settings broken</b> — TUNING and Save are blocked until JSON is valid.</span>'+
+        '<br/><span class="live-bad" style="font-size:.75rem">'+esc(String(st.settings_error||'invalid JSON').slice(0,280))+'</span>'+
+        '<br/><span class="hint">Run: .\\scripts\\fix_pool_type.ps1 -ResetScanFilters</span>';
+    } else if(st.scanner_scanning){
+      sync='<span class="live-bad">Scanning page '+esc(hb.page||'?')+'/'+esc(hb.pages_total||'?')+'</span>';
+    } else if(st.dashboard_stale){
+      sync='<span class="live-warn"><b>Dashboard stale</b> — '+esc(sf)+' changed after last scan; funnel may not match disk until scanner finishes.</span>';
+    } else if(st.dashboard_mtime){
+      sync='<span class="live-ok">Dashboard fresh</span>';
+    } else sync='<span class="live-bad">Waiting for first scan</span>';
     if(hb.last_error&&!String(hb.last_error).match(/git pull/i))
       sync+='<br/><span class="live-bad">'+esc(hb.last_error)+'</span>';
-    el.innerHTML='<strong>settings</strong> '+esc(st.settings_path)+'<br/>mtime '+esc(st.settings_mtime||'?')+
+    el.innerHTML='<strong>settings</strong> '+esc(sf)+' · '+esc(st.settings_path||'')+'<br/>mtime '+esc(st.settings_mtime||'?')+
       '<br/><strong>dashboard</strong> mtime '+esc(st.dashboard_mtime||'?')+'<br/>'+sync;
   }
   function showBan(id,html){
@@ -457,17 +472,17 @@ _CLIENT_JS = r"""
     optAuto.onchange=function(){
       var enabling=optAuto.checked;
       setTuningUi(enabling);
-      fetch('/api/optimizer/toggle',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({enabled:enabling})})
-        .then(function(r){return r.json();})
+      postJson('/api/optimizer/toggle',{enabled:enabling})
         .then(function(d){
           renderOptimizer(d);
+          var sf=settingsFileLabel(d);
           showBan('ban-ok', enabling
-            ?'<b>TUNING ON</b> — optimizer will update settings.json after each scan.'
+            ?'<b>TUNING ON</b> — optimizer will update <code>'+esc(sf)+'</code> after each scan.'
             :'<b>TUNING OFF</b> — your manual settings will not be overwritten (suggestions still shown).');
           loadSettings().catch(function(){});
+          pollStatus();
         })
-        .catch(function(e){setTuningUi(!enabling); showBan('ban-err',esc(String(e)));});
+        .catch(function(e){setTuningUi(!enabling); showBan('ban-err',esc(String(e))); pollStatus();});
     };
   }
 

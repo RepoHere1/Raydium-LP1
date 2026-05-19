@@ -18,8 +18,14 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = Split-Path -Parent $here
 $configPath = Join-Path $repo $Config
 if (Test-Path -LiteralPath $configPath) {
+    $rawCfg = Get-Content -LiteralPath $configPath -Raw -ErrorAction SilentlyContinue
+    if ($rawCfg -match '<<<<<<<') {
+        Write-Host "[scan] ERROR: $Config has git merge conflict markers — scanner cannot start." -ForegroundColor Red
+        Write-Host "[scan] Fix: .\scripts\fix_pool_type.ps1 -Config $Config -ResetScanFilters" -ForegroundColor Yellow
+        exit 2
+    }
     try {
-        $cfg = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+        $cfg = $rawCfg | ConvertFrom-Json
         if ($cfg.require_sell_route -eq $true) {
             Write-Host "[scan] WARNING: require_sell_route=true — Jupiter/Raydium probes per pool; scans are slow. Ctrl+C is normal if impatient." -ForegroundColor Yellow
             Write-Host "[scan] For fast TVL discovery use: .\scripts\START-HERE.ps1  (or run_tune_scan.ps1)" -ForegroundColor DarkYellow
