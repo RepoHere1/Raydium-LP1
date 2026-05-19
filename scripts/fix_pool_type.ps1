@@ -11,9 +11,16 @@ $repo = Split-Path -Parent $here
 Set-Location $repo
 $env:PYTHONPATH = "src"
 
-$py = if (Get-Command py -ErrorAction SilentlyContinue) { @("py", "-3") } else { @("python") }
+$pythonExe = "python"
+$pythonArgs = @()
+if (Get-Command py -ErrorAction SilentlyContinue) {
+    $pythonExe = "py"
+    $pythonArgs = @("-3")
+} elseif (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    throw "Python not found. Install Python 3 and ensure python or py is on PATH."
+}
 $resetFlag = if ($ResetScanFilters) { "True" } else { "False" }
-& @py -c @"
+& $pythonExe @pythonArgs -c @"
 from pathlib import Path
 from raydium_lp1.settings_io import repair_settings_file_if_needed, load_settings_json, write_settings_json, settings_text_has_git_conflict, read_settings_text
 p = Path(r'$Config')
