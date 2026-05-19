@@ -16,6 +16,11 @@ class SettingsSanitizeTests(unittest.TestCase):
         out = sanitize_settings_dict({"pool_type": "", "min_apr": 1})
         self.assertEqual(out["pool_type"], "all")
 
+    def test_empty_report_paths_get_defaults(self):
+        out = sanitize_settings_dict({"liquidity_history_path": "", "dashboard_path": "."})
+        self.assertEqual(out["liquidity_history_path"], "reports/liquidity_history.json")
+        self.assertEqual(out["dashboard_path"], "reports/dashboard.json")
+
     def test_repair_writes_all_to_disk(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"

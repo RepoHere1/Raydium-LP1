@@ -20,6 +20,13 @@ def read_settings_text(path: Path) -> str:
     return raw.decode("utf-8")
 
 
+def _clean_path_value(value: Any, default: str) -> str:
+    raw = str(value or "").strip()
+    if not raw or raw in {".", "./", ".\\"}:
+        return default
+    return raw
+
+
 def sanitize_settings_dict(data: Mapping[str, Any]) -> dict[str, Any]:
     """Fix values that break Raydium API or the scanner (empty poolType → HTTP 500)."""
 
@@ -28,6 +35,16 @@ def sanitize_settings_dict(data: Mapping[str, Any]) -> dict[str, Any]:
         out["pool_type"] = "all"
     if not str(out.get("pool_sort_field") or "").strip():
         out["pool_sort_field"] = "liquidity"
+    out["liquidity_history_path"] = _clean_path_value(
+        out.get("liquidity_history_path"), "reports/liquidity_history.json"
+    )
+    out["dashboard_path"] = _clean_path_value(out.get("dashboard_path"), "reports/dashboard.json")
+    out["emergency_alerts_path"] = _clean_path_value(
+        out.get("emergency_alerts_path"), "reports/alerts.json"
+    )
+    out["rejections_csv_path"] = _clean_path_value(
+        out.get("rejections_csv_path"), "reports/rejections.csv"
+    )
     return out
 
 

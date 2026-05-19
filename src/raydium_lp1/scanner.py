@@ -201,8 +201,9 @@ class ScannerConfig:
             min_burn_percent=float(raw_with_strategy.get("min_burn_percent", 0.0)),
             track_liquidity_health=bool(raw_with_strategy.get("track_liquidity_health", True)),
             liquidity_history_path=str(
-                raw_with_strategy.get("liquidity_history_path", "reports/liquidity_history.json")
-            ),
+                raw_with_strategy.get("liquidity_history_path") or "reports/liquidity_history.json"
+            ).strip()
+            or "reports/liquidity_history.json",
             emergency_close_enabled=bool(raw_with_strategy.get("emergency_close_enabled", True)),
             emergency_alerts_path=str(
                 raw_with_strategy.get("emergency_alerts_path", "reports/alerts.json")
@@ -604,6 +605,7 @@ def effective_scan_config(config: ScannerConfig) -> ScannerConfig:
         return replace(
             config,
             pool_sort_field=sort_field,
+            hard_exit_min_tvl_usd=0.0,
             require_sell_route=False,
             verify_pool_on_chain=False,
             verify_pool_raydium_api=False,
@@ -1176,8 +1178,17 @@ def scan(
     triggered_alerts: list[dict[str, Any]] = []
     assessments: list[Any] = []
     if config.track_liquidity_health and candidates:
-        history_path = Path(config.liquidity_history_path)
-        assessments, _ = health.assess_pools(candidates, history_path=history_path)
+        history_path = health.normalize_history_path(config.liquidity_history_path)
+        try:
+            assessments, _ = health.assess_pools(candidates, history_path=history_path)
+        except OSError as exc:
+            print(
+                f"[scan] liquidity history save failed ({history_path}): {exc} — "
+                "check liquidity_history_path in settings (must not be blank)",
+                file=sys.stderr,
+                flush=True,
+            )
+            assessments = []
         for pool, assessment in zip(candidates, assessments):
             pool["health"] = assessment.to_dict()
             health_summary[assessment.score] = health_summary.get(assessment.score, 0) + 1

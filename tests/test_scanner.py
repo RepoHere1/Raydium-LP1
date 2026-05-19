@@ -185,6 +185,11 @@ class EffectiveScanConfigTests(unittest.TestCase):
         self.assertTrue(effective.sort_candidates_by_apr)
         self.assertFalse(effective.require_sell_route)
 
+    def test_hyper_apr_mode_clears_hard_exit_tvl(self):
+        cfg = ScannerConfig(scan_hyper_apr_mode=True, hard_exit_min_tvl_usd=163_000.0)
+        effective = effective_scan_config(cfg)
+        self.assertEqual(effective.hard_exit_min_tvl_usd, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
