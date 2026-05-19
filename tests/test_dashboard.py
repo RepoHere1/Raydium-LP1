@@ -70,6 +70,18 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertIn("liquidity small", data.last_scan["rejection_reason_histogram"])
         self.assertEqual(data.last_scan["scan_diagnosis"]["scan_signal"], "test")
 
+    def test_dry_run_preview_positions_when_wallet_unfunded(self):
+        report = self._report()
+        report["wallet_capacity"] = {
+            "balance": {"ok": False, "sol": 0.0},
+            "capacity": {"max_positions": 0, "position_size_sol": 0.1, "reserved_sol": 0.02},
+        }
+        config = ScannerConfig(dry_run=True, position_size_sol=0.1, lp_max_positions_per_mint=2)
+        data = dashboard.build_dashboard(config=config, report=report)
+        self.assertEqual(len(data.candidates), 1)
+        self.assertEqual(len(data.open_positions), 1)
+        self.assertEqual(data.wallet_capacity.get("open_positions_mode"), "dry_run_preview")
+
     def test_candidates_and_open_positions_differ_when_capped(self):
         report = self._report()
         report["candidate_count"] = 3

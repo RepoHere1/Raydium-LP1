@@ -361,8 +361,12 @@ _CLIENT_JS = r"""
   }
   function renderPositions(d){
     var rows=d.open_positions||[];
-    if(!rows.length){var nc=(d.candidates||[]).length; $('#pos').innerHTML='<p class="hint">No simulated wallet slots (max_positions=0 or unfunded). Full scan shortlist: '+nc+' pool(s) in <b>Candidates</b>.</p>';return;}
-    $('#pos').innerHTML=rows.map(function(p){
+    if(!rows.length){var nc=(d.candidates||[]).length; $('#pos').innerHTML='<p class="hint">No open slots yet — '+nc+' candidate(s) in <b>Candidates</b> (wait for scan or lower filters).</p>';return;}
+    var w=d.wallet_capacity||{}, mode=w.open_positions_mode||'';
+  var modeNote=(mode==='dry_run_preview')
+      ?'<p class="hint"><span class="live-warn">Paper preview</span> — no funded wallet (max_positions=0); showing top simulated slots. Full shortlist stays in <b>Candidates</b>.</p>'
+      :'<p class="hint">Simulated wallet slots (dry-run). Full shortlist in <b>Candidates</b>.</p>';
+    $('#pos').innerHTML=modeNote+rows.map(function(p){
       var reasons=(p.health_reasons||[]).map(function(r){return esc(r);}).join('; ');
       return '<div class="pos-row"><b>'+esc(p.pair||'')+'</b> '+pill(p.health)+' APR '+aprPct(p.apr)+'% TVL $'+money(p.liquidity_usd)+
         '<div class="sub">'+poolAddressesHtml(p)+(reasons?'<br/>'+reasons:'')+'</div></div>';

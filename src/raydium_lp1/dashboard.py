@@ -85,6 +85,27 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def simulated_open_slot_count(
+    *,
+    dry_run: bool,
+    max_positions: int,
+    candidate_count: int,
+    config,
+) -> int:
+    """How many pools to show under Open positions (simulated wallet slots)."""
+
+    if candidate_count <= 0:
+        return 0
+    if max_positions > 0:
+        return min(candidate_count, max_positions)
+    if not dry_run:
+        return 0
+    # Dry-run with unfunded wallet (max_positions=0): still show a paper-trading preview.
+    per_mint = max(1, int(getattr(config, "lp_max_positions_per_mint", 2) or 2))
+    preview = max(per_mint * 2, 3)
+    return min(candidate_count, preview)
+
+
 def build_dashboard(
     *,
     config,  # ScannerConfig; avoiding circular import
@@ -152,13 +173,25 @@ def build_dashboard(
     raw_candidates = list(report.get("candidates", [])[: report.get("candidate_count", 0)])
     candidate_rows = [_row_from_candidate(c, dry_run=dry_run) for c in raw_candidates]
 
+    slot_count = simulated_open_slot_count(
+        dry_run=dry_run,
+        max_positions=max_positions,
+        candidate_count=len(candidate_rows),
+        config=config,
+    )
     if open_positions is not None:
         positions = list(open_positions)
-    elif dry_run:
-        # Dry-run: shortlist lives in ``candidates``; positions = simulated wallet slots only.
-        positions = candidate_rows[:max_positions] if max_positions > 0 else []
     else:
-        positions = candidate_rows[:max_positions] if max_positions > 0 else candidate_rows
+        positions = candidate_rows[:slot_count]
+
+    if dry_run and max_positions <= 0 and positions:
+        wallet_capacity = {
+            **wallet_capacity,
+            "open_positions_mode": "dry_run_preview",
+            "open_positions_preview_count": len(positions),
+        }
+    elif slot_count > 0:
+        wallet_capacity = {**wallet_capacity, "open_positions_mode": "wallet"}
 
     recent_alerts = emergency.load_alerts(alerts_path)
     if recent_alerts:
@@ -237,6 +270,7 @@ def write_live_scan_dashboard(
     pages_total: int | None = None,
     raydium_api_base: str = "",
     sort_by_apr: bool = False,
+    wallet_capacity: dict | None = None,
     path: Path = DEFAULT_DASHBOARD_PATH,
 ) -> None:
     """Write ``dashboard.json`` mid-scan so the web UI can show a live candidate feed."""
@@ -259,7 +293,7 @@ def write_live_scan_dashboard(
         "triggered_alerts": [],
         "raydium_api_base": raydium_api_base,
         "momentum_hot_top": [],
-        "wallet_capacity": {},
+        "wallet_capacity": dict(wallet_capacity or {}),
         "scan_diagnosis": {},
         "pages_total": pages_total,
         "scan_feed": {

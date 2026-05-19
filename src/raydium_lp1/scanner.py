@@ -936,6 +936,8 @@ def scan(
 
     print_scan_config_warnings(config, stream_cfg=stream_cfg)
 
+    wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
+
     if sellability_checker is None:
         sellability_checker = _sellability_checker_for(config)
     if sellability_checker is not None and stream_cfg.enabled:
@@ -1142,6 +1144,7 @@ def scan(
                     pages_total=config.pages,
                     raydium_api_base=config.raydium_api_base,
                     sort_by_apr=config.sort_candidates_by_apr,
+                    wallet_capacity=wallet_capacity_info,
                 )
             except OSError:
                 pass
@@ -1304,7 +1307,6 @@ def scan(
         )
         triggered_alerts = [alert.to_dict() for alert in alerts]
 
-    wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
     max_positions = int(wallet_capacity_info["capacity"]["max_positions"]) if wallet_config is not None else None
     # In dry-run, always show the full filter-pass list; wallet/RPC capacity is informational only.
     if wallet_config is not None and max_positions is not None and not config.dry_run:
