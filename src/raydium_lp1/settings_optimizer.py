@@ -42,6 +42,7 @@ OPTIMIZER_PATCH_KEYS: frozenset[str] = frozenset(
         "momentum_detective_enabled",
         "emergency_close_enabled",
         "max_route_price_impact_pct",
+        "pool_type",
     }
 )
 
@@ -338,6 +339,8 @@ def analyze(
     patch, reasons = _recommend_patch(settings, dashboard, rows)
     # Only keys we are allowed to auto-touch
     bounded = {k: patch[k] for k in patch if k in OPTIMIZER_PATCH_KEYS}
+    if not str(settings.get("pool_type") or "").strip():
+        bounded["pool_type"] = "all"
     enabled = bool(settings.get("settings_optimizer_auto_apply", False))
     return OptimizerSnapshot(
         updated_at=_now_iso(),

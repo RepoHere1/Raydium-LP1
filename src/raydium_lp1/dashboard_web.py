@@ -376,6 +376,9 @@ def main(argv: list[str] | None = None) -> int:
             if path == "/api/settings":
                 sp = paths.settings_path
                 try:
+                    from raydium_lp1.settings_io import repair_settings_file_if_needed
+
+                    repair_settings_file_if_needed(sp)
                     data = load_settings_json(sp)
                 except (OSError, ValueError) as exc:
                     self._send_json(500, {"error": str(exc)})

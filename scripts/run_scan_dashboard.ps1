@@ -28,6 +28,17 @@ if (Test-Path -LiteralPath $configPath) {
         if ([string]::IsNullOrWhiteSpace($sort) -or $sort -match '^(apr|apr24h)$') {
             Write-Host "[scan] WARNING: pool_sort_field is empty or APR-sorted — page 1 is often dust TVL. Try pool_sort_field=liquidity in settings." -ForegroundColor Yellow
         }
+        $poolType = [string]$cfg.pool_type
+        if ([string]::IsNullOrWhiteSpace($poolType)) {
+            Write-Host "[scan] ERROR: pool_type is blank in $Config — Raydium list API returns HTTP 500 (poolType=)." -ForegroundColor Red
+            Write-Host "[scan] Repairing pool_type=all on disk …" -ForegroundColor Yellow
+            $env:PYTHONPATH = "src"
+            & py -3 -c "from pathlib import Path; from raydium_lp1.settings_io import repair_settings_file_if_needed; repair_settings_file_if_needed(Path(r'$Config'))" 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                & python -c "from pathlib import Path; from raydium_lp1.settings_io import repair_settings_file_if_needed; repair_settings_file_if_needed(Path(r'$Config'))"
+            }
+            Write-Host "[scan] Done. Restart scanner if it was already running." -ForegroundColor Green
+        }
     } catch {
         # non-fatal; scanner will load config
     }

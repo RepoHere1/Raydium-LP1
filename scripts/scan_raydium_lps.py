@@ -30,8 +30,15 @@ def _preflight_config(path: Path) -> None:
     if not path.exists():
         return
     try:
-        from raydium_lp1.settings_io import load_settings_json
+        from raydium_lp1.settings_io import load_settings_json, repair_settings_file_if_needed
 
+        repaired = repair_settings_file_if_needed(path)
+        if repaired:
+            print(
+                f"[scan] repaired {path}: {', '.join(repaired)} "
+                f"(empty pool_type → all; required for Raydium list API)",
+                file=sys.stderr,
+            )
         load_settings_json(path)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
