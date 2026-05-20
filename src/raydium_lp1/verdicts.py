@@ -279,6 +279,8 @@ def _classify_reason(reason: str) -> str:
     r = reason.lower()
     if r.startswith("hard reject") or "exit-safety line" in r:
         return "hard_exit_red_line"
+    if "transfer fee" in r or "not spl token" in r or "owner program" in r or "no on-chain mint account" in r:
+        return "mint_exit_safety"
     if "price impact" in r or ("jupiter" in r and "impact" in r):
         return "price_impact_too_high"
     if r.startswith("apr "):

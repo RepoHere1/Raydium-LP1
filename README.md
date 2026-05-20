@@ -321,6 +321,10 @@ It checks the repo folder, scanner files, local settings, `.env`, Python, and Gi
 
 ## Running scans
 
+Full command list (Python module form, loops, dashboard, tests): see [`docs/COMMANDS.md`](docs/COMMANDS.md).
+
+With **Windows Terminal** installed, `.\scripts\run_scan.ps1 -SpawnWatcher` opens the verdict tail in a **new tab** on the same terminal window instead of launching a separate console. The setup wizard does the same for the optional verdict watcher and always opens the **local dashboard web** tab after it writes `config\settings.json`.
+
 The setup wizard can save **loop**, **verdict log watcher**, and **rejections CSV** choices into `config\settings.json` as **`scan_loop`**, **`scan_loop_interval_seconds`**, **`spawn_verdict_watcher`**, and **`write_rejections`**. A plain `.\run_scan.ps1` then applies those defaults; any flags you pass on the command line still win.
 
 Normal beginner output:
@@ -368,6 +372,10 @@ Defaults include:
 - `allowed_quote_symbols`: `SOL`, `USDC`, `USDT`
 - `max_position_usd`: `25`
 - `dry_run`: `true`
+- `max_route_price_impact_pct`: `15` (Jupiter-reported price impact cap when sell routes are checked)
+- `route_quote_max_slippage_bps`: `1500` (15% quote slippage passed to Jupiter/Raydium quote APIs)
+- `enforce_mint_exit_safety`: `true` (RPC `jsonParsed` mint accounts: SPL/Token-2022 program only; Token-2022 **transfer fee** must be ≤ `max_transfer_fee_bps`, default 1500 = 15%)
+- `emergency_max_slippage_pct`: `0.15` (15% cap used in dry-run emergency swap **plans**)
 
 A pool must pass every configured filter to show as a candidate.
 

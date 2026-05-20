@@ -19,6 +19,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
+. (Join-Path $ScriptDir "_terminal_tabs.ps1")
 
 # Flush Python prints immediately (helps long scans show [REJ] lines live on Windows).
 $env:PYTHONUNBUFFERED = "1"
@@ -94,22 +95,12 @@ if (-not (Test-Path "scripts\scan_raydium_lps.py")) {
 }
 
 if ($SpawnWatcher) {
-    $watchPs1 = Join-Path $RepoRoot "scripts\watch_verdict.ps1"
-    if (-not (Test-Path -LiteralPath $watchPs1)) {
-        throw "Missing scripts\watch_verdict.ps1. Git pull the latest Raydium-LP1, or copy watch_verdict.ps1 into your scripts folder."
-    }
-    $shell = "powershell.exe"
-    if (Get-Command pwsh -ErrorAction SilentlyContinue) {
-        $shell = "pwsh.exe"
-    }
-    Start-Process -FilePath $shell -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $watchPs1
-    ) -WorkingDirectory $RepoRoot
+    Start-RaydiumVerdictWatcherTab -RepoRoot $RepoRoot
     Start-Sleep -Milliseconds 600
     if ($Loop) {
-        Write-Host "Spawned verdict log watcher in a new window ($shell)." -ForegroundColor Cyan
+        Write-Host "Spawned verdict log watcher in Windows Terminal (new tab) when wt.exe is available." -ForegroundColor Cyan
     } else {
-        Write-Host "Spawned verdict log watcher ($shell). Pass -Loop so this window keeps scanning and appending reports\verdict_stream.log." -ForegroundColor Yellow
+        Write-Host "Spawned verdict log watcher. Pass -Loop so this window keeps scanning and appending reports\verdict_stream.log." -ForegroundColor Yellow
     }
 }
 

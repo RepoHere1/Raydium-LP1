@@ -29,7 +29,7 @@
   "verify_pool_raydium_api": false,
   "require_sell_route": true,
   "route_sources": ["jupiter", "raydium"],
-  "max_route_price_impact_pct": 30,
+  "max_route_price_impact_pct": 15,
   "write_rejections": true,
   "rejections_csv_path": "reports/rejections.csv",
   "scan_loop": true,
@@ -41,7 +41,7 @@
   "emergency_close_enabled": true,
   "emergency_alerts_path": "reports/alerts.json",
   "emergency_base_symbol": "SOL",
-  "emergency_max_slippage_pct": 0.30,
+  "emergency_max_slippage_pct": 0.15,
   "position_size_sol": 0.1,
   "reserve_sol": 0.02,
   "dashboard_path": "reports/dashboard.json",
@@ -67,5 +67,9 @@
   "lp_full_range_budget_fraction": 0.25,
   "lp_main_budget_fraction": 0.75,
   "lp_max_positions_per_mint": 2,
+  "enforce_mint_exit_safety": true,
+  "max_transfer_fee_bps": 1500,
+  "require_standard_token_mint": true,
+  "route_quote_max_slippage_bps": 1500,
   "solana_rpc_urls": []
 }

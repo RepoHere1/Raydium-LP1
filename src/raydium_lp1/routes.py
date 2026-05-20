@@ -32,6 +32,10 @@ USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KConky11McCe8BenwNYB"
 # 6 decimals; this is just a smoke test, the API accepts any positive amount).
 DEFAULT_PROBE_AMOUNT = 100_000  # ~0.1 of a 6-decimal token
 
+# Quote API slippage tolerance (basis points). Kept aligned with exit-safety defaults
+# (15% = 1500 bps) so probes do not assume Raydium-style 30%+ slippage windows.
+DEFAULT_ROUTE_QUOTE_SLIPPAGE_BPS = 1500
+
 BASE_TOKENS: dict[str, str] = {
     "SOL": WSOL_MINT,
     "WSOL": WSOL_MINT,
@@ -162,7 +166,7 @@ def check_jupiter_route(
     target_mint: str,
     *,
     amount: int = DEFAULT_PROBE_AMOUNT,
-    slippage_bps: int = 3000,
+    slippage_bps: int = DEFAULT_ROUTE_QUOTE_SLIPPAGE_BPS,
     fetcher: HttpFetcher | None = None,
     max_price_impact_pct: float | None = None,
 ) -> dict[str, object]:
@@ -212,7 +216,7 @@ def check_raydium_route(
     target_mint: str,
     *,
     amount: int = DEFAULT_PROBE_AMOUNT,
-    slippage_bps: int = 3000,
+    slippage_bps: int = DEFAULT_ROUTE_QUOTE_SLIPPAGE_BPS,
     fetcher: HttpFetcher | None = None,
     max_price_impact_pct: float | None = None,
 ) -> dict[str, object]:
@@ -254,6 +258,7 @@ def check_sell_route(
     sources: Iterable[str] = ("jupiter", "raydium"),
     fetcher: HttpFetcher | None = None,
     max_route_price_impact_pct: float = 0.0,
+    quote_slippage_bps: int = DEFAULT_ROUTE_QUOTE_SLIPPAGE_BPS,
 ) -> RouteCheck:
     """Try every base + every source until we find a priced route.
 
@@ -297,7 +302,7 @@ def check_sell_route(
             checker = ROUTE_SOURCES.get(source_name)
             if checker is None:
                 continue
-            extra: dict[str, object] = {}
+            extra: dict[str, object] = {"slippage_bps": quote_slippage_bps}
             if source_name == "jupiter" and max_route_price_impact_pct > 0:
                 extra["max_price_impact_pct"] = max_route_price_impact_pct
             record = checker(token_mint, target_mint, fetcher=fetcher, **extra)
@@ -355,6 +360,7 @@ def check_pool_sellability(
     sources: Iterable[str] = ("jupiter", "raydium"),
     fetcher: HttpFetcher | None = None,
     max_route_price_impact_pct: float = 0.0,
+    quote_slippage_bps: int = DEFAULT_ROUTE_QUOTE_SLIPPAGE_BPS,
 ) -> SellabilityResult:
     """Run :func:`check_sell_route` for both tokens in a normalized pool."""
 
@@ -365,6 +371,7 @@ def check_pool_sellability(
         sources=sources,
         fetcher=fetcher,
         max_route_price_impact_pct=max_route_price_impact_pct,
+        quote_slippage_bps=quote_slippage_bps,
     )
     token_b = check_sell_route(
         pool.get("mint_b", ""),
@@ -373,6 +380,7 @@ def check_pool_sellability(
         sources=sources,
         fetcher=fetcher,
         max_route_price_impact_pct=max_route_price_impact_pct,
+        quote_slippage_bps=quote_slippage_bps,
     )
     reasons: list[str] = []
     if not token_a.ok:

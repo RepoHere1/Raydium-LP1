@@ -4,6 +4,7 @@ SCAN_TEST_DISABLE_VERIFY = {
     "require_verified_raydium_pool": False,
     "verify_pool_on_chain": False,
     "verify_pool_raydium_api": False,
+    "enforce_mint_exit_safety": False,
 }
 
 # Raydium CPMM program id — add to mocked api-v3 list payloads when tests need program_id.

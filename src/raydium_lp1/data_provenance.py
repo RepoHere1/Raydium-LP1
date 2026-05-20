@@ -108,7 +108,8 @@ def print_live_sources_banner(config: Any) -> str:
     live = prov["live_endpoints"]
     return (
         "[scan] LIVE data: Raydium pool list + optional /pools/info/ids; "
-        f"on-chain owner via RPC; routes via Jupiter/Raydium/Orca. "
+        "on-chain pool owner via RPC; SPL mint jsonParsed (program + Token-2022 transfer fee cap); "
+        f"routes via Jupiter/Raydium/Orca. "
         f"Pool programs: {', '.join(sorted(set(pool_verify.RAYDIUM_POOL_PROGRAMS.values())))}. "
         "See reports/data_provenance.json for full audit."
     )

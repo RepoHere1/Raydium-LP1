@@ -24,7 +24,7 @@ from urllib.request import Request, urlopen
 from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
-from raydium_lp1 import emergency, health, lp_range_planner, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1 import emergency, health, lp_range_planner, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, token_mint_safety, verdicts, wallet as wallet_mod
 from raydium_lp1.http_json import load_json_from_urlopen_response
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
@@ -95,14 +95,14 @@ class ScannerConfig:
     emergency_close_enabled: bool = True
     emergency_alerts_path: str = "reports/alerts.json"
     emergency_base_symbol: str = "SOL"
-    emergency_max_slippage_pct: float = 0.30
+    emergency_max_slippage_pct: float = 0.15
     position_size_sol: float = 0.1
     reserve_sol: float = 0.02
     network: str = networks.NETWORK_SOLANA
     use_robust_routing: bool = True
     # Exit-safety: reject Jupiter quotes whose reported price impact exceeds this
-    # (percent). 0 disables. Default 30 matches emergency_max_slippage_pct cap.
-    max_route_price_impact_pct: float = 30.0
+    # (percent). 0 disables. Default 15 aligns with route quote slippage and emergency caps.
+    max_route_price_impact_pct: float = 15.0
     # HARD reject when TVL is below this USD floor (0 = off). Use alongside
     # min_liquidity_usd for a clear "red line" message in CSV / stream.
     hard_exit_min_tvl_usd: float = 0.0
@@ -137,6 +137,11 @@ class ScannerConfig:
     lp_main_budget_fraction: float = 0.75
     lp_max_positions_per_mint: int = 2
     risk_profile: str = "balanced"  # balanced | degen
+    # On-chain mint exit safety (SPL / Token-2022 transfer fee ceiling) before route probes.
+    enforce_mint_exit_safety: bool = True
+    max_transfer_fee_bps: int = 1500  # 15% — reject Token-2022 mints with higher configured fee
+    require_standard_token_mint: bool = True  # mint owner must be Tokenkeg… or Tokenz…
+    route_quote_max_slippage_bps: int = 1500  # passed to Jupiter/Raydium quote APIs (15%)
 
     def __post_init__(self) -> None:
         """Drop invalid RPC URLs from any construction path (not only ``from_file``)."""
@@ -201,13 +206,13 @@ class ScannerConfig:
             ),
             emergency_base_symbol=str(raw_with_strategy.get("emergency_base_symbol", "SOL")),
             emergency_max_slippage_pct=float(
-                raw_with_strategy.get("emergency_max_slippage_pct", 0.30)
+                raw_with_strategy.get("emergency_max_slippage_pct", 0.15)
             ),
             position_size_sol=float(raw_with_strategy.get("position_size_sol", 0.1)),
             reserve_sol=float(raw_with_strategy.get("reserve_sol", 0.02)),
             network=networks.normalize_network(str(raw_with_strategy.get("network", "solana"))),
             use_robust_routing=bool(raw_with_strategy.get("use_robust_routing", True)),
-            max_route_price_impact_pct=float(raw_with_strategy.get("max_route_price_impact_pct", 30.0)),
+            max_route_price_impact_pct=float(raw_with_strategy.get("max_route_price_impact_pct", 15.0)),
             hard_exit_min_tvl_usd=float(raw_with_strategy.get("hard_exit_min_tvl_usd", 0.0)),
             write_rejections=bool(raw_with_strategy.get("write_rejections", False)),
             rejections_csv_path=str(raw_with_strategy.get("rejections_csv_path", "reports/rejections.csv")),
@@ -244,6 +249,12 @@ class ScannerConfig:
             lp_main_budget_fraction=float(raw_with_strategy.get("lp_main_budget_fraction", 0.75)),
             lp_max_positions_per_mint=max(1, int(raw_with_strategy.get("lp_max_positions_per_mint", 2))),
             risk_profile=str(raw_with_strategy.get("risk_profile") or "balanced"),
+            enforce_mint_exit_safety=bool(raw_with_strategy.get("enforce_mint_exit_safety", True)),
+            max_transfer_fee_bps=max(0, int(raw_with_strategy.get("max_transfer_fee_bps", 1500))),
+            require_standard_token_mint=bool(raw_with_strategy.get("require_standard_token_mint", True)),
+            route_quote_max_slippage_bps=max(
+                1, int(raw_with_strategy.get("route_quote_max_slippage_bps", 1500))
+            ),
         )
 
 
@@ -791,6 +802,7 @@ def scan(
                 base_symbols=tuple(s.upper() for s in sorted(config.allowed_quote_symbols)),
                 sources=config.route_sources,
                 max_route_price_impact_pct=max_impact,
+                quote_slippage_bps=config.route_quote_max_slippage_bps,
             )
 
         sellability_checker = _sell_check
@@ -861,6 +873,24 @@ def scan(
                     reason_histogram[key] += 1
                 rejected.append({**public_pool, "reasons": reasons})
                 continue
+
+            if config.enforce_mint_exit_safety:
+                ms_ok, ms_reasons = token_mint_safety.validate_pool_mints_exit_safety(
+                    public_pool,
+                    rpc_urls=config.solana_rpc_urls,
+                    max_transfer_fee_bps=config.max_transfer_fee_bps,
+                    require_standard_token_program=config.require_standard_token_mint,
+                    rpc_post=rpc_post,
+                )
+                if not ms_ok:
+                    verdicts.emit_reject(public_pool, ms_reasons, stream_cfg, idx=reject_idx)
+                    reject_idx += 1
+                    cat = verdicts._classify_reason(ms_reasons[0]) if ms_reasons else "other"
+                    rejection_counts[cat] += 1
+                    if ms_reasons:
+                        reason_histogram[ms_reasons[0][:200]] += 1
+                    rejected.append({**public_pool, "reasons": ms_reasons})
+                    continue
 
             if sellability_checker is not None:
                 sell = sellability_checker(public_pool)

@@ -23,7 +23,7 @@ def _make_config(data: dict) -> ScannerConfig:
             "min_liquidity_usd": 2000.0,
             "min_volume_24h_usd": 100.0,
             "hard_exit_min_tvl_usd": 0.0,
-            "max_route_price_impact_pct": 30.0,
+            "max_route_price_impact_pct": 15.0,
             "require_sell_route": True,
             "solana_rpc_urls": [],
         }

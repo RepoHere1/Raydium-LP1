@@ -35,7 +35,7 @@ class RouteCheckerTests(unittest.TestCase):
             "AnyMint",
             routes.USDC_MINT,
             fetcher=fetch_impact,
-            max_price_impact_pct=30.0,
+            max_price_impact_pct=15.0,
         )
         self.assertFalse(out["ok"])
         self.assertTrue(out.get("impact_reject"))
@@ -126,7 +126,7 @@ class SellabilityImpactTests(unittest.TestCase):
             base_symbols=("USDC",),
             sources=("jupiter",),
             fetcher=fetch_high,
-            max_route_price_impact_pct=30.0,
+            max_route_price_impact_pct=15.0,
         )
         self.assertFalse(res.ok)
         self.assertTrue(any("88.2" in r or "price impact" in r.lower() for r in res.reasons))

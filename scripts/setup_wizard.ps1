@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
+. (Join-Path $ScriptDir "_terminal_tabs.ps1")
 
 function Ask-WithDefault {
     param([string]$Question, [string]$Default)
@@ -255,7 +256,7 @@ $intervalSec = [int](Ask-WithDefault "Seconds between scans when loop is on (3-8
 if ($intervalSec -lt 3) { $intervalSec = 3 }
 if ($intervalSec -gt 86400) { $intervalSec = 86400 }
 $spawnWatcherDefault = Get-Default $configDefaults "spawn_verdict_watcher" $false
-$spawnWatcher = Ask-YesNo "Default: open the verdict log tail window (watch_verdict.ps1) when you start a scan?" $spawnWatcherDefault
+$spawnWatcher = Ask-YesNo "Default: open the verdict log tail in a Windows Terminal tab (watch_verdict.ps1) when you start a scan?" $spawnWatcherDefault
 $writeRejectDefault = Get-Default $configDefaults "write_rejections" ($strategy -eq "momentum")
 $writeRejections = Ask-YesNo "Write rejections CSV (reports\rejections.csv) each scan cycle?" $writeRejectDefault
 
@@ -348,6 +349,16 @@ $allFallbacks = ($fallbacks | Where-Object { $_ -and $_ -ne $primaryRpc }) -join
 Write-Host ""
 Write-Host "Created $ConfigPath with min_apr=$minApr, strategy=$strategy" -ForegroundColor Green
 Write-Host "Saved $($fallbacks.Count + 1) RPC URL(s) to both $ConfigPath and $EnvPath" -ForegroundColor Green
+Write-Host ""
+try {
+    Start-RaydiumDashboardWebTab -RepoRoot $RepoRoot
+    Start-Sleep -Milliseconds 400
+    if ($spawnWatcher) {
+        Start-RaydiumVerdictWatcherTab -RepoRoot $RepoRoot
+    }
+} catch {
+    Write-Host "Could not open companion terminal tabs: $_" -ForegroundColor Yellow
+}
 Write-Host ""
 Write-Host "Next paste/run:" -ForegroundColor Cyan
 Write-Host ".\scripts\doctor.ps1"
