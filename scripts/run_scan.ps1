@@ -12,7 +12,8 @@ param(
     [switch]$NoVerdictLog,
     [int]$VerdictHeaderEvery = 25,
     [switch]$SpawnWatcher,
-    [switch]$SpawnDashboardTab
+    [switch]$SpawnDashboardTab,
+    [switch]$NoSpawnDashboardTab
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,7 +23,7 @@ $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
 . (Join-Path $ScriptDir "_terminal_tabs.ps1")
 
-Write-Host "[scan] Web dashboard URL: http://127.0.0.1:8844/  —  .\scripts\run_dashboard_web.ps1  |  auto-tab: -SpawnDashboardTab or `"spawn_dashboard_web`": true in settings." -ForegroundColor Cyan
+Write-Host "[scan] Web dashboard: http://127.0.0.1:8844/ (opens in a Windows Terminal tab by default; -NoSpawnDashboardTab or `"spawn_dashboard_web`": false to skip)." -ForegroundColor Cyan
 
 # Flush Python prints immediately (helps long scans show [REJ] lines live on Windows).
 $env:PYTHONUNBUFFERED = "1"
@@ -77,9 +78,6 @@ if ($null -ne $runScanSettings) {
     if (-not $PSBoundParameters.ContainsKey('SpawnWatcher')) {
         if ($runScanSettings.spawn_verdict_watcher -eq $true) { $SpawnWatcher = $true }
     }
-    if (-not $PSBoundParameters.ContainsKey('SpawnDashboardTab')) {
-        if ($runScanSettings.spawn_dashboard_web -eq $true) { $SpawnDashboardTab = $true }
-    }
     if (-not $PSBoundParameters.ContainsKey('WriteRejections')) {
         if ($runScanSettings.write_rejections -eq $true) { $WriteRejections = $true }
     }
@@ -93,6 +91,19 @@ if ($null -ne $runScanSettings) {
         }
     }
 }
+
+# Local web dashboard tab: on by default (opt out with -NoSpawnDashboardTab or "spawn_dashboard_web": false).
+$dashSpawn = $true
+if ($null -ne $runScanSettings) {
+    $sdw = $runScanSettings.spawn_dashboard_web
+    if ($null -ne $sdw -and $sdw -eq $false) { $dashSpawn = $false }
+}
+if ($NoSpawnDashboardTab) { $dashSpawn = $false }
+if ($PSBoundParameters.ContainsKey('SpawnDashboardTab')) {
+    $dashSpawn = [bool]$SpawnDashboardTab
+}
+$SpawnDashboardTab = $dashSpawn
+
 if ($Interval -lt 3) { $Interval = 3 }
 if ($Interval -gt 86400) { $Interval = 86400 }
 

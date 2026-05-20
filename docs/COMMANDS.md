@@ -38,11 +38,13 @@ Or double-click `START_HERE_SETUP.bat`. When **Windows Terminal** (`wt.exe`) is 
 .\scripts\run_scan.ps1 -Loop -Interval 60 -WriteReports -SpawnWatcher
 ```
 
+By default, `scripts\run_scan.ps1` opens the local dashboard at **http://127.0.0.1:8844/** in a Windows Terminal tab. Use **`-NoSpawnDashboardTab`** or **`"spawn_dashboard_web": false`** in `config\settings.json` to skip (for example if port 8844 is already in use).
+
 ```powershell
-.\scripts\run_scan.ps1 -Loop -Interval 60 -WriteReports -SpawnWatcher -SpawnDashboardTab
+.\scripts\run_scan.ps1 -Loop -Interval 60 -WriteReports -SpawnWatcher -NoSpawnDashboardTab
 ```
 
-With **`spawn_dashboard_web": true`** in `config\settings.json`, `run_scan.ps1` opens the local dashboard tab automatically (same as `-SpawnDashboardTab`). Close the old tab if port 8844 is already in use.
+With **`spawn_dashboard_web": false`** in `config\settings.json`, the script skips the dashboard tab unless you pass **`-SpawnDashboardTab`** for that run.
 
 ```powershell
 .\scripts\run_scan.ps1 -Json
@@ -80,7 +82,7 @@ python -m raydium_lp1.dashboard_web --host 127.0.0.1 --port 8844
 
 Then open `http://127.0.0.1:8844/` in your browser. Pair with a looping scanner using `--reload-config-each-scan` so edits to `settings.json` apply each cycle.
 
-`run_scan.ps1` prints this URL at startup. Companion processes use `wt -w 0 new-tab` (window `0` / `last` = most recently used Windows Terminal window per [Microsoft’s wt.exe docs](https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments)). The script starts `wt.exe` without shell execute so the child inherits the normal process environment and tabs land in the terminal instance you launched the scan from.
+`run_scan.ps1` prints this URL at startup. Companion processes use `wt -w 0 nt` (window `0` / `last` = most recently used Windows Terminal window per [Microsoft’s wt.exe docs](https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments)). The script starts `wt.exe` without shell execute so the child inherits the normal process environment and tabs land in the terminal instance you launched the scan from.
 
 ## Settings repair / sync
 
