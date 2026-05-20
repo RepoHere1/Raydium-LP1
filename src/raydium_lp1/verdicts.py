@@ -108,6 +108,8 @@ def _append_verdict_log(cfg: StreamConfig, *parts: str) -> None:
                 fh.write(strip_ansi(p) + "\n")
     except OSError:
         pass
+    except KeyboardInterrupt:
+        raise
 
 
 def append_verdict_log_plain(cfg: StreamConfig, text: str) -> None:
@@ -121,6 +123,8 @@ def append_verdict_log_plain(cfg: StreamConfig, text: str) -> None:
             fh.write(text)
     except OSError:
         pass
+    except KeyboardInterrupt:
+        raise
 
 
 def log_between_scan_cycles(cfg: StreamConfig, *, iso_timestamp: str) -> None:

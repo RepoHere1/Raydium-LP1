@@ -58,6 +58,7 @@
   "scan_loop": false,
   "scan_loop_interval_seconds": 60,
   "spawn_verdict_watcher": false,
+  "spawn_dashboard_web": false,
   "lp_planning_enabled": false,
   "lp_range_mode": "auto",
   "lp_default_range_width_pct": 20,

@@ -35,6 +35,7 @@
   "scan_loop": true,
   "scan_loop_interval_seconds": 60,
   "spawn_verdict_watcher": true,
+  "spawn_dashboard_web": true,
   "use_robust_routing": true,
   "track_liquidity_health": true,
   "liquidity_history_path": "reports/liquidity_history.json",

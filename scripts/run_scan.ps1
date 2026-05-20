@@ -11,7 +11,8 @@ param(
     [string]$VerdictLog = "",
     [switch]$NoVerdictLog,
     [int]$VerdictHeaderEvery = 25,
-    [switch]$SpawnWatcher
+    [switch]$SpawnWatcher,
+    [switch]$SpawnDashboardTab
 )
 
 $ErrorActionPreference = "Stop"
@@ -74,6 +75,9 @@ if ($null -ne $runScanSettings) {
     if (-not $PSBoundParameters.ContainsKey('SpawnWatcher')) {
         if ($runScanSettings.spawn_verdict_watcher -eq $true) { $SpawnWatcher = $true }
     }
+    if (-not $PSBoundParameters.ContainsKey('SpawnDashboardTab')) {
+        if ($runScanSettings.spawn_dashboard_web -eq $true) { $SpawnDashboardTab = $true }
+    }
     if (-not $PSBoundParameters.ContainsKey('WriteRejections')) {
         if ($runScanSettings.write_rejections -eq $true) { $WriteRejections = $true }
     }
@@ -92,6 +96,15 @@ if ($Interval -gt 86400) { $Interval = 86400 }
 
 if (-not (Test-Path "scripts\scan_raydium_lps.py")) {
     throw "Missing scripts\scan_raydium_lps.py. Your folder does not have the scanner files yet. Pull/copy the Raydium-LP1 files first."
+}
+
+if ($SpawnDashboardTab) {
+    try {
+        Start-RaydiumDashboardWebTab -RepoRoot $RepoRoot
+        Start-Sleep -Milliseconds 500
+    } catch {
+        Write-Host "Dashboard tab spawn skipped: $_" -ForegroundColor Yellow
+    }
 }
 
 if ($SpawnWatcher) {

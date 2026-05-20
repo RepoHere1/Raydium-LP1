@@ -1,33 +1,35 @@
 # Shared helpers: open companion processes in Windows Terminal tabs (wt.exe)
 # when available, instead of spawning separate top-level console windows.
 
-function Get-RaydiumPythonLaunch {
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @{ Exe = "py"; PrefixArgs = @("-3") }
-    }
-    $py = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $py) {
-        throw "Python was not found (py or python). Install Python 3 and retry."
-    }
-    return @{ Exe = "python"; PrefixArgs = @() }
-}
-
 function Test-WindowsTerminalAvailable {
     return $null -ne (Get-Command wt.exe -ErrorAction SilentlyContinue)
 }
 
 function Start-RaydiumDashboardWebTab {
     param([string]$RepoRoot)
-    $env:PYTHONPATH = "src"
-    $py = Get-RaydiumPythonLaunch
-    if (Test-WindowsTerminalAvailable) {
-        $args = @("-w", "0", "nt", "-d", $RepoRoot, "--title", "Raydium-LP1 dashboard")
-        $args += @($py.Exe) + $py.PrefixArgs + @("-m", "raydium_lp1.dashboard_web", "--host", "127.0.0.1", "--port", "8844")
-        Start-Process -FilePath "wt.exe" -ArgumentList $args | Out-Null
-        Write-Host "Opened dashboard web server in a Windows Terminal tab: http://127.0.0.1:8844/" -ForegroundColor Cyan
-    } else {
-        Write-Host "[hint] Install Windows Terminal so the dashboard can open in a new tab. Run manually:" -ForegroundColor Yellow
-        Write-Host "  `$env:PYTHONPATH='src'; $($py.Exe) $($py.PrefixArgs -join ' ') -m raydium_lp1.dashboard_web" -ForegroundColor Gray
+    if (-not (Test-WindowsTerminalAvailable)) {
+        Write-Host "[hint] Install Windows Terminal (wt.exe on PATH) for dashboard tabs. Or run:" -ForegroundColor Yellow
+        Write-Host "  .\scripts\run_dashboard_web.ps1" -ForegroundColor Gray
+        return
+    }
+    $root = (Resolve-Path -LiteralPath $RepoRoot).Path
+    $dashPs1 = Join-Path $root "scripts\open_dashboard_wt.ps1"
+    if (-not (Test-Path -LiteralPath $dashPs1)) {
+        throw "Missing scripts\open_dashboard_wt.ps1"
+    }
+    $shellName = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
+    # wt: new tab, start in repo root, run helper so PYTHONPATH=src is always correct.
+    $argLine = "nt -d `"$root`" $shellName -NoProfile -ExecutionPolicy Bypass -NoExit -File `"$dashPs1`""
+    try {
+        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $pinfo.FileName = (Get-Command wt.exe).Source
+        $pinfo.Arguments = $argLine
+        $pinfo.UseShellExecute = $true
+        [void][System.Diagnostics.Process]::Start($pinfo)
+        Write-Host "Opened dashboard in a Windows Terminal tab: http://127.0.0.1:8844/" -ForegroundColor Cyan
+    } catch {
+        Write-Host "Could not start Windows Terminal tab for dashboard: $_" -ForegroundColor Yellow
+        Write-Host "  Run manually: .\scripts\run_dashboard_web.ps1" -ForegroundColor Gray
     }
 }
 
@@ -37,19 +39,24 @@ function Start-RaydiumVerdictWatcherTab {
     if (-not (Test-Path -LiteralPath $watchPs1)) {
         throw "Missing scripts\watch_verdict.ps1"
     }
-    $shell = "powershell.exe"
-    if (Get-Command pwsh -ErrorAction SilentlyContinue) { $shell = "pwsh.exe" }
+    $root = (Resolve-Path -LiteralPath $RepoRoot).Path
+    $shellName = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) { "pwsh.exe" } else { "powershell.exe" }
     if (Test-WindowsTerminalAvailable) {
-        $args = @(
-            "-w", "0", "nt", "-d", $RepoRoot, "--title", "Raydium-LP1 verdict",
-            $shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $watchPs1
-        )
-        Start-Process -FilePath "wt.exe" -ArgumentList $args | Out-Null
-        Write-Host "Opened verdict log watcher in a Windows Terminal tab ($shell)." -ForegroundColor Cyan
-    } else {
-        Write-Host "[hint] Install Windows Terminal for tabbed verdict tail. Fallback: new window." -ForegroundColor Yellow
-        Start-Process -FilePath $shell -ArgumentList @(
-            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $watchPs1
-        ) -WorkingDirectory $RepoRoot | Out-Null
+        $argLine = "nt -d `"$root`" $shellName -NoProfile -ExecutionPolicy Bypass -NoExit -File `"$watchPs1`""
+        try {
+            $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $pinfo.FileName = (Get-Command wt.exe).Source
+            $pinfo.Arguments = $argLine
+            $pinfo.UseShellExecute = $true
+            [void][System.Diagnostics.Process]::Start($pinfo)
+            Write-Host "Opened verdict log watcher in a Windows Terminal tab." -ForegroundColor Cyan
+            return
+        } catch {
+            Write-Host "wt.exe verdict tab failed: $_" -ForegroundColor Yellow
+        }
     }
+    Write-Host "[hint] Opening verdict watcher in a separate window." -ForegroundColor Yellow
+    Start-Process -FilePath $shellName -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $watchPs1
+    ) -WorkingDirectory $root | Out-Null
 }

@@ -39,6 +39,12 @@ Or double-click `START_HERE_SETUP.bat`. When **Windows Terminal** (`wt.exe`) is 
 ```
 
 ```powershell
+.\scripts\run_scan.ps1 -Loop -Interval 60 -WriteReports -SpawnWatcher -SpawnDashboardTab
+```
+
+With **`spawn_dashboard_web": true`** in `config\settings.json`, `run_scan.ps1` opens the local dashboard tab automatically (same as `-SpawnDashboardTab`). Close the old tab if port 8844 is already in use.
+
+```powershell
 .\scripts\run_scan.ps1 -Json
 ```
 

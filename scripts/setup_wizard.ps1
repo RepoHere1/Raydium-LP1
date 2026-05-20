@@ -257,6 +257,8 @@ if ($intervalSec -lt 3) { $intervalSec = 3 }
 if ($intervalSec -gt 86400) { $intervalSec = 86400 }
 $spawnWatcherDefault = Get-Default $configDefaults "spawn_verdict_watcher" $false
 $spawnWatcher = Ask-YesNo 'Default: open the verdict log tail in a Windows Terminal tab (watch_verdict.ps1) when you start a scan?' $spawnWatcherDefault
+$spawnDashDefault = Get-Default $configDefaults "spawn_dashboard_web" $false
+$spawnDashboard = Ask-YesNo 'Default: open the local dashboard (127.0.0.1:8844) in a Windows Terminal tab when you run scripts\run_scan.ps1?' $spawnDashDefault
 $writeRejectDefault = Get-Default $configDefaults "write_rejections" ($strategy -eq "momentum")
 $writeRejections = Ask-YesNo 'Write rejections CSV (reports\rejections.csv) each scan cycle?' $writeRejectDefault
 
@@ -297,6 +299,7 @@ $config = [ordered]@{
     scan_loop = $scanLoop
     scan_loop_interval_seconds = $intervalSec
     spawn_verdict_watcher = $spawnWatcher
+    spawn_dashboard_web = $spawnDashboard
     write_rejections = $writeRejections
     momentum_min_volume_tvl_ratio = [double](Get-Default $configDefaults "momentum_min_volume_tvl_ratio" 0.5)
     momentum_sweet_min_pool_age_hours = [double](Get-Default $configDefaults "momentum_sweet_min_pool_age_hours" 6)
@@ -367,7 +370,7 @@ try {
 Write-Host ""
 Write-Host "Next paste/run:" -ForegroundColor Cyan
 Write-Host ".\scripts\doctor.ps1"
-if ($scanLoop -or $spawnWatcher -or $writeRejections) {
+if ($scanLoop -or $spawnWatcher -or $spawnDashboard -or $writeRejections) {
     Write-Host ".\scripts\run_scan.ps1   # loop / watcher / rejections use your new defaults; add -CheckRpc as needed"
 } else {
     Write-Host ".\scripts\run_scan.ps1 -CheckRpc -WriteReports"

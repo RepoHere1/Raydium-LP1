@@ -1570,57 +1570,61 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
 
-    while True:
-        if args.loop and args.reload_config_each_scan:
-            load_dotenv()
-            if args.strategy:
-                os.environ["RAYDIUM_LP1_STRATEGY"] = args.strategy
+    try:
+        while True:
+            if args.loop and args.reload_config_each_scan:
+                load_dotenv()
+                if args.strategy:
+                    os.environ["RAYDIUM_LP1_STRATEGY"] = args.strategy
+                try:
+                    config = ScannerConfig.from_file(config_path)
+                except ValueError as exc:
+                    print(f"Config reload failed: {exc}", file=sys.stderr)
+                    time.sleep(args.interval)
+                    continue
             try:
-                config = ScannerConfig.from_file(config_path)
-            except ValueError as exc:
-                print(f"Config reload failed: {exc}", file=sys.stderr)
-                time.sleep(args.interval)
-                continue
-        try:
-            report = scan(
-                config,
-                wallet_config=active_wallet,
-                verdict_stream=stream_cfg,
-                write_rejections_override=wr_override,
-            )
-        except RuntimeError as exc:
-            print(f"Scan failed: {exc}", file=sys.stderr)
-            return 1
+                report = scan(
+                    config,
+                    wallet_config=active_wallet,
+                    verdict_stream=stream_cfg,
+                    write_rejections_override=wr_override,
+                )
+            except RuntimeError as exc:
+                print(f"Scan failed: {exc}", file=sys.stderr)
+                return 1
 
-        report["scan_diagnosis"] = dial_in_analyst.build_scan_diagnosis(config, report)
+            report["scan_diagnosis"] = dial_in_analyst.build_scan_diagnosis(config, report)
 
-        verdicts.print_rejection_breakdown(report.get("rejection_breakdown") or {}, stream_cfg)
-        if not args.json:
-            dial_in_analyst.print_scan_diagnosis(report["scan_diagnosis"], stream_cfg=stream_cfg)
+            verdicts.print_rejection_breakdown(report.get("rejection_breakdown") or {}, stream_cfg)
+            if not args.json:
+                dial_in_analyst.print_scan_diagnosis(report["scan_diagnosis"], stream_cfg=stream_cfg)
 
-        if args.write_reports:
-            write_reports(report)
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            print_report(report)
+            if args.write_reports:
+                write_reports(report)
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                print_report(report)
 
-        if show_dashboard:
-            data = dashboard_mod.build_dashboard(
-                config=config,
-                report=report,
-                rpc_health=rpc_results,
-                alerts_path=Path(config.emergency_alerts_path),
-            )
-            dashboard_mod.write_dashboard(data)
-            print("")
-            dashboard_mod.print_dashboard(data)
+            if show_dashboard:
+                data = dashboard_mod.build_dashboard(
+                    config=config,
+                    report=report,
+                    rpc_health=rpc_results,
+                    alerts_path=Path(config.emergency_alerts_path),
+                )
+                dashboard_mod.write_dashboard(data)
+                print("")
+                dashboard_mod.print_dashboard(data)
 
-        if not args.loop:
-            return 0
-        if stream_cfg.verdict_log_path:
-            verdicts.log_between_scan_cycles(stream_cfg, iso_timestamp=datetime.now(UTC).isoformat())
-        time.sleep(args.interval)
+            if not args.loop:
+                return 0
+            if stream_cfg.verdict_log_path:
+                verdicts.log_between_scan_cycles(stream_cfg, iso_timestamp=datetime.now(UTC).isoformat())
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\n[scan] interrupted (Ctrl+C).", file=sys.stderr, flush=True)
+        return 130
 
 
 if __name__ == "__main__":
