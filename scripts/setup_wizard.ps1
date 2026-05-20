@@ -118,14 +118,14 @@ $maxPositionDefault  = Get-Default $configDefaults "max_position_usd"  25
 $pageSizeDefault     = Get-Default $configDefaults "page_size"         100
 $pagesDefault        = Get-Default $configDefaults "pages"             1
 
-$minApr = [double](Ask-WithDefault "Minimum APR percent to flag" "$minAprDefault")
+$minApr = [double](Ask-WithDefault 'Minimum APR percent to flag' "$minAprDefault")
 Write-Host ""
 Write-Host "TVL (liquidity) = real USD in the pool you would LP into. Dust pools show fake APR on `$0.01 TVL." -ForegroundColor DarkGray
-$minLiquidity = [double](Ask-WithDefault "Minimum pool TVL / liquidity in USD (actionable LP floor)" "$minLiqDefault")
+$minLiquidity = [double](Ask-WithDefault 'Minimum pool TVL / liquidity in USD (actionable LP floor)' "$minLiqDefault")
 $hardTvlDefault = Get-Default $configDefaults "hard_exit_min_tvl_usd" 0
-$hardTvl = [double](Ask-WithDefault "Hard exit-safety TVL floor (0=off; momentum preset default 1000)" "$hardTvlDefault")
-$minVolume = [double](Ask-WithDefault "Minimum 24h volume in USD" "$minVolDefault")
-$maxPosition = [double](Ask-WithDefault "Future max position size in USD; scanner is still dry-run only" "$maxPositionDefault")
+$hardTvl = [double](Ask-WithDefault 'Hard exit-safety TVL floor (0=off; momentum preset default 1000)' "$hardTvlDefault")
+$minVolume = [double](Ask-WithDefault 'Minimum 24h volume in USD' "$minVolDefault")
+$maxPosition = [double](Ask-WithDefault 'Future max position size in USD; scanner is still dry-run only' "$maxPositionDefault")
 
 # Allowed-quotes: prefer the previously-saved array, else fall back to wide default.
 if ($null -ne $configDefaults -and $configDefaults.PSObject.Properties["allowed_quote_symbols"]) {
@@ -133,13 +133,13 @@ if ($null -ne $configDefaults -and $configDefaults.PSObject.Properties["allowed_
 } else { $quotesDefault = "SOL,USDC,USDT" }
 $quotesRaw = Ask-WithDefault "Allowed quote symbols, comma-separated" $quotesDefault
 
-$pageSize = [int](Ask-WithDefault "Raydium page size. Raydium docs allow up to 1000" "$pageSizeDefault")
+$pageSize = [int](Ask-WithDefault 'Raydium page size. Raydium docs allow up to 1000' "$pageSizeDefault")
 if ($pageSize -lt 10) { $pageSize = 10 }
 if ($pageSize -gt 1000) {
     Write-Host "  page size $pageSize exceeds Raydium's documented max; clamping to 1000." -ForegroundColor Yellow
     $pageSize = 1000
 }
-$pages = [int](Ask-WithDefault "How many Raydium pages to scan per run (1-50; one scan-cycle hits this many HTTP requests)" "$pagesDefault")
+$pages = [int](Ask-WithDefault 'How many Raydium pages to scan per run (1-50; one scan-cycle hits this many HTTP requests)' "$pagesDefault")
 if ($pages -lt 1) { $pages = 1 }
 if ($pages -gt 50) {
     Write-Host "  pages=$pages would issue $pages back-to-back HTTP calls and is almost certainly a typo." -ForegroundColor Yellow
@@ -148,9 +148,9 @@ if ($pages -gt 50) {
 }
 
 Write-Host ""
-Write-Host "Raydium page ordering (pool_sort_field): APR-sorted pages favor micro-TVL hype pools. Use volume24h (or liquidity) to scan a friendlier slice." -ForegroundColor DarkGray
+Write-Host 'Raydium page ordering (pool_sort_field): APR-sorted pages favor micro-TVL hype pools. Use volume24h (or liquidity) to scan a friendlier slice.' -ForegroundColor DarkGray
 $poolSortSaved = "$(Get-Default $configDefaults 'pool_sort_field' '')".Trim()
-$poolSortField = (Ask-WithDefault "pool_sort_field (blank = same as APR field; try volume24h)" $poolSortSaved).Trim()
+$poolSortField = (Ask-WithDefault 'pool_sort_field (blank = same as APR field; try volume24h)' $poolSortSaved).Trim()
 
 $raydiumApiBaseDefault = if ($envDefaults["RAYDIUM_API_BASE"]) {
     $envDefaults["RAYDIUM_API_BASE"]
@@ -166,7 +166,7 @@ if ($envDefaults["SOLANA_RPC_URL"]) {
 } else {
     $primaryRpcDefault = "https://api.mainnet-beta.solana.com"
 }
-$primaryRpc = Ask-WithDefault "Primary Solana RPC URL. Public default is OK; paste Helius/Chainstack/etc if you want" $primaryRpcDefault
+$primaryRpc = Ask-WithDefault 'Primary Solana RPC URL. Public default is OK; paste Helius/Chainstack/etc if you want' $primaryRpcDefault
 
 $fallbacks = New-Object System.Collections.Generic.List[string]
 if ($envDefaults["SOLANA_RPC_URLS"]) {
@@ -212,14 +212,14 @@ $allowedQuotes = $quotesRaw.Split(",") | ForEach-Object { $_.Trim().ToUpperInvar
 Write-Host ""
 Write-Host "Risk & routes (helps dial-in for volatile meme pairs):" -ForegroundColor Cyan
 $riskDefault = Get-Default $configDefaults "risk_profile" "balanced"
-$risk = (Ask-WithDefault "Risk profile (balanced | degen — degen widens LP bands + suggests higher slippage default)" $riskDefault).ToLowerInvariant()
+$risk = (Ask-WithDefault 'Risk profile (balanced | degen - degen widens LP bands + suggests higher slippage default)' $riskDefault).ToLowerInvariant()
 if ($risk -notin @("balanced","degen")) { $risk = "balanced" }
-$slipDefault = [double](Get-Default $configDefaults "max_route_price_impact_pct" 30)
-if ($risk -eq "degen" -and ([double]$slipDefault -eq 30.0)) { $slipDefault = 40 }
-$maxSlip = [double](Ask-WithDefault "Max route price impact % (Jupiter/Raydium quote; reject worse)" "$slipDefault")
+$slipDefault = [double](Get-Default $configDefaults "max_route_price_impact_pct" 15)
+if ($risk -eq "degen" -and ([double]$slipDefault -eq 15.0)) { $slipDefault = 30 }
+$maxSlip = [double](Ask-WithDefault 'Max route price impact % (Jupiter/Raydium quote; reject worse)' "$slipDefault")
 
 Write-Host ""
-Write-Host "LP placement (paper-only bands until live execution is merged):" -ForegroundColor Cyan
+Write-Host 'LP placement (paper-only bands until live execution is merged):' -ForegroundColor Cyan
 $lpEnDefault = Get-Default $configDefaults "lp_planning_enabled" $false
 $lpPlan = Ask-YesNo "Attach concentrated / full-range budget plans to passing candidates?" $lpEnDefault
 $widthDef = Get-Default $configDefaults "lp_default_range_width_pct" 20
@@ -234,11 +234,11 @@ $maxLpM = [int](Get-Default $configDefaults "lp_max_positions_per_mint" 2)
 $maxLpM = [int](Ask-WithDefault "Max simultaneous LP positions per non-quote mint (policy for future execution)" "$maxLpM")
 
 Write-Host ""
-Write-Host "Momentum / fee-rush (ranks pools by live vol/TVL + acceleration; suggests when to exit):" -ForegroundColor Cyan
+Write-Host 'Momentum / fee-rush (ranks pools by live vol/TVL + acceleration; suggests when to exit):' -ForegroundColor Cyan
 $momentumDefault = ($strategy -eq "momentum") -or (Get-Default $configDefaults "momentum_enabled" $false)
 $momentumEnabled = Ask-YesNo "Enable momentum scoring on candidates?" $momentumDefault
 $momScoreDefault = Get-Default $configDefaults "min_momentum_score" 50
-$momScore = [double](Ask-WithDefault "Minimum momentum score 0-100 (only hard-rejects if you enable require below)" "$momScoreDefault")
+$momScore = [double](Ask-WithDefault 'Minimum momentum score 0-100 (only hard-rejects if you enable require below)' "$momScoreDefault")
 $requireMomDefault = Get-Default $configDefaults "require_momentum_score" $false
 $requireMom = Ask-YesNo "Hard-reject pools below min momentum score?" $requireMomDefault
 $holdDefault = Get-Default $configDefaults "momentum_hold_hours" 24
@@ -246,19 +246,19 @@ Write-Host "  Hold bias: 24 = ~1 day fee-rush, 168 = ~1 week"
 $holdHours = [double](Ask-WithDefault "Momentum hold bias (hours)" "$holdDefault")
 
 Write-Host ""
-Write-Host "How .\scripts\run_scan.ps1 should behave (saved in settings.json; CLI flags still override):" -ForegroundColor Cyan
+Write-Host 'How .\scripts\run_scan.ps1 should behave (saved in settings.json; CLI flags still override):' -ForegroundColor Cyan
 $scanLoopDefault = Get-Default $configDefaults "scan_loop" $false
-$scanLoop = Ask-YesNo "Default: run repeated scans (--loop) until you press Ctrl+C?" $scanLoopDefault
+$scanLoop = Ask-YesNo 'Default: run repeated scans (--loop) until you press Ctrl+C?' $scanLoopDefault
 $intervalDefault = [int](Get-Default $configDefaults "scan_loop_interval_seconds" 60)
 if ($intervalDefault -lt 3) { $intervalDefault = 3 }
 if ($intervalDefault -gt 86400) { $intervalDefault = 86400 }
-$intervalSec = [int](Ask-WithDefault "Seconds between scans when loop is on (3-86400)" "$intervalDefault")
+$intervalSec = [int](Ask-WithDefault 'Seconds between scans when loop is on (3-86400)' "$intervalDefault")
 if ($intervalSec -lt 3) { $intervalSec = 3 }
 if ($intervalSec -gt 86400) { $intervalSec = 86400 }
 $spawnWatcherDefault = Get-Default $configDefaults "spawn_verdict_watcher" $false
-$spawnWatcher = Ask-YesNo "Default: open the verdict log tail in a Windows Terminal tab (watch_verdict.ps1) when you start a scan?" $spawnWatcherDefault
+$spawnWatcher = Ask-YesNo 'Default: open the verdict log tail in a Windows Terminal tab (watch_verdict.ps1) when you start a scan?' $spawnWatcherDefault
 $writeRejectDefault = Get-Default $configDefaults "write_rejections" ($strategy -eq "momentum")
-$writeRejections = Ask-YesNo "Write rejections CSV (reports\rejections.csv) each scan cycle?" $writeRejectDefault
+$writeRejections = Ask-YesNo 'Write rejections CSV (reports\rejections.csv) each scan cycle?' $writeRejectDefault
 
 $config = [ordered]@{
     dry_run = $true
@@ -276,6 +276,11 @@ $config = [ordered]@{
     min_volume_24h_usd = $minVolume
     max_position_usd = $maxPosition
     max_route_price_impact_pct = $maxSlip
+    emergency_max_slippage_pct = 0.15
+    enforce_mint_exit_safety = $true
+    max_transfer_fee_bps = 1500
+    require_standard_token_mint = $true
+    route_quote_max_slippage_bps = 1500
     risk_profile = $risk
     lp_planning_enabled = $lpPlan
     lp_range_mode = (Get-Default $configDefaults "lp_range_mode" "auto")
