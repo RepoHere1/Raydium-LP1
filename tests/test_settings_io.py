@@ -6,6 +6,7 @@ from pathlib import Path
 from raydium_lp1.settings_io import (
     load_settings_json,
     merge_known_settings_patch,
+    repair_settings_file_if_needed,
     write_settings_json,
 )
 from raydium_lp1.settings_sync import merge_settings, repair_settings
@@ -48,6 +49,20 @@ class SettingsIoTests(unittest.TestCase):
         text = str(ctx.exception)
         self.assertIn("Permission denied reading settings file", text)
         self.assertIn("close editors", text.lower())
+
+    def test_repair_fills_pool_type_and_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text(
+                '{"dry_run": true, "pool_type": "", "dashboard_path": "", "strategy": "custom"}\n',
+                encoding="utf-8",
+            )
+            repairs = repair_settings_file_if_needed(path)
+            self.assertTrue(repairs)
+            data = load_settings_json(path)
+            self.assertEqual(data["pool_type"], "all")
+            self.assertEqual(data["dashboard_path"], "reports/dashboard.json")
+            self.assertEqual(data["emergency_alerts_path"], "reports/alerts.json")
 
     def test_merge_writes_valid_json(self) -> None:
         repo = Path(__file__).resolve().parents[1]

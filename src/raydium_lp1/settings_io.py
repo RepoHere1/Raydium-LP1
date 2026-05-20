@@ -93,7 +93,52 @@ def validate_settings_file(path: Path) -> tuple[bool, str]:
 
 def write_settings_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    text = json.dumps(data, indent=2, sort_keys=True) + "\n"
+    try:
+        path.write_text(text, encoding="utf-8")
+    except PermissionError as exc:
+        resolved = path.resolve()
+        msg = (
+            f"Permission denied writing settings file:\n  {resolved}\n\n"
+            "Another process may have the file open (editor, web dashboard Save, sync, or antivirus). "
+            "Close those handles or pause sync on the repo folder, then retry.\n"
+        )
+        raise PermissionError(msg) from exc
+
+
+def repair_settings_file_if_needed(path: Path) -> list[str]:
+    """Fill required defaults (Raydium list API + report paths). Returns a log line per change.
+
+    Raises:
+        PermissionError: cannot read or write ``path`` (see ``read_settings_text`` / ``write_settings_json``).
+        ValueError: invalid JSON (same as ``load_settings_json``).
+    """
+
+    if not path.exists():
+        return []
+    data = load_settings_json(path)
+    repairs: list[str] = []
+
+    pt = data.get("pool_type")
+    if pt is None or str(pt).strip() == "":
+        data["pool_type"] = "all"
+        repairs.append("empty pool_type → all (required for Raydium list API)")
+
+    def _ensure_nonempty_str(key: str, default: str, blurb: str) -> None:
+        raw = data.get(key)
+        if raw is None or str(raw).strip() == "":
+            data[key] = default
+            repairs.append(f"{key} ({blurb})")
+
+    _ensure_nonempty_str("dashboard_path", "reports/dashboard.json", "default dashboard JSON path")
+    _ensure_nonempty_str("emergency_alerts_path", "reports/alerts.json", "default alerts path")
+    _ensure_nonempty_str("liquidity_history_path", "reports/liquidity_history.json", "default liquidity history path")
+    _ensure_nonempty_str("rejections_csv_path", "reports/rejections.csv", "default rejections CSV path")
+
+    if not repairs:
+        return []
+    write_settings_json(path, data)
+    return repairs
 
 
 def merge_known_settings_patch(path: Path, patch: Mapping[str, Any]) -> dict[str, Any]:
