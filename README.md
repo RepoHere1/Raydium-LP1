@@ -416,6 +416,20 @@ This project does **not** ask for a seed phrase or private key. Do not paste wal
 
 The first production-data demo should only prove that live Raydium data can be fetched, normalized, filtered, and reported. A separate, explicit step is required before adding wallet signing or LP-opening logic.
 
+## End-to-end demo (live Raydium, dry-run)
+
+From the repo root, with network access:
+
+```bash
+PYTHONPATH=src python3 scripts/demo_end_to_end.py
+```
+
+This hits **production** Raydium pool list JSON and Solana RPC pool verification (same code paths as ``scan_raydium_lps.py``), writes ``reports/latest.json``, ``reports/dashboard.json``, and related artifacts. Add ``--with-routes`` to also probe Jupiter/Raydium sell quotes (slower). For **offline** canned JSON only (no Raydium network call):
+
+```bash
+PYTHONPATH=src python3 scripts/demo_end_to_end.py --offline-mock
+```
+
 ## Tests
 
 ```bash
