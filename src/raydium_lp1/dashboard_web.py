@@ -1,13 +1,15 @@
 """Local funnel + settings dashboard (loopback-only HTTP).
 
 ``GET /`` serves a single-page UI. ``GET /api/dashboard`` and ``GET /api/settings`` return JSON.
-``POST /api/settings`` merges an object into ``config/settings.json`` (scanner-known keys only).
+``POST /api/settings`` merges an object into ``config/settings.json`` (scanner-known keys only) and
+returns the merged document so the UI stays in sync.
 
 Use with::
 
     python -m raydium_lp1.dashboard_web
 
-and run the scanner with ``--dashboard --loop --reload-config-each-scan`` while you tune gates.
+and run the scanner with ``--dashboard --loop --reload-config-each-scan`` (``run_scan.ps1 -Loop``
+adds the last two flags automatically) while you tune gates from the browser.
 """
 
 from __future__ import annotations
@@ -27,6 +29,16 @@ from raydium_lp1.strategies import ALLOWED_STRATEGIES
 DEFAULT_SETTINGS_PATH = Path("config/settings.json")
 
 _FORM_SECTIONS: list[dict[str, Any]] = [
+    {
+        "title": "Run mode (dry_run)",
+        "fields": [
+            {
+                "key": "dry_run",
+                "label": "Paper — live Raydium/RPC data; no signed swaps (this build requires this on)",
+                "type": "checkbox",
+            },
+        ],
+    },
     {
         "title": "Liquidity gates",
         "fields": [
@@ -91,6 +103,15 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
         ],
     },
     {
+        "title": "Exit safety (mint + quote slippage)",
+        "fields": [
+            {"key": "enforce_mint_exit_safety", "label": "Enforce mint exit safety (RPC jsonParsed)", "type": "checkbox"},
+            {"key": "max_transfer_fee_bps", "label": "Max Token-2022 transfer fee (bps)", "type": "number"},
+            {"key": "require_standard_token_mint", "label": "Require standard SPL / Token-2022 mint", "type": "checkbox"},
+            {"key": "route_quote_max_slippage_bps", "label": "Route quote max slippage (bps)", "type": "number"},
+        ],
+    },
+    {
         "title": "Wallet and emergency",
         "fields": [
             {"key": "position_size_sol", "label": "Position SOL", "type": "number", "step": "any"},
@@ -123,7 +144,6 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "strategy", "label": "strategy", "type": "select", "options": list(ALLOWED_STRATEGIES)},
             {"key": "network", "label": "network", "type": "text"},
             {"key": "risk_profile", "label": "risk_profile", "type": "text"},
-            {"key": "dry_run", "label": "Dry run only", "type": "checkbox"},
             {"key": "raydium_api_base", "label": "Raydium API base", "type": "text"},
             {"key": "solana_rpc_urls_lines", "label": "RPC URLs (one per line)", "type": "lines"},
             {"key": "allowed_quote_symbols_csv", "label": "Allowed quotes CSV", "type": "csv"},
@@ -133,6 +153,7 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "scan_loop", "label": "scan_loop (prefer CLI)", "type": "checkbox"},
             {"key": "scan_loop_interval_seconds", "label": "Loop interval hint (s)", "type": "number"},
             {"key": "spawn_verdict_watcher", "label": "Spawn verdict watcher", "type": "checkbox"},
+            {"key": "spawn_dashboard_web", "label": "Spawn dashboard tab with scan (Windows)", "type": "checkbox"},
         ],
     },
 ]
@@ -174,6 +195,11 @@ ul.z{margin:.45rem 0;color:var(--m);font-size:.84rem;padding-left:1rem;border-le
 a{color:var(--a)}
 </style></head><body>
 <header><h1>Raydium-LP1</h1><span class="p pl">127.0.0.1 only</span><span class="p" id="stamp">waiting…</span>
+<div style="display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;margin-left:.25rem">
+<span style="font-size:.72rem;color:var(--m)">Mode</span>
+<button type="button" id="btnPaper" class="p" title="dry_run=true — live pools/APIs; no signed swaps">Paper</button>
+<button type="button" id="btnExec" title="dry_run=false — saves to JSON; this build still requires dry_run=true to run scans">Exec</button>
+</div>
 <div class="tb"><label style="font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto 5s</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="p">Save settings</button></div></header>
 <script type="application/json" id="boot">BOOT_JSON</script>
@@ -189,6 +215,29 @@ _CLIENT_JS = r"""
 (function(){
   const boot = JSON.parse(document.getElementById('boot').textContent || '{}');
   const SECTIONS = boot.form_sections || [];
+  var dirty=false;
+  function setDirty(){dirty=true;}
+  function syncModeBar(){
+    var cb=document.querySelector('input[data-sk=dry_run]');
+    var bp=document.getElementById('btnPaper');
+    var be=document.getElementById('btnExec');
+    if(!cb||!bp||!be) return;
+    if(cb.checked){bp.className='p';be.className='';}
+    else{bp.className='';be.className='p';}
+  }
+  function wireModeButtons(){
+    var bp=document.getElementById('btnPaper');
+    var be=document.getElementById('btnExec');
+    if(!bp||!be) return;
+    bp.onclick=function(){
+      var cb=document.querySelector('input[data-sk=dry_run]');
+      if(cb){cb.checked=true;setDirty();syncModeBar();}
+    };
+    be.onclick=function(){
+      var cb=document.querySelector('input[data-sk=dry_run]');
+      if(cb){cb.checked=false;setDirty();syncModeBar();}
+    };
+  }
   function $(s,r=document){return r.querySelector(s);}
   function esc(t){var d=document.createElement('div');d.textContent=t==null?'':String(t);return d.innerHTML;}
   function num(n){return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0});}
@@ -241,6 +290,13 @@ _CLIENT_JS = r"""
       }
       root.appendChild(fg);
     }
+    root.addEventListener('input', setDirty, true);
+    root.addEventListener('change', function(ev){
+      setDirty();
+      var t=ev.target;
+      if(t && t.getAttribute && t.getAttribute('data-sk')==='dry_run') syncModeBar();
+    }, true);
+    syncModeBar();
   }
 
   function collect(){
@@ -326,15 +382,22 @@ _CLIENT_JS = r"""
     renderFunnel(dash); renderList(dash.open_positions||[]);
   }
 
-  async function loadSettings(){
-    var s=await gj('/api/settings'); mount(s);
+  async function loadSettings(force){
+    var s=await gj('/api/settings');
+    if(!force && dirty) return;
+    mount(s);
   }
 
   function msg(t, ok){
     var e=$('#st'); e.textContent=t; e.className=ok?'o':(t?'e':'');
   }
 
-  document.getElementById('reload').onclick=function(){msg(''); refresh().catch(function(e){msg(String(e),false);}); loadSettings().catch(function(e){msg(String(e),false);});};
+  document.getElementById('reload').onclick=function(){
+    dirty=false;
+    msg('');
+    refresh().catch(function(e){msg(String(e),false);});
+    loadSettings(true).catch(function(e){msg(String(e),false);});
+  };
   document.getElementById('save').onclick=function(){
     msg('Saving…',true);
     try{
@@ -344,7 +407,13 @@ _CLIENT_JS = r"""
         .then(function(x){
           var d; try{d=JSON.parse(x.t);}catch(e){throw new Error(x.t.slice(0,200));}
           if(!x.r.ok) throw new Error(d.error||x.t);
-          msg('Saved · next loop picks up if scanner uses --reload-config-each-scan',true);
+          dirty=false;
+          if(d.settings){mount(d.settings); return null;}
+          return loadSettings(true);
+        })
+        .then(function(){
+          syncModeBar();
+          msg('Saved to disk — looping scanner reloads settings each cycle (run_scan.ps1 -Loop adds --reload-config-each-scan).',true);
         }).catch(function(e){msg(String(e),false);});
     }catch(e){msg(String(e),false);}
   };
@@ -352,12 +421,16 @@ _CLIENT_JS = r"""
   var timer=null;
   function arm(){
     clearInterval(timer);
-    if(document.getElementById('auto').checked) timer=setInterval(function(){refresh().catch(function(){});},5000);
+    if(document.getElementById('auto').checked) timer=setInterval(function(){
+      refresh().catch(function(){});
+      loadSettings(false).catch(function(){});
+    },5000);
   }
   document.getElementById('auto').onchange=arm;
 
+  wireModeButtons();
   refresh().catch(function(e){$('#fu').innerHTML='<p style="color:#f88">'+esc(String(e))+'</p>';});
-  loadSettings().catch(function(e){msg(String(e),false);});
+  loadSettings(true).catch(function(e){msg(String(e),false);});
   arm();
 })();
 """
@@ -460,11 +533,18 @@ def main(argv: list[str] | None = None) -> int:
                 self._send_json(400, {"error": f"invalid JSON: {exc}"})
                 return
             try:
-                merge_known_settings_patch(paths.settings_path, patch)
+                merged = merge_known_settings_patch(paths.settings_path, patch)
             except (OSError, ValueError) as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
-            self._send_json(200, {"ok": True, "path": str(paths.settings_path.resolve())})
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "path": str(paths.settings_path.resolve()),
+                    "settings": merged,
+                },
+            )
 
     httpd = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     print(f"Raydium-LP1 dashboard http://{args.host}:{args.port}/", flush=True)

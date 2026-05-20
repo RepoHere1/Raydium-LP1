@@ -137,6 +137,9 @@ if ($Json) {
 }
 if ($Loop) {
     $scannerArgs += @("--loop", "--interval", $Interval)
+    # Web dashboard + hot-reload settings each cycle (HTML Save applies without restarting).
+    $scannerArgs += "--dashboard"
+    $scannerArgs += "--reload-config-each-scan"
 }
 if ($CheckRpc) {
     $scannerArgs += "--check-rpc"
