@@ -1,9 +1,9 @@
 # Shared helpers: open companion processes in Windows Terminal tabs (wt.exe)
-# when available, instead of spawning separate top-level console windows.
+# instead of extra top-level console windows.
 #
-# If you run the scanner *inside* Windows Terminal, WT_SESSION is set and we pass
-#   wt -w 0 nt ...   so new tabs attach to THIS window. From classic PowerShell,
-#   wt may open a new WT window (first time) — that is expected.
+# wt.exe is started with UseShellExecute=false so the child inherits this process's
+# environment. UseShellExecute=true (the old default) prevented that handoff and made
+# Windows Terminal open a new window instead of a tab in the window you ran the scan from.
 
 function Get-WtExePath {
     $cmd = Get-Command wt.exe -ErrorAction SilentlyContinue
@@ -25,15 +25,28 @@ function Test-WindowsTerminalAvailable {
     return $null -ne (Get-WtExePath)
 }
 
+function Start-WtProcess {
+    param(
+        [Parameter(Mandatory)][string]$WtPath,
+        [Parameter(Mandatory)][string]$Arguments,
+        [Parameter(Mandatory)][string]$WorkingDirectory
+    )
+    $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $pinfo.FileName = $WtPath
+    $pinfo.Arguments = $Arguments
+    $pinfo.WorkingDirectory = $WorkingDirectory
+    $pinfo.UseShellExecute = $false
+    [void][System.Diagnostics.Process]::Start($pinfo)
+}
+
 function Build-WtNewTabArgLine {
     param(
         [string]$Root,
         [string]$ShellExe,
         [string]$ShellArgString
     )
-    # -w 0: attach new tab to current WT window when WT_SESSION is present (scan run inside WT).
-    $leaf = if ($env:WT_SESSION) { "-w 0 nt" } else { "nt" }
-    return "$leaf -d `"$Root`" $ShellExe $ShellArgString"
+    # -w 0 / "last" = most recently used WT window (see Windows Terminal command-line docs).
+    return "-w 0 nt -d `"$Root`" $ShellExe $ShellArgString"
 }
 
 function Start-RaydiumDashboardWebTab {
@@ -56,16 +69,8 @@ function Start-RaydiumDashboardWebTab {
     $inner = "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$dashPs1`""
     $argLine = Build-WtNewTabArgLine -Root $root -ShellExe "`"$shellPath`"" -ShellArgString $inner
     try {
-        $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
-        $pinfo.FileName = $wt
-        $pinfo.Arguments = $argLine
-        $pinfo.UseShellExecute = $true
-        [void][System.Diagnostics.Process]::Start($pinfo)
-        if ($env:WT_SESSION) {
-            Write-Host "Opened dashboard in a new tab (same Windows Terminal): http://127.0.0.1:8844/" -ForegroundColor Cyan
-        } else {
-            Write-Host "Opened dashboard in Windows Terminal: http://127.0.0.1:8844/ (run scan inside WT for same-window tabs)" -ForegroundColor Cyan
-        }
+        Start-WtProcess -WtPath $wt -Arguments $argLine -WorkingDirectory $root
+        Write-Host "Opened dashboard in Windows Terminal (new tab): http://127.0.0.1:8844/" -ForegroundColor Cyan
     } catch {
         Write-Host "Could not start Windows Terminal for dashboard: $_" -ForegroundColor Yellow
         Write-Host "  Web UI: http://127.0.0.1:8844/  —  .\scripts\run_dashboard_web.ps1" -ForegroundColor Gray
@@ -89,16 +94,8 @@ function Start-RaydiumVerdictWatcherTab {
         $inner = "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$watchPs1`""
         $argLine = Build-WtNewTabArgLine -Root $root -ShellExe "`"$shellPath`"" -ShellArgString $inner
         try {
-            $pinfo = [System.Diagnostics.ProcessStartInfo]::new()
-            $pinfo.FileName = $wt
-            $pinfo.Arguments = $argLine
-            $pinfo.UseShellExecute = $true
-            [void][System.Diagnostics.Process]::Start($pinfo)
-            if ($env:WT_SESSION) {
-                Write-Host "Opened verdict watcher in a new tab (same Windows Terminal)." -ForegroundColor Cyan
-            } else {
-                Write-Host "Opened verdict watcher in Windows Terminal (new window if you are not already inside WT)." -ForegroundColor Cyan
-            }
+            Start-WtProcess -WtPath $wt -Arguments $argLine -WorkingDirectory $root
+            Write-Host "Opened verdict watcher in Windows Terminal (new tab)." -ForegroundColor Cyan
             return
         } catch {
             Write-Host "wt.exe verdict launch failed: $_" -ForegroundColor Yellow

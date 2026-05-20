@@ -80,7 +80,7 @@ python -m raydium_lp1.dashboard_web --host 127.0.0.1 --port 8844
 
 Then open `http://127.0.0.1:8844/` in your browser. Pair with a looping scanner using `--reload-config-each-scan` so edits to `settings.json` apply each cycle.
 
-`run_scan.ps1` prints this URL at startup. Companion tabs attach to the **current** Windows Terminal window only when `WT_SESSION` is set (that is, you started the scan **from a tab inside** Windows Terminal). From classic PowerShell or cmd outside WT, `wt.exe` typically opens a **new** Windows Terminal window instead of a tab in an existing one.
+`run_scan.ps1` prints this URL at startup. Companion processes use `wt -w 0 new-tab` (window `0` / `last` = most recently used Windows Terminal window per [Microsoft’s wt.exe docs](https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments)). The script starts `wt.exe` without shell execute so the child inherits the normal process environment and tabs land in the terminal instance you launched the scan from.
 
 ## Settings repair / sync
 
