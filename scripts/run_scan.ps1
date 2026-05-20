@@ -22,6 +22,8 @@ $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
 . (Join-Path $ScriptDir "_terminal_tabs.ps1")
 
+Write-Host "[scan] Web dashboard URL: http://127.0.0.1:8844/  —  .\scripts\run_dashboard_web.ps1  |  auto-tab: .\scripts\run_scan.ps1 -SpawnDashboardTab  or  `"spawn_dashboard_web`": true in settings (Windows Terminal: run scan inside WT so wt uses a new tab, not a new window)." -ForegroundColor Cyan
+
 # Flush Python prints immediately (helps long scans show [REJ] lines live on Windows).
 $env:PYTHONUNBUFFERED = "1"
 
@@ -110,10 +112,11 @@ if ($SpawnDashboardTab) {
 if ($SpawnWatcher) {
     Start-RaydiumVerdictWatcherTab -RepoRoot $RepoRoot
     Start-Sleep -Milliseconds 600
+    $verdictLogPath = Join-Path $RepoRoot "reports\verdict_stream.log"
     if ($Loop) {
-        Write-Host "Spawned verdict log watcher in Windows Terminal (new tab) when wt.exe is available." -ForegroundColor Cyan
+        Write-Host "[scan] Verdict watcher started (wt.exe = tab in this Windows Terminal when WT_SESSION is set; otherwise a new WT window). Tail: $verdictLogPath" -ForegroundColor Cyan
     } else {
-        Write-Host "Spawned verdict log watcher. Pass -Loop so this window keeps scanning and appending reports\verdict_stream.log." -ForegroundColor Yellow
+        Write-Host "[scan] Verdict watcher started. Pass -Loop so the scan keeps appending: $verdictLogPath" -ForegroundColor Yellow
     }
 }
 
