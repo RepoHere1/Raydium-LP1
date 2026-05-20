@@ -2,6 +2,26 @@
 
 All commands assume the repository root as the current directory. On Windows, use **PowerShell** from the repo root (or the root shortcuts `.\run_scan.ps1` / `.\setup_wizard.ps1`).
 
+## Git: sync this folder to the latest agent branch
+
+From your clone (example path — use yours):
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+git fetch origin
+git checkout cursor/live-wizard-mint-safety-2e5b
+git pull origin cursor/live-wizard-mint-safety-2e5b
+```
+
+If the branch only exists on the remote:
+
+```powershell
+git fetch origin
+git checkout -B cursor/live-wizard-mint-safety-2e5b origin/cursor/live-wizard-mint-safety-2e5b
+```
+
+If you have local edits, **commit** them or **`git stash -u`** before `git pull` so Git does not abort.
+
 ## Python environment
 
 ```powershell

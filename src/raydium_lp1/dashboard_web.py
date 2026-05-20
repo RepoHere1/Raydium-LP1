@@ -205,7 +205,12 @@ a{color:var(--a)}
 <script type="application/json" id="boot">BOOT_JSON</script>
 <main><div><div class="cd"><h2>Funnel <a id="rj" href="api/dashboard" style="margin-left:auto;font-size:.73rem;color:var(--m);font-weight:400;text-decoration:none">raw JSON →</a></h2><div id="fu" class="bd"></div></div>
 <div class="cd"><h2>Dry-run shortlist</h2><div id="li" class="bd"></div></div></div>
-<div class="cd"><h2>Settings</h2><div class="bd"><div id="fo"></div><div id="st"></div></div></div></main>
+<div class="cd"><h2>Settings</h2><div class="bd"><p id="dashHint" style="font-size:.76rem;color:var(--m);margin:0 0 .65rem;line-height:1.38">
+<strong>Save</strong> writes the whole form to the server settings file (see stderr path when you start <code>dashboard_web</code>).
+<strong>Paper / Exec</strong> writes <code>dry_run</code> to that file immediately.
+The scanner reloads settings only <strong>between</strong> loop iterations if you start it with <code>run_scan.ps1 -Loop</code> (adds <code>--reload-config-each-scan</code>).
+Funnel and shortlist refresh from <code>reports/dashboard.json</code> only <strong>after each completed scan</strong> (<code>--dashboard</code>).
+</p><div id="fo"></div><div id="st"></div></div></div></main>
 <script>
 CLIENT_JS_HERE
 </script></body></html>"""
@@ -216,6 +221,7 @@ _CLIENT_JS = r"""
   const boot = JSON.parse(document.getElementById('boot').textContent || '{}');
   const SECTIONS = boot.form_sections || [];
   var dirty=false;
+  var _foDelegated=false;
   function setDirty(){dirty=true;}
   function syncModeBar(){
     var cb=document.querySelector('input[data-sk=dry_run]');
@@ -231,11 +237,15 @@ _CLIENT_JS = r"""
     if(!bp||!be) return;
     bp.onclick=function(){
       var cb=document.querySelector('input[data-sk=dry_run]');
-      if(cb){cb.checked=true;setDirty();syncModeBar();}
+      if(!cb){msg('Form not ready yet — wait for settings to load.',false);return;}
+      cb.checked=true; syncModeBar();
+      persistPatch({dry_run:true}, 'Paper mode (dry_run) saved to disk.').catch(function(e){msg(String(e),false);});
     };
     be.onclick=function(){
       var cb=document.querySelector('input[data-sk=dry_run]');
-      if(cb){cb.checked=false;setDirty();syncModeBar();}
+      if(!cb){msg('Form not ready yet — wait for settings to load.',false);return;}
+      cb.checked=false; syncModeBar();
+      persistPatch({dry_run:false}, 'Exec path (dry_run=false) saved. This build still requires dry_run=true to run scans.').catch(function(e){msg(String(e),false);});
     };
   }
   function $(s,r=document){return r.querySelector(s);}
@@ -290,12 +300,15 @@ _CLIENT_JS = r"""
       }
       root.appendChild(fg);
     }
-    root.addEventListener('input', setDirty, true);
-    root.addEventListener('change', function(ev){
-      setDirty();
-      var t=ev.target;
-      if(t && t.getAttribute && t.getAttribute('data-sk')==='dry_run') syncModeBar();
-    }, true);
+    if(!_foDelegated){
+      _foDelegated=true;
+      root.addEventListener('input', setDirty, true);
+      root.addEventListener('change', function(ev){
+        setDirty();
+        var t=ev.target;
+        if(t && t.getAttribute && t.getAttribute('data-sk')==='dry_run') syncModeBar();
+      }, true);
+    }
     syncModeBar();
   }
 
@@ -329,6 +342,24 @@ _CLIENT_JS = r"""
       patch[k]=el.value;
     }
     return patch;
+  }
+
+  function persistPatch(patch, okMsg){
+    msg('Saving…',true);
+    return fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)})
+      .then(function(r){return r.text().then(function(t){return {r:r,t:t};});})
+      .then(function(x){
+        var d; try{d=JSON.parse(x.t);}catch(e){throw new Error(x.t.slice(0,200));}
+        if(!x.r.ok) throw new Error(d.error||x.t);
+        dirty=false;
+        if(d.settings) mount(d.settings);
+        else return loadSettings(true);
+        return null;
+      })
+      .then(function(){
+        syncModeBar();
+        msg(okMsg, true);
+      });
   }
 
   async function gj(url,opt){
@@ -399,22 +430,9 @@ _CLIENT_JS = r"""
     loadSettings(true).catch(function(e){msg(String(e),false);});
   };
   document.getElementById('save').onclick=function(){
-    msg('Saving…',true);
     try{
-      var body=JSON.stringify(collect());
-      fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:body})
-        .then(function(r){return r.text().then(function(t){return {r:r,t:t};});})
-        .then(function(x){
-          var d; try{d=JSON.parse(x.t);}catch(e){throw new Error(x.t.slice(0,200));}
-          if(!x.r.ok) throw new Error(d.error||x.t);
-          dirty=false;
-          if(d.settings){mount(d.settings); return null;}
-          return loadSettings(true);
-        })
-        .then(function(){
-          syncModeBar();
-          msg('Saved to disk — looping scanner reloads settings each cycle (run_scan.ps1 -Loop adds --reload-config-each-scan).',true);
-        }).catch(function(e){msg(String(e),false);});
+      var patch=collect();
+      persistPatch(patch, 'Form saved to disk. Scanner reloads settings each loop iteration if started with run_scan.ps1 -Loop. Funnel refreshes after each completed scan.').catch(function(e){msg(String(e),false);});
     }catch(e){msg(String(e),false);}
   };
 
@@ -532,6 +550,9 @@ def main(argv: list[str] | None = None) -> int:
             except json.JSONDecodeError as exc:
                 self._send_json(400, {"error": f"invalid JSON: {exc}"})
                 return
+            if not isinstance(patch, dict):
+                self._send_json(400, {"error": "JSON body must be an object, not an array or primitive"})
+                return
             try:
                 merged = merge_known_settings_patch(paths.settings_path, patch)
             except (OSError, ValueError) as exc:
@@ -548,8 +569,8 @@ def main(argv: list[str] | None = None) -> int:
 
     httpd = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     print(f"Raydium-LP1 dashboard http://{args.host}:{args.port}/", flush=True)
-    print(f"  dashboard JSON: {paths.dashboard_path}", flush=True)
-    print(f"  settings file: {paths.settings_path}", flush=True)
+    print(f"  dashboard JSON: {paths.dashboard_path.resolve()}", flush=True)
+    print(f"  settings file (POST /api/settings writes here): {paths.settings_path.resolve()}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
