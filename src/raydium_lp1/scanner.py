@@ -1592,6 +1592,9 @@ def main(argv: list[str] | None = None) -> int:
             except RuntimeError as exc:
                 print(f"Scan failed: {exc}", file=sys.stderr)
                 return 1
+            except KeyboardInterrupt:
+                print("\n[scan] interrupted (Ctrl+C).", file=sys.stderr, flush=True)
+                return 130
 
             report["scan_diagnosis"] = dial_in_analyst.build_scan_diagnosis(config, report)
 
