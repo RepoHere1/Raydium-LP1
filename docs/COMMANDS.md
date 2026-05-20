@@ -80,7 +80,9 @@ python -m raydium_lp1.scanner --config config\settings.json --check-rpc
 python -m raydium_lp1.dashboard_web --host 127.0.0.1 --port 8844
 ```
 
-Then open `http://127.0.0.1:8844/` in your browser. Pair with a looping scanner using `--reload-config-each-scan` so edits to `settings.json` apply each cycle.
+Use both `--host` and `--port`; a lone trailing `-` on the command line is parsed as a separate (invalid) argument. `python -m raydium_lp1.dashboard_web --help` shows the full syntax.
+
+Then open `http://127.0.0.1:8844/` in your browser. Pair with a looping scanner using `--reload-config-each-scan` so edits to `settings.json` apply each cycle. Pair with a looping scanner using `--reload-config-each-scan` so edits to `settings.json` apply each cycle.
 
 `run_scan.ps1` prints this URL at startup. Companion processes use `wt -w 0 nt` (window `0` / `last` = most recently used Windows Terminal window per [Microsoft’s wt.exe docs](https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments)). The script starts `wt.exe` without shell execute so the child inherits the normal process environment and tabs land in the terminal instance you launched the scan from.
 

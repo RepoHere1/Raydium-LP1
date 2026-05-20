@@ -33,7 +33,7 @@ def _preflight_config(path: Path) -> None:
         from raydium_lp1.settings_io import load_settings_json
 
         load_settings_json(path)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(2)
 

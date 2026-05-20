@@ -14,7 +14,18 @@ _PS_HASHTABLE_RE = re.compile(r"@\{[^}]*\}")
 
 
 def read_settings_text(path: Path) -> str:
-    raw = path.read_bytes()
+    try:
+        raw = path.read_bytes()
+    except PermissionError as exc:
+        resolved = path.resolve()
+        msg = (
+            f"Permission denied reading settings file:\n  {resolved}\n\n"
+            "Common causes: another program has the file open, OneDrive (or similar) is syncing it, "
+            "or the path points at a directory you cannot read.\n\n"
+            "Try: close editors or diff tools showing that JSON; pause folder sync; run the scanner "
+            "from the repo root; pass an explicit readable path with --config.\n"
+        )
+        raise PermissionError(msg) from exc
     if raw.startswith(b"\xef\xbb\xbf"):
         raw = raw[3:]
     return raw.decode("utf-8")

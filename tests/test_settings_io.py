@@ -36,6 +36,19 @@ class SettingsIoTests(unittest.TestCase):
             self.assertEqual(data["strategy"], "momentum")
             ScannerConfig.from_file(target)
 
+    def test_permission_denied_includes_path_and_hints(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text("{}", encoding="utf-8")
+            with mock.patch.object(Path, "read_bytes", side_effect=PermissionError(13, "denied")):
+                with self.assertRaises(PermissionError) as ctx:
+                    load_settings_json(path)
+        text = str(ctx.exception)
+        self.assertIn("Permission denied reading settings file", text)
+        self.assertIn("close editors", text.lower())
+
     def test_merge_writes_valid_json(self) -> None:
         repo = Path(__file__).resolve().parents[1]
         template = repo / "config" / "settings.momentum.example.json"

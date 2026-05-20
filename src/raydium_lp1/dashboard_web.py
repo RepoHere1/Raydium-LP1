@@ -386,9 +386,13 @@ def _page() -> bytes:
 def main(argv: list[str] | None = None) -> int:
     import urllib.parse as up  # noqa: PLC0415
 
-    parser = argparse.ArgumentParser(description="Raydium-LP1 local dashboard (127.0.0.1 only).")
+    parser = argparse.ArgumentParser(
+        description="Raydium-LP1 local dashboard (127.0.0.1 only).",
+        epilog="Example: python -m raydium_lp1.dashboard_web --host 127.0.0.1 --port 8844",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (default loopback).")
-    parser.add_argument("--port", type=int, default=8844)
+    parser.add_argument("--port", type=int, default=8844, help="Listen port (default 8844).")
     parser.add_argument("--dashboard", type=Path, default=DEFAULT_DASHBOARD_PATH)
     parser.add_argument("--settings", type=Path, default=DEFAULT_SETTINGS_PATH)
     args = parser.parse_args(argv)
