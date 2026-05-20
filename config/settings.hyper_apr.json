@@ -25,5 +25,6 @@
   "write_rejections": false,
   "allowed_quote_symbols": ["SOL", "USDC", "USDT"],
   "route_sources": ["jupiter", "raydium"],
-  "solana_rpc_urls": []
+  "solana_rpc_urls": [],
+  "raydium_api_base": "https://api-v3.raydium.io"
 }

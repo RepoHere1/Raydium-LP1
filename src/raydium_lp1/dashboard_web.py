@@ -29,7 +29,11 @@ from raydium_lp1.dashboard import (
     write_settings_save_ack,
 )
 from raydium_lp1.dashboard_web_assets import _CLIENT_JS, _CSS_HTML
-from raydium_lp1.settings_io import load_settings_json, merge_known_settings_patch
+from raydium_lp1.settings_io import (
+    DEFAULT_RAYDIUM_API_BASE,
+    load_settings_json,
+    merge_known_settings_patch,
+)
 from raydium_lp1.settings_optimizer import (
     DEFAULT_STATE_PATH as OPTIMIZER_STATE_PATH,
     SETTINGS_CATALOG,
@@ -169,8 +173,12 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "strategy", "label": "strategy", "type": "select", "options": list(ALLOWED_STRATEGIES)},
             {"key": "network", "label": "network", "type": "text"},
             {"key": "risk_profile", "label": "risk_profile", "type": "text"},
-            {"key": "dry_run", "label": "Dry run only", "type": "checkbox"},
-            {"key": "raydium_api_base", "label": "Raydium API base", "type": "text"},
+            {
+                "key": "raydium_api_base",
+                "label": "Raydium API base (blank = default)",
+                "type": "text",
+                "placeholder": DEFAULT_RAYDIUM_API_BASE,
+            },
             {"key": "solana_rpc_urls_lines", "label": "RPC URLs (one per line)", "type": "lines"},
             {"key": "allowed_quote_symbols_csv", "label": "Allowed quotes CSV", "type": "csv"},
             {"key": "blocked_token_symbols_csv", "label": "Blocked symbols CSV", "type": "csv"},
@@ -282,6 +290,7 @@ def _status_payload(paths: WebPaths) -> dict[str, Any]:
     drift_keys = _settings_drift_keys(snap, on_disk) if settings_ok else []
     stale = _dashboard_stale(paths)
     settings_name = paths.settings_path.name
+    dry_run = bool(on_disk.get("dry_run", True)) if settings_ok else True
     return {
         "settings_path": str(paths.settings_path.resolve()),
         "settings_file": settings_name,
@@ -298,6 +307,10 @@ def _status_payload(paths: WebPaths) -> dict[str, Any]:
         "dashboard_scan_settings": snap,
         "settings_on_disk": on_disk,
         "settings_drift_keys": drift_keys,
+        "trading_mode": "demo" if dry_run else "live",
+        "dry_run": dry_run,
+        "live_trading_enabled": False,
+        "default_raydium_api_base": DEFAULT_RAYDIUM_API_BASE,
         "settings_apply": {
             "how": f"POST /api/settings merges into {settings_name} (known keys only).",
             "scanner": "Scanner tab must use run_scan_dashboard.ps1 (--reload-config-each-scan).",
@@ -332,6 +345,7 @@ def _page(settings_path: Path = DEFAULT_SETTINGS_PATH) -> bytes:
         "form_sections": _FORM_SECTIONS,
         "settings_catalog": SETTINGS_CATALOG,
         "settings_file": settings_path.name,
+        "default_raydium_api_base": DEFAULT_RAYDIUM_API_BASE,
     }
     html = (
         _CSS_HTML.replace(
@@ -433,6 +447,38 @@ def main(argv: list[str] | None = None) -> int:
 
         def do_POST(self) -> None:  # noqa: N802
             path = up.urlparse(self.path).path
+            if path == "/api/mode/toggle":
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                raw_body = self.rfile.read(length) if length > 0 else b"{}"
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except json.JSONDecodeError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                live = bool(body.get("live"))
+                try:
+                    from raydium_lp1.settings_io import repair_settings_file_if_needed
+
+                    repair_settings_file_if_needed(paths.settings_path)
+                    merge_known_settings_patch(paths.settings_path, {"dry_run": not live})
+                except (OSError, ValueError) as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "dry_run": not live,
+                        "trading_mode": "demo" if not live else "live",
+                        "live_trading_enabled": False,
+                        "message": (
+                            "DEMO — paper scan, preview open slots, no swaps."
+                            if not live
+                            else "LIVE — wallet-capped slots; scanner still does not auto-swap in this build."
+                        ),
+                    },
+                )
+                return
             if path == "/api/optimizer/toggle":
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 raw_body = self.rfile.read(length) if length > 0 else b"{}"

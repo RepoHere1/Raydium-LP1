@@ -1784,8 +1784,12 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     if not config.dry_run:
-        print("Refusing to run: this build is dry-run only. Set dry_run=true.", file=sys.stderr)
-        return 2
+        print(
+            "[scan] LIVE mode — scans run with wallet-capped open slots; "
+            "automated swaps are not executed in this build (monitor + plan only).",
+            file=sys.stderr,
+            flush=True,
+        )
 
     try:
         active_wallet = wallet_mod.load_wallet()

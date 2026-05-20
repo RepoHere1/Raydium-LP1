@@ -9,6 +9,8 @@ from typing import Any, Mapping
 
 from raydium_lp1.settings_schema import KNOWN_SETTINGS_KEYS
 
+DEFAULT_RAYDIUM_API_BASE = "https://api-v3.raydium.io"
+
 # PowerShell ConvertTo-Json sometimes emits @{...} when -Depth is too low.
 _PS_HASHTABLE_RE = re.compile(r"@\{[^}]*\}")
 _GIT_CONFLICT_RE = re.compile(
@@ -120,6 +122,8 @@ def sanitize_settings_dict(data: Mapping[str, Any]) -> dict[str, Any]:
     out["rejections_csv_path"] = _clean_path_value(
         out.get("rejections_csv_path"), "reports/rejections.csv"
     )
+    if not str(out.get("raydium_api_base") or "").strip():
+        out["raydium_api_base"] = DEFAULT_RAYDIUM_API_BASE
     return out
 
 

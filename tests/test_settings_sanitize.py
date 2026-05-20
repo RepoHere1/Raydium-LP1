@@ -19,6 +19,10 @@ class SettingsSanitizeTests(unittest.TestCase):
         out = sanitize_settings_dict({"pool_type": "", "min_apr": 1})
         self.assertEqual(out["pool_type"], "all")
 
+    def test_empty_raydium_api_base_gets_default(self):
+        out = sanitize_settings_dict({"raydium_api_base": ""})
+        self.assertEqual(out["raydium_api_base"], "https://api-v3.raydium.io")
+
     def test_empty_report_paths_get_defaults(self):
         out = sanitize_settings_dict({"liquidity_history_path": "", "dashboard_path": "."})
         self.assertEqual(out["liquidity_history_path"], "reports/liquidity_history.json")

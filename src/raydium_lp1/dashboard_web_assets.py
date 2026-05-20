@@ -79,6 +79,15 @@ a{color:var(--a);text-decoration:none}a:hover{text-decoration:underline}
 .tuning-state.on{color:var(--ok)}
 .tuning-panel.tuning-active{border-color:var(--ok);box-shadow:0 0 0 1px #1a3a28 inset}
 .tuning-panel.tuning-active>h2{color:var(--ok)}
+.mode-wrap{max-width:1440px;margin:0 auto;padding:.65rem 1rem 0}
+.mode-panel{border-width:3px}
+.mode-panel>h2{font-size:1rem;letter-spacing:.12em}
+.mode-panel.mode-demo{border-color:var(--yellow)}
+.mode-panel.mode-demo>h2{color:#ffe566}
+.mode-panel.mode-live{border-color:#ff8c42;box-shadow:0 0 0 1px #3a2010 inset}
+.mode-panel.mode-live>h2{color:#ffb380}
+.mode-state.demo{color:var(--yellow)}
+.mode-state.live{color:#ff8c42;font-weight:800}
 .opt-pulse{display:flex;flex-wrap:wrap;gap:.35rem .55rem;margin:.45rem 0}
 .pulse-chip{font-size:.7rem;padding:.22rem .45rem;border-radius:6px;border:1px solid #333;background:#0a0a0a;max-width:280px;line-height:1.3}
 .pulse-chip.ok{border-color:#2a4a3a;color:#9fddb0}.pulse-chip.warn{border-color:#5a4a20;color:#ffe08a}.pulse-chip.bad{border-color:#5a2a2a;color:#ffb4b4}
@@ -95,9 +104,30 @@ a{color:var(--a);text-decoration:none}a:hover{text-decoration:underline}
 .tb2 td.addr-td{vertical-align:top;padding:.45rem .5rem}
 @media(max-width:720px){.addr-row{flex-wrap:wrap}.addr-cell.token-cell{border-left:none;padding-left:0;border-top:1px solid #333;padding-top:.45rem}}
 </style></head><body>
-<header><h1>Raydium-LP1 · mission control</h1><span class="tag live">127.0.0.1</span><span class="tag" id="stamp">loading…</span>
+<header><h1>Raydium-LP1 · mission control</h1><span class="tag" id="mode-header-tag">DEMO</span><span class="tag live">127.0.0.1</span><span class="tag" id="stamp">loading…</span>
 <div class="tb"><label class="hdr"><input type="checkbox" id="auto" checked/> Auto refresh</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="primary">Save settings</button></div></header>
+<div class="mode-wrap">
+  <div class="cd mode-panel mode-demo" id="mode-panel">
+    <h2>TRADING MODE</h2>
+    <div class="bd tuning-bd">
+      <div class="tuning-head">
+        <div class="tuning-lead">
+          <p class="tuning-kicker">Demo vs live</p>
+          <p><b>DEMO</b> — paper trading: full candidate list, preview open slots, no on-chain swaps. <b>LIVE</b> — same scanner with <b>wallet-capped</b> open positions (fund SOL + set <code>position_size_sol</code> / <code>reserve_sol</code>). This build still does <b>not</b> auto-execute swaps when LIVE.</p>
+        </div>
+        <div class="tuning-switch-wrap">
+          <label class="tuning-switch" id="mode-switch" title="OFF = DEMO (dry run) · ON = LIVE (wallet slots)">
+            <input type="checkbox" id="mode-live"/>
+            <span class="tuning-track"><span class="tuning-thumb"></span></span>
+          </label>
+          <span class="tuning-state demo" id="mode-state">DEMO</span>
+        </div>
+      </div>
+      <div id="mode-note" class="opt-reco">Loads from settings…</div>
+    </div>
+  </div>
+</div>
 <div class="tuning-wrap">
   <div class="cd tuning-panel" id="tuning-panel">
     <h2>TUNING</h2>
@@ -215,6 +245,31 @@ _CLIENT_JS = r"""
     var pool=String(poolId||'');
     return '<div class="addr-row"><div class="addr-cell pool-cell"><span class="addr-label">Pool</span><span class="addr-full">'+esc(pool)+'</span></div></div>';
   }
+  var DEFAULT_RAYDIUM=(boot.default_raydium_api_base||'https://api-v3.raydium.io');
+  function setModeUi(live,msg){
+    var panel=$('#mode-panel'), state=$('#mode-state'), sw=$('#mode-live'), tag=$('#mode-header-tag'), note=$('#mode-note');
+    if(sw) sw.checked=!!live;
+    if(state){
+      state.textContent=live?'LIVE':'DEMO';
+      state.className='tuning-state mode-state '+(live?'live':'demo');
+    }
+    if(panel){
+      panel.classList.remove('mode-demo','mode-live');
+      panel.classList.add(live?'mode-live':'mode-demo');
+    }
+    if(tag){
+      tag.textContent=live?'LIVE':'DEMO';
+      tag.style.borderColor=live?'#ff8c42':'var(--yellow)';
+      tag.style.color=live?'#ffb380':'#ffe566';
+    }
+    if(note){
+      note.innerHTML=msg||(
+        live
+          ?'<b class="live-warn">LIVE</b> — open positions follow <code>max_positions</code> from your wallet. Fund SOL in .env; swaps are still manual in this build.'
+          :'<b class="live-ok">DEMO</b> — safe paper mode (<code>dry_run=true</code>). Open positions show a preview when the wallet is unfunded.'
+      );
+    }
+  }
   function setTuningUi(on){
     var panel=$('#tuning-panel'), state=$('#tuning-state'), sw=$('#opt-auto');
     if(sw) sw.checked=!!on;
@@ -251,6 +306,7 @@ _CLIENT_JS = r"""
       var fg=document.createElement('div'); fg.className='fg';
       for(var fi=0;fi<(sec.fields||[]).length;fi++){
         var f=sec.fields[fi], kk=f.key, ty=f.type;
+        if(kk==='dry_run') continue;
         if(ty==='checkbox'){
           var L=document.createElement('label'); L.className='lb h';
           var inp=document.createElement('input'); inp.type='checkbox'; inp.dataset.sk=kk; inp.checked=!!raw[kk];
@@ -273,7 +329,11 @@ _CLIENT_JS = r"""
         } else {
           inp2=document.createElement('input'); inp2.type=(ty==='number'?'number':'text'); inp2.dataset.sk=kk;
           if(f.step) inp2.step=f.step;
-          var dh=displayFor(f,raw); inp2.value=(dh!==''&&dh!=null)?dh:'';
+          var dh=displayFor(f,raw);
+          if(kk==='raydium_api_base'&&(!dh||!String(dh).trim())) dh='';
+          inp2.value=(dh!==''&&dh!=null)?dh:'';
+          if(f.placeholder) inp2.placeholder=f.placeholder;
+          else if(kk==='raydium_api_base') inp2.placeholder=DEFAULT_RAYDIUM+' (leave blank = default)';
         }
         lab.appendChild(inp2); fg.appendChild(lab);
       }
@@ -409,6 +469,7 @@ _CLIENT_JS = r"""
   }
   function renderLive(st){
     var el=$('#live'); if(!el)return;
+    if(st&&st.trading_mode!=null) setModeUi(st.trading_mode==='live');
     var hb=st.heartbeat||{}, sync='', sf=settingsFileLabel(st);
     var tf=$('#tuning-settings-file'); if(tf) tf.textContent=sf;
     if(st.settings_valid===false){
@@ -471,6 +532,21 @@ _CLIENT_JS = r"""
       renderOptimizer(opt);
     }catch(e){}
   }
+  var modeLive=$('#mode-live');
+  if(modeLive){
+    modeLive.onchange=function(){
+      var live=modeLive.checked;
+      setModeUi(live);
+      postJson('/api/mode/toggle',{live:live})
+        .then(function(d){
+          setModeUi(!!d.trading_mode&&d.trading_mode==='live', esc(d.message||''));
+          showBan('ban-ok','<b>'+esc(d.trading_mode==='live'?'LIVE':'DEMO')+'</b> — '+esc(d.message||'saved'));
+          loadSettings().catch(function(){});
+          pollStatus();
+        })
+        .catch(function(e){setModeUi(!live); showBan('ban-err',esc(String(e))); pollStatus();});
+    };
+  }
   var optAuto=$('#opt-auto');
   if(optAuto){
     optAuto.onchange=function(){
@@ -509,7 +585,11 @@ _CLIENT_JS = r"""
     }catch(e){}
     return st;
   }
-  async function loadSettings(){var s=await gj('/api/settings'); mount(s);}
+  async function loadSettings(){
+    var s=await gj('/api/settings');
+    mount(s);
+    setModeUi(s.dry_run===false);
+  }
   async function pollStatus(){try{var st=await gj('/api/status'); renderLive(st);}catch(e){}}
   $('#reload').onclick=function(){showBan(null,''); refresh().catch(function(e){showBan('ban-err',esc(String(e)));}); loadSettings().catch(function(){}); pollStatus();};
   $('#save').onclick=function(){
