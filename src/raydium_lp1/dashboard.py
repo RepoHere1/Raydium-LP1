@@ -112,7 +112,7 @@ def build_dashboard(
     positions = list(open_positions) if open_positions is not None else []
     if not positions:
         # In dry-run we treat candidates as the would-be open positions.
-        for candidate in report.get("candidates", [])[: report.get("candidate_count", 0)]:
+        for candidate in report.get("candidates", []) or []:
             h = candidate.get("health") or {}
             mom = candidate.get("momentum") or {}
             positions.append(
@@ -165,6 +165,9 @@ def build_dashboard(
         "rejection_breakdown": breakdown,
         "rejection_reason_histogram": hist_out,
         "scan_diagnosis": diagnosis_out,
+        "scan_mode": report.get("mode"),
+        "candidates": list(report.get("candidates") or []),
+        "closed_positions": list(report.get("closed_positions") or []),
     }
 
     return DashboardData(

@@ -62,6 +62,8 @@ class DashboardBuildTests(unittest.TestCase):
         self.assertEqual(data.last_scan["rejection_breakdown"]["apr_below_threshold"], 10)
         self.assertIn("liquidity small", data.last_scan["rejection_reason_histogram"])
         self.assertEqual(data.last_scan["scan_diagnosis"]["scan_signal"], "test")
+        self.assertEqual(len(data.last_scan.get("candidates") or []), 1)
+        self.assertEqual(data.last_scan.get("closed_positions"), [])
 
     def test_render_text_has_expected_sections(self):
         config = ScannerConfig()

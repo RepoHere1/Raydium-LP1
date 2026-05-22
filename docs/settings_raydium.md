@@ -5,8 +5,8 @@ micro pools with a smaller set of deep books. The scanner cannot shrink Raydium�
 catalog, but it can **classify rejects sensibly** and **gate on depth before APR**.
 
 Native browser ``title`` tooltips are often missing in embedded previews (for example
-Cursor’s Simple Browser). The dashboard uses a **floating ``#dash-tip`` panel** on
-hover plus a **visible “Suggested:” line** under each control.
+Cursor’s Simple Browser). The dashboard uses **CSS hover panels** (`.fw-pop` / `.hb-pop`) so help works in embedded
+browsers; native `title` alone is not relied on.
 
 ## Why APR rejects looked overwhelming
 
