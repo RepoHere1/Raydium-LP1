@@ -32,6 +32,11 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("sec-hw", html)
         self.assertIn("mode-bar", html)
         self.assertIn("renderAll", html)
+        self.assertIn("tab-panel", html)
+        self.assertIn("Positions · dry-run data", html)
+        self.assertIn("Funnel &amp; settings", html)
+        self.assertIn("Project raw JSON", html)
+        self.assertIn("json-pre", html)
 
 
 if __name__ == "__main__":

@@ -161,7 +161,6 @@ button.p{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;font-weight:600}
 .mode-bar.mode-demo{background:#fffbeb;border-color:#fde68a;color:#92400e}
 .mode-bar.mode-live{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
 .mode-tag{display:inline-block;font-weight:800;font-size:.72rem;letter-spacing:.08em;margin-right:.5rem;padding:.12rem .45rem;border-radius:6px;background:rgba(0,0,0,.06)}
-.page{max-width:1280px;margin:0 auto;padding:1rem 1.25rem 2.5rem;display:flex;flex-direction:column;gap:1.1rem}
 .panel{border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:0 4px 24px rgba(15,23,42,.06);overflow:visible}
 .panel>h2{margin:0;padding:.75rem 1rem;font-size:1rem;font-weight:650;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#fafbfe,#fff);border-radius:14px 14px 0 0;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
 .panel>h2 .sub{font-weight:400;font-size:.82rem;color:var(--muted);margin-left:auto}
@@ -213,23 +212,44 @@ ul.z{margin:.5rem 0;color:var(--muted);font-size:.88rem;padding-left:1rem;border
 #err:empty{display:none}#err{color:var(--no);font-size:.88rem;padding:.5rem 1.25rem;background:#fef2f2;border-bottom:1px solid #fecaca}
 a{color:var(--a)}a#rj{margin-left:auto;font-size:.78rem;font-weight:500;color:var(--muted)}
 .settings-wide{max-width:100%}
-@media(min-width:1100px){.page{display:grid;grid-template-columns:1fr 1fr;grid-auto-flow:dense;align-items:start}.settings-wide{grid-column:1/-1}}
+.tabs{display:flex;flex-wrap:wrap;gap:.35rem;padding:.55rem 1.25rem;border-bottom:1px solid var(--line);background:rgba(255,255,255,.92);align-items:center}
+.tabs .tab-btn{font:inherit;font-size:.84rem;padding:.38rem .85rem;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--txt);cursor:pointer}
+.tabs .tab-btn:hover{background:#f8fafc;border-color:#c7d2e8}
+.tabs .tab-btn[aria-selected="true"]{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;font-weight:650}
+.tab-panel{display:none;flex-direction:column;gap:1.1rem;padding:1rem 1.25rem 2.5rem;max-width:1280px;margin:0 auto;width:100%}
+.tab-panel.active{display:flex}
+.json-pre{margin:0;max-height:78vh;overflow:auto;padding:1rem;background:#0f172a;color:#e2e8f0;font:12px/1.45 var(--mono);border-radius:10px;white-space:pre}
+@media(min-width:1100px){.funnel-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem;align-items:start}.funnel-grid .settings-wide{grid-column:1/-1}}
 </style></head><body>
 <header class="topbar"><h1>Raydium-LP1</h1><span class="badge badge-warn">127.0.0.1 only</span><span class="badge" id="stamp">…</span>
-<div class="tb"><label style="font-size:.84rem;color:var(--muted)"><input type="checkbox" id="auto" checked/> Auto 5s</label>
+<div class="tb"><label style="font-size:.84rem;color:var(--muted)"><input type="checkbox" id="auto" checked/> Auto 4s</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="p">Save settings</button></div></header>
 <p class="hint-bar">Hover any <strong>setting row</strong> for the full field guide (CSS popover). Tables scroll inside the shaded box — full lists, not truncated.</p>
 <div id="err"></div>
 <div id="mode-bar" class="mode-bar mode-demo">Loading mode…</div>
 <script type="application/json" id="boot">BOOT_JSON</script>
-<main class="page">
-<section class="panel"><h2>Scan funnel <a id="rj" href="api/dashboard">raw JSON →</a></h2><div id="fu" class="bd"></div></section>
-<section class="panel"><h2>Candidates <span class="pill pill-demo">demo data</span><span class="sub">Every pool that passed filters this cycle</span></h2><div id="cand" class="bd"></div></section>
-<section class="panel"><h2>Momentum <span class="pill pill-demo">demo data</span><span class="sub">Hot leaderboard from last scan</span></h2><div id="mom" class="bd"></div></section>
-<section class="panel"><h2>Open / watchlist <span class="pill pill-demo">demo</span><span class="sub">Dry-run stand-in for positions (not on-chain fills)</span></h2><div id="openp" class="bd"></div></section>
-<section class="panel"><h2>Closed <span class="pill pill-live">live slot</span><span class="sub">Reserved for real exits when your tracker writes them</span></h2><div id="clop" class="bd"></div></section>
-<section class="panel settings-wide"><h2>Settings</h2><div class="bd"><div id="fo"></div><div id="st"></div></div></section>
-</main>
+<nav class="tabs" role="tablist" aria-label="Dashboard views">
+<button type="button" class="tab-btn" role="tab" id="tabbtn-pos" aria-controls="tab-pos" aria-selected="true">Positions · dry-run data</button>
+<button type="button" class="tab-btn" role="tab" id="tabbtn-funnel" aria-controls="tab-funnel" aria-selected="false">Funnel &amp; settings</button>
+<button type="button" class="tab-btn" role="tab" id="tabbtn-raw" aria-controls="tab-raw" aria-selected="false">Project raw JSON</button>
+</nav>
+<div id="tab-pos" class="tab-panel active" role="tabpanel" aria-labelledby="tabbtn-pos" aria-hidden="false">
+<section class="panel"><h2>Wallet &amp; capacity <span class="pill pill-demo">live RPC read</span><span class="sub">Sizing only — tables below are full filter passes in dry-run</span></h2><div id="wall" class="bd"></div></section>
+<section class="panel"><h2>Candidate pools <span class="pill pill-demo">shortlist</span><span class="sub">Same rows as <code>last_scan.candidates</code> in dashboard.json</span></h2><div id="cand" class="bd"></div></section>
+<section class="panel"><h2>Momentum HOT (top) <span class="pill pill-demo">sniffer</span><span class="sub"><code>momentum_hot_top</code> — fee-rush leaderboard</span></h2><div id="mom" class="bd"></div></section>
+<section class="panel"><h2>Open / watchlist <span class="pill pill-demo">dry-run stand-in</span><span class="sub">Mirrors positions when executor is off — not on-chain fills</span></h2><div id="openp" class="bd"></div></section>
+<section class="panel"><h2>Closed <span class="pill pill-live">live slot</span><span class="sub">Reserved when your runner writes <code>closed_positions</code></span></h2><div id="clop" class="bd"></div></section>
+<section class="panel"><h2>Recent alerts</h2><div id="alerts" class="bd"></div></section>
+</div>
+<div id="tab-funnel" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-funnel" aria-hidden="true">
+<div class="funnel-grid">
+<section class="panel"><h2>Scan funnel <a id="rj" href="api/dashboard">GET /api/dashboard →</a></h2><div id="fu" class="bd"></div></section>
+<section class="panel settings-wide"><h2>Settings <span class="sub">POST merges into <code>config/settings.json</code></span></h2><div class="bd"><div id="fo"></div><div id="st"></div></div></section>
+</div>
+</div>
+<div id="tab-raw" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-raw" aria-hidden="true">
+<section class="panel"><h2>dashboard.json <span class="sub">Last successful fetch (same file the scanner writes)</span></h2><div class="bd"><pre class="json-pre" id="rawjson">{}</pre></div></section>
+</div>
 <script>
 CLIENT_JS_HERE
 </script></body></html>"""
@@ -239,9 +259,40 @@ _CLIENT_JS = r"""
 (function(){
   const boot = JSON.parse(document.getElementById('boot').textContent || '{}');
   const SECTIONS = boot.form_sections || [];
+  var lastDash = null;
   function $(s,r=document){return r.querySelector(s);}
   function esc(t){var d=document.createElement('div');d.textContent=t==null?'':String(t);return d.innerHTML;}
   function num(n){return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0});}
+  function fmtUsd(n){
+    var x=Number(n); if(!isFinite(x)) x=0;
+    return x.toLocaleString(undefined,{maximumFractionDigits:0});
+  }
+  function fmtAprPct(n){
+    var x=Number(n); if(!isFinite(x)) return '0';
+    return String(Math.round(x));
+  }
+  function momScoreCell(mom){
+    mom=mom||{};
+    var v=mom.combined_score;
+    if(v==null||v==='') v=mom.score;
+    var tier=mom.tier?String(mom.tier):'';
+    if(v==null||v===''||!isFinite(Number(v))) return esc(tier||'—');
+    var s=(Math.round(Number(v)*10)/10).toString();
+    return esc(s+(tier?' '+tier:''));
+  }
+  function hotMomentumCells(r){
+    var apr=r.apr; if(apr==null||apr==='') apr=r.apr_pct;
+    var tvl=r.tvl_usd;
+    if(tvl==null||tvl===''){ tvl=r.liquidity_usd; if(tvl==null||tvl==='') tvl=r.tvl; }
+    var vol=r.volume_24h_usd;
+    if(vol==null||vol==='') vol=r.volume24h_usd||r.vol24;
+    var sc=r.combined_score;
+    if(sc==null||sc==='') sc=r.score||r.momentum_score;
+    var pool=r.pool_id||r.id||'';
+    var scTxt='—';
+    if(sc!=null&&sc!==''&&isFinite(Number(sc))) scTxt=(Math.round(Number(sc)*10)/10).toString();
+    return {apr:apr,tvl:tvl,vol:vol,scTxt:scTxt,pool:pool};
+  }
 
   function fieldTip(f){
     var h=(f.help||'').trim(), l=(f.live_hint||'').trim();
@@ -387,6 +438,61 @@ _CLIENT_JS = r"""
     return '<div class="hb k '+cls+'"><div class="hb-pop fw-pop">'+esc(tip)+'</div><span class="x">'+esc(label)+'</span><span class="v">'+esc(String(val))+'</span></div>';
   }
 
+  function activateTab(panelId){
+    var panels=['tab-pos','tab-funnel','tab-raw'];
+    var btns=['tabbtn-pos','tabbtn-funnel','tabbtn-raw'];
+    for(var i=0;i<panels.length;i++){
+      var on=(panels[i]===panelId);
+      var p=document.getElementById(panels[i]);
+      if(!p) continue;
+      p.classList.toggle('active',on);
+      p.setAttribute('aria-hidden', on?'false':'true');
+      var b=document.getElementById(btns[i]);
+      if(b) b.setAttribute('aria-selected', on?'true':'false');
+    }
+  }
+
+  function renderWalletStrip(el, d){
+    if(!el) return;
+    var wc=d.wallet_capacity||{}, cap=wc.capacity||{}, bal=wc.balance||{};
+    var sol=bal.sol!=null?Number(bal.sol):Number(cap.sol_balance||0);
+    if(!isFinite(sol)) sol=0;
+    var mx=cap.max_positions, psz=cap.position_size_sol, rs=cap.reserved_sol, av=cap.available_sol;
+    var dry=!!(d.settings&&d.settings.dry_run);
+    var w=wc.wallet;
+    var tBal='Native SOL from RPC for the configured wallet (0 if no wallet / RPC miss).';
+    var tMx='floor(available_sol / position_size_sol). In dry-run this does not hide rows in the tables below.';
+    var tAv='Spendable SOL after reserve_sol.';
+    var parts=[];
+    if(dry) parts.push('Dry-run: <strong>max_positions=0</strong> is normal for an empty wallet — candidate + momentum tables stay the full filter pass until you fund SOL and turn off dry_run for live sizing.');
+    if(!w) parts.push('No wallet configured — balances stay at 0. Add your keypair / <code>WALLET_ADDRESS</code> flow when you want live reads.');
+    var note=parts.length?('<p class="muted" style="margin:.55rem 0 0">'+parts.join(' ')+'</p>'):'';
+    el.innerHTML='<div class="kp">'+
+      kpi(tBal,'', 'SOL (wallet)', sol.toFixed(4))+
+      kpi(tMx,'', 'max_positions', mx==null?'—':String(mx))+
+      kpi('SOL per slot.','', 'position_size_sol', psz==null?'—':String(psz))+
+      kpi('Fee buffer.','', 'reserved_sol', rs==null?'—':String(rs))+
+      kpi(tAv,'', 'available_sol', av==null?'—':(Number(av).toFixed(4)))+
+      '</div>'+note;
+  }
+
+  function renderAlerts(el, d){
+    if(!el) return;
+    var rows=d.recent_alerts||[];
+    if(!rows.length){ el.innerHTML='<p class="muted">No recent alerts in this <code>dashboard.json</code> snapshot.</p>'; return; }
+    el.innerHTML='<div class="tbl-scroll"><table class="tb2"><thead><tr><th>Timestamp</th><th>Severity</th><th>Pair</th><th>Pool id</th><th>Action</th></tr></thead><tbody>'+
+      rows.slice().reverse().map(function(a){
+        return '<tr><td class="mono">'+esc(String(a.timestamp||a.at||''))+'</td><td>'+esc(String(a.severity||''))+'</td><td>'+esc(String(a.pair||''))+'</td><td class="mono">'+
+          esc(String(a.pool_id||''))+'</td><td>'+esc(String(a.action||''))+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+  }
+
+  function renderRawJson(d){
+    var pre=document.getElementById('rawjson');
+    if(!pre) return;
+    try{ pre.textContent=JSON.stringify(d,null,2); }catch(e){ pre.textContent=String(e); }
+  }
+
   function renderModeBar(d){
     var bar=$('#mode-bar');
     if(!bar) return;
@@ -463,19 +569,19 @@ _CLIENT_JS = r"""
       '<div class="tbl-scroll"><table class="tb2"><thead><tr><th>#</th><th>Pair</th><th>APR %</th><th>TVL USD</th><th>Vol 24h</th><th>Momentum</th><th>Pool id</th></tr></thead><tbody>'+
       pools.map(function(p,i){
         var mom=p.momentum||{};
-        var mtxt=(mom.score!=null)?(String(Math.round(mom.score))+' '+String(mom.tier||'')): '';
-        return '<tr><td>'+(i+1)+'</td><td>'+esc(pairFromPool(p))+'</td><td>'+num(p.apr)+'</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+esc(mtxt)+'</td><td class="mono">'+esc(p.id||'')+'</td></tr>';
+        return '<tr><td>'+(i+1)+'</td><td>'+esc(pairFromPool(p))+'</td><td>'+esc(fmtAprPct(p.apr))+'</td><td>'+esc(fmtUsd(p.liquidity_usd))+'</td><td>'+esc(fmtUsd(p.volume_24h_usd))+'</td><td>'+momScoreCell(mom)+'</td><td class="mono">'+esc(p.id||'')+'</td></tr>';
       }).join('')+'</tbody></table></div>';
   }
 
   function renderMomentumTable(el, rows){
     rows=rows||[];
     if(!rows.length){ el.innerHTML='<p class="muted">No momentum leaderboard rows (enable momentum in settings).</p>'; return; }
-    el.innerHTML='<p class="muted">'+rows.length+' row(s) — full <code>momentum_hot_top</code> from dashboard JSON.</p>'+
-      '<div class="tbl-scroll"><table class="tb2"><thead><tr><th>#</th><th>Pair</th><th>Score</th><th>TVL</th><th>Vol24</th><th>APR %</th><th>Tier</th><th>Tags</th></tr></thead><tbody>'+
+    el.innerHTML='<p class="muted">'+rows.length+' row(s) — <code>momentum_hot_top</code> (columns match candidate pools: APR, TVL, vol, score, pool).</p>'+
+      '<div class="tbl-scroll"><table class="tb2"><thead><tr><th>#</th><th>Pair</th><th>APR %</th><th>TVL $</th><th>Vol24 $</th><th>Score (CMB)</th><th>Tier</th><th>Tags</th><th>Pool</th></tr></thead><tbody>'+
       rows.map(function(r,i){
-        var tags=(r.sniff_tags||[]).slice(0,6).join(', ');
-        return '<tr><td>'+(i+1)+'</td><td>'+esc(r.pair||'')+'</td><td>'+num(r.combined_score)+'</td><td>'+num(r.tvl_usd)+'</td><td>'+num(r.volume_24h_usd)+'</td><td>'+num(r.apr)+'</td><td>'+esc(String(r.tier||''))+'</td><td>'+esc(tags)+'</td></tr>';
+        var H=hotMomentumCells(r);
+        var tags=(r.sniff_tags||[]).slice(0,8).join(', ');
+        return '<tr><td>'+(i+1)+'</td><td>'+esc(r.pair||'')+'</td><td>'+esc(fmtAprPct(H.apr))+'</td><td>'+esc(fmtUsd(H.tvl))+'</td><td>'+esc(fmtUsd(H.vol))+'</td><td>'+esc(H.scTxt)+'</td><td>'+esc(String(r.tier||''))+'</td><td>'+esc(tags)+'</td><td class="mono">'+esc(H.pool)+'</td></tr>';
       }).join('')+'</tbody></table></div>';
   }
 
@@ -486,7 +592,7 @@ _CLIENT_JS = r"""
     el.innerHTML='<p class="muted">'+rows.length+' row(s) — '+esc(tag)+'.</p>'+
       '<div class="tbl-scroll"><table class="tb2"><thead><tr><th>#</th><th>Pair</th><th>APR %</th><th>TVL</th><th>Vol24</th><th>Health</th><th>Mom</th><th>Pool id</th></tr></thead><tbody>'+
       rows.map(function(p,i){
-        return '<tr><td>'+(i+1)+'</td><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+esc(String(p.health||''))+'</td><td>'+
+        return '<tr><td>'+(i+1)+'</td><td>'+esc(p.pair||'')+'</td><td>'+esc(fmtAprPct(p.apr))+'</td><td>'+esc(fmtUsd(p.liquidity_usd))+'</td><td>'+esc(fmtUsd(p.volume_24h_usd))+'</td><td>'+esc(String(p.health||''))+'</td><td>'+
           esc(String(p.momentum_score!=null?p.momentum_score:'')+' '+String(p.momentum_tier||''))+'</td><td class="mono">'+esc(p.pool_id||'')+'</td></tr>';
       }).join('')+'</tbody></table></div>';
   }
@@ -502,14 +608,18 @@ _CLIENT_JS = r"""
   }
 
   function renderAll(d){
+    lastDash=d;
     renderModeBar(d);
     renderFunnel(d);
+    renderWalletStrip($('#wall'), d);
     var ls=d.last_scan||{};
     renderCandidateTable($('#cand'), d);
     renderMomentumTable($('#mom'), d.momentum_hot_top||[]);
     var demo=!!(d.settings&&d.settings.dry_run)||String(ls.scan_mode||'').indexOf('dry')>=0||ls.scan_mode==='trade_disabled_in_this_build';
     renderOpenTable($('#openp'), d.open_positions||[], demo);
     renderClosedTable($('#clop'), ls.closed_positions||[]);
+    renderAlerts($('#alerts'), d);
+    renderRawJson(d);
   }
 
   async function refresh(){
@@ -544,9 +654,13 @@ _CLIENT_JS = r"""
   var timer=null;
   function arm(){
     clearInterval(timer);
-    if(document.getElementById('auto').checked) timer=setInterval(function(){refresh().catch(function(){});},5000);
+    if(document.getElementById('auto').checked) timer=setInterval(function(){refresh().catch(function(){});},4000);
   }
   document.getElementById('auto').onchange=arm;
+
+  document.getElementById('tabbtn-pos').onclick=function(){activateTab('tab-pos');};
+  document.getElementById('tabbtn-funnel').onclick=function(){activateTab('tab-funnel');};
+  document.getElementById('tabbtn-raw').onclick=function(){activateTab('tab-raw');};
 
   refresh().catch(function(e){$('#err').textContent=String(e);$('#fu').innerHTML='<p style="color:var(--no)">'+esc(String(e))+'</p>';});
   loadSettings().catch(function(e){msg(String(e),false);});

@@ -55,7 +55,7 @@ python scripts\scan_raydium_lps.py --config config\settings.json --json 2>$null 
 After a scan, open:
 
 - `reports\dashboard.json` — includes `momentum_hot_top` (top 25 HOT), rejection breakdown, and `scan_diagnosis` for tuning filters
-- Loopback web UI: run `.\scripts\run_dashboard_web.ps1` then open `http://127.0.0.1:8844/` — pair the scanner with `--loop --dashboard --reload-config-each-scan` so settings edits apply each cycle
+- Loopback web UI: run `.\scripts\run_dashboard_web.ps1` then open `http://127.0.0.1:8844/` — pair the scanner with `--loop --dashboard --reload-config-each-scan` so settings edits apply each cycle. The page uses tabs (**Positions · dry-run**, **Funnel & settings**, **Project raw JSON**) plus a wallet strip and fixed momentum columns (APR/TVL/vol/score/pool).
 - `reports\momentum_sniffer.json` — full detective breakdown per pool
 - `reports\latest.json` — all candidates with `momentum` objects
 

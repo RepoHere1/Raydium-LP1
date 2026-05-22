@@ -333,27 +333,42 @@ def build_hot_leaderboard(
         return float(mom.get("combined_score") or mom.get("score") or 0)
 
     ranked = sorted(candidates, key=_rank_key, reverse=True)
+    def _row(pool: dict[str, Any]) -> dict[str, Any]:
+        mom = pool.get("momentum") if isinstance(pool.get("momentum"), dict) else {}
+        det = mom.get("detective") if isinstance(mom.get("detective"), dict) else {}
+        raw_c = mom.get("combined_score")
+        raw_s = mom.get("score")
+        if raw_c is not None:
+            cmb_f = float(raw_c)
+        elif raw_s is not None:
+            cmb_f = float(raw_s)
+        else:
+            cmb_f = 0.0
+        tvl = pool.get("liquidity_usd")
+        if tvl is None:
+            tvl = float((pool.get("raw") or {}).get("tvl") or 0) if isinstance(pool.get("raw"), dict) else 0.0
+        return {
+            "pool_id": pool.get("id"),
+            "pair": f"{pool.get('mint_a_symbol', '')}/{pool.get('mint_b_symbol', '')}",
+            "combined_score": round(cmb_f, 1),
+            "score": mom.get("score"),
+            "detective_score": det.get("detective_score"),
+            "inflow_bias": det.get("inflow_bias"),
+            "tier": mom.get("tier"),
+            "tvl_usd": float(tvl or 0),
+            "volume_24h_usd": float(pool.get("volume_24h_usd") or 0),
+            "apr": float(pool.get("apr") or 0),
+            "sniff_tags": (det.get("sniff_tags") or mom.get("signals") or [])[:8],
+            "exit_watch": mom.get("exit_watch"),
+        }
+
     hot: list[dict[str, Any]] = []
     for pool in ranked:
         mom = pool.get("momentum") or {}
-        if mom.get("tier") not in ("hot", "enter_bias") and float(mom.get("combined_score") or 0) < 55:
+        cmb_gate = float(mom.get("combined_score") or mom.get("score") or 0)
+        if mom.get("tier") not in ("hot", "enter_bias") and cmb_gate < 55:
             continue
-        hot.append(
-            {
-                "pool_id": pool.get("id"),
-                "pair": f"{pool.get('mint_a_symbol', '')}/{pool.get('mint_b_symbol', '')}",
-                "combined_score": mom.get("combined_score"),
-                "score": mom.get("score"),
-                "detective_score": (mom.get("detective") or {}).get("detective_score"),
-                "inflow_bias": (mom.get("detective") or {}).get("inflow_bias"),
-                "tier": mom.get("tier"),
-                "tvl_usd": pool.get("liquidity_usd"),
-                "volume_24h_usd": pool.get("volume_24h_usd"),
-                "apr": pool.get("apr"),
-                "sniff_tags": (mom.get("detective") or {}).get("sniff_tags", mom.get("signals", []))[:8],
-                "exit_watch": mom.get("exit_watch"),
-            }
-        )
+        hot.append(_row(pool))
         if len(hot) >= top_n:
             break
     # If fewer than top_n tagged hot, fill by pure score
@@ -363,23 +378,7 @@ def build_hot_leaderboard(
             pid = pool.get("id")
             if pid in seen:
                 continue
-            mom = pool.get("momentum") or {}
-            hot.append(
-                {
-                    "pool_id": pid,
-                    "pair": f"{pool.get('mint_a_symbol', '')}/{pool.get('mint_b_symbol', '')}",
-                    "combined_score": mom.get("combined_score"),
-                    "score": mom.get("score"),
-                    "detective_score": (mom.get("detective") or {}).get("detective_score"),
-                    "inflow_bias": (mom.get("detective") or {}).get("inflow_bias"),
-                    "tier": mom.get("tier"),
-                    "tvl_usd": pool.get("liquidity_usd"),
-                    "volume_24h_usd": pool.get("volume_24h_usd"),
-                    "apr": pool.get("apr"),
-                    "sniff_tags": (mom.get("detective") or {}).get("sniff_tags", [])[:8],
-                    "exit_watch": mom.get("exit_watch"),
-                }
-            )
+            hot.append(_row(pool))
             if len(hot) >= top_n:
                 break
     return hot

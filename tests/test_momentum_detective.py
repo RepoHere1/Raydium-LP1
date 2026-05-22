@@ -55,6 +55,23 @@ class DetectiveTests(unittest.TestCase):
         self.assertEqual(len(hot), 25)
         self.assertEqual(hot[0]["combined_score"], 80)
 
+    def test_build_hot_leaderboard_falls_back_score_to_combined(self):
+        candidates = [
+            {
+                "id": "x1",
+                "mint_a_symbol": "A",
+                "mint_b_symbol": "B",
+                "liquidity_usd": 150_000,
+                "volume_24h_usd": 700_000,
+                "apr": 400,
+                "momentum": {"score": 93.5, "tier": "hot"},
+            }
+        ]
+        hot = momentum_detective.build_hot_leaderboard(candidates, top_n=5)
+        self.assertEqual(len(hot), 1)
+        self.assertEqual(hot[0]["combined_score"], 93.5)
+        self.assertEqual(hot[0]["tvl_usd"], 150_000.0)
+
 
 if __name__ == "__main__":
     unittest.main()
