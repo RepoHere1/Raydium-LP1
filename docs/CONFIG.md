@@ -19,6 +19,17 @@
 
 If you only see `settings.example.json` on GitHub but `settings.json` on `C:\...\Raydium-LP1`, that is correct. The scanner does **not** read the `.example` file unless you pass `--config` to it.
 
+## PowerShell: `PYTHONPATH` and `python -m`
+
+Bash uses `PYTHONPATH=src python -m ...`. In **PowerShell** use either:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m raydium_lp1.dashboard_web
+```
+
+or run `.\scripts\run_dashboard_web.ps1` (it sets `PYTHONPATH` to the `src` folder for you).
+
 ## Invalid JSON (`JSONDecodeError` on line 26, etc.)
 
 The scanner requires **strict JSON** in `config\settings.json`. A missing comma after a line, a trailing comma on the last key, or `//` comments will stop the scan immediately (the watcher window may still open, but Window 1 exits).

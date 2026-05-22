@@ -26,6 +26,33 @@ from raydium_lp1.settings_io import load_settings_json, merge_known_settings_pat
 from raydium_lp1.strategies import ALLOWED_STRATEGIES
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.json")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WEB_STATIC_DIR = REPO_ROOT / "web"
+WEB_SCAN_CONSOLE_LOG = REPO_ROOT / "reports" / "web_scan_console.log"
+
+
+def _static_mime(path: Path) -> str:
+    if path.suffix.lower() == ".html":
+        return "text/html; charset=utf-8"
+    if path.suffix.lower() == ".css":
+        return "text/css; charset=utf-8"
+    return "application/octet-stream"
+
+
+def _serve_repo_static(url_path: str) -> tuple[bytes, str] | None:
+    """Serve whitelisted static files from ``web/`` and repo ``styles.css``."""
+
+    files: dict[str, Path] = {
+        "/positions.html": WEB_STATIC_DIR / "positions.html",
+        "/index.html": WEB_STATIC_DIR / "index.html",
+        "/styles.css": REPO_ROOT / "styles.css",
+    }
+    if url_path not in files:
+        return None
+    target = files[url_path]
+    if not target.is_file():
+        return None
+    return target.read_bytes(), _static_mime(target)
 
 _FORM_SECTIONS: list[dict[str, Any]] = [
     {
@@ -205,6 +232,9 @@ textarea{min-height:64px;font-family:var(--mono);font-size:.8rem}
 .ta th{text-align:left;color:var(--muted);font-weight:600;font-size:.76rem}.ta td.c{font-family:var(--mono);width:2.75rem}
 ul.z{margin:.5rem 0;color:var(--muted);font-size:.88rem;padding-left:1rem;border-left:3px solid #cbd5e1}
 .pr div{padding:.35rem 0;border-bottom:1px dashed var(--line);font-size:.84rem;color:var(--muted)}.pr div:last-child{border:0}
+.pr.levers div{color:#854d0e;font-size:.88rem;line-height:1.45}
+.pr.levers div b{color:#713f12;font-weight:700}
+.pr.levers small{color:#57534e;font-size:.82rem;display:block;margin-top:.25rem}
 .tb2{width:100%;font-size:.8rem;border-collapse:collapse}.tb2 th,.tb2 td{border-bottom:1px solid var(--line);padding:.4rem .45rem;text-align:left}
 .tb2 th{color:var(--muted);font-weight:600;position:sticky;top:0;background:#f8fafc;z-index:1}
 .tb2 .mono{font-family:var(--mono);font-size:.74rem;word-break:break-all}
@@ -219,9 +249,11 @@ a{color:var(--a)}a#rj{margin-left:auto;font-size:.78rem;font-weight:500;color:va
 .tab-panel{display:none;flex-direction:column;gap:1.1rem;padding:1rem 1.25rem 2.5rem;max-width:1280px;margin:0 auto;width:100%}
 .tab-panel.active{display:flex}
 .json-pre{margin:0;max-height:78vh;overflow:auto;padding:1rem;background:#0f172a;color:#e2e8f0;font:12px/1.45 var(--mono);border-radius:10px;white-space:pre}
+.topbar a{color:var(--a);font-size:.84rem;text-decoration:none;font-weight:500}
+.topbar a:hover{text-decoration:underline}
 @media(min-width:1100px){.funnel-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem;align-items:start}.funnel-grid .settings-wide{grid-column:1/-1}}
 </style></head><body>
-<header class="topbar"><h1>Raydium-LP1</h1><span class="badge badge-warn">127.0.0.1 only</span><span class="badge" id="stamp">…</span>
+<header class="topbar"><h1>Raydium-LP1</h1><span style="margin-left:.25rem;font-size:.84rem"><a href="/positions.html">Positions table</a> · <a href="/index.html">Stack landing</a></span><span class="badge badge-warn">127.0.0.1 only</span><span class="badge" id="stamp">…</span>
 <div class="tb"><label style="font-size:.84rem;color:var(--muted)"><input type="checkbox" id="auto" checked/> Auto 4s</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="p">Save settings</button></div></header>
 <p class="hint-bar">Hover any <strong>setting row</strong> for the full field guide (CSS popover). Tables scroll inside the shaded box — full lists, not truncated.</p>
@@ -516,7 +548,7 @@ _CLIENT_JS = r"""
     var bd=Object.entries(ls.rejection_breakdown||{}).sort(function(a,b){return b[1]-a[1];});
     var mx=Math.max.apply(null,bd.map(function(x){return x[1];}).concat([0]))||1;
     var bars=bd.slice(0,18).map(function(kv){
-      return '<div class="bar"><div>'+esc(kv[0])+'</div><div class="tr"><div class="fil" style="width:'+
+      return '<div class="bar"><div title="'+esc(kv[0])+'">'+esc(kv[0])+'</div><div class="tr"><div class="fil" style="width:'+
         ((100*kv[1]/mx).toFixed(1))+'%"></div></div><div style="font-family:var(--mono);font-size:.75rem;color:var(--muted);text-align:right">'+kv[1]+'</div></div>';
     }).join('');
     if(!bars) bars='<p style="color:var(--muted);margin:.2rem 0">No breakdown yet.</p>';
@@ -541,7 +573,7 @@ _CLIENT_JS = r"""
       kpi(tRate,'','Pass share', rate.toFixed(1)+'%')+'</div>'+
       '<div class="sec-hw" style="margin-top:.5rem"><div class="sg sg-h">Reject categories</div><div class="sec-pop fw-pop">'+esc(tCat)+'</div></div>'+bars+ht+
       (nar?('<div class="sg">Narrative</div><ul class="z">'+nar+'</ul>'):'')+
-      (pr?('<div class="sg">Suggested levers</div><div class="pr">'+pr+'</div>'):'');
+      (pr?('<div class="sg">Suggested levers</div><div class="pr levers">'+pr+'</div>'):'');
   }
 
   function pairFromPool(p){
@@ -720,6 +752,13 @@ def main(argv: list[str] | None = None) -> int:
 
         def do_GET(self) -> None:  # noqa: N802
             path = up.urlparse(self.path).path
+            if path != "/" and path.endswith("/"):
+                path = path.rstrip("/")
+            static = _serve_repo_static(path)
+            if static is not None:
+                body, ctype = static
+                self._send(200, body, ctype)
+                return
             if path == "/":
                 self._send(200, blob["page"], "text/html; charset=utf-8")
                 return
@@ -747,10 +786,31 @@ def main(argv: list[str] | None = None) -> int:
                     return
                 self._send_json(200, data)
                 return
+            if path == "/api/scan_console":
+                if WEB_SCAN_CONSOLE_LOG.is_file():
+                    try:
+                        raw = WEB_SCAN_CONSOLE_LOG.read_bytes()
+                    except OSError as exc:
+                        self._send(500, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
+                        return
+                    self._send(200, raw, "text/plain; charset=utf-8")
+                    return
+                msg = (
+                    "(No scan console log here. It is written when you run "
+                    "`python -m raydium_lp1.web_stack` with the scanner child, which tees stdout to "
+                    f"{WEB_SCAN_CONSOLE_LOG.name}.)\n"
+                )
+                self._send(200, msg.encode("utf-8"), "text/plain; charset=utf-8")
+                return
+            if path == "/health":
+                self._send_json(200, {"ok": True, "service": "raydium-lp1-dashboard", "port": self.server.server_address[1]})
+                return
             self._send_json(404, {"error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
             path = up.urlparse(self.path).path
+            if path != "/" and path.endswith("/"):
+                path = path.rstrip("/")
             if path != "/api/settings":
                 self._send_json(404, {"error": "not found"})
                 return
@@ -769,9 +829,12 @@ def main(argv: list[str] | None = None) -> int:
             self._send_json(200, {"ok": True, "path": str(paths.settings_path.resolve())})
 
     httpd = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
-    print(f"Raydium-LP1 dashboard http://{args.host}:{args.port}/", flush=True)
-    print(f"  dashboard JSON: {paths.dashboard_path}", flush=True)
-    print(f"  settings file: {paths.settings_path}", flush=True)
+    base = f"http://{args.host}:{args.port}"
+    print(f"Raydium-LP1 dashboard {base}/", flush=True)
+    print(f"  positions view: {base}/positions.html", flush=True)
+    print(f"  project page:   {base}/index.html", flush=True)
+    print(f"  dashboard JSON: {paths.dashboard_path.resolve()}", flush=True)
+    print(f"  settings file:  {paths.settings_path.resolve()}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

@@ -13,6 +13,7 @@ import unittest
 
 from raydium_lp1.scanner import (
     ScannerConfig,
+    apr_number,
     filter_pool,
     normalize_pool,
     pool_apr,
@@ -85,6 +86,16 @@ class LiveApiParsingTests(unittest.TestCase):
             "mintB": {"symbol": "X"},
         }
         self.assertEqual(pool_apr(no_apr_pool, "apr24h"), 150.0)
+
+    def test_apr_number_parses_percent_and_raydium_cap(self) -> None:
+        self.assertEqual(apr_number(">999.99%"), 1000.0)
+        self.assertEqual(apr_number(">104.85%"), 104.85)
+        self.assertAlmostEqual(apr_number("35.75%"), 35.75)
+        self.assertAlmostEqual(apr_number(441.91), 441.91)
+
+    def test_pool_apr_nested_day_string_cap(self) -> None:
+        pool = {"day": {"apr": ">999.99%", "volume": 1.0}}
+        self.assertEqual(pool_apr(pool, "apr24h"), 1000.0)
 
     def test_volume_reads_nested_day(self):
         self.assertAlmostEqual(pool_volume(LIVE_POOL, "apr24h"), 3585.44)

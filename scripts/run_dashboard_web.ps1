@@ -4,7 +4,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Set-Location $PSScriptRoot\..
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+Set-Location $repoRoot
+
+# PowerShell has no `PYTHONPATH=src` prefix — set the env var explicitly so `python -m raydium_lp1.*` resolves.
+$src = Join-Path $repoRoot "src"
+if (Test-Path $src) {
+    $env:PYTHONPATH = $src
+}
 
 $py = Get-Command python -ErrorAction SilentlyContinue
 if (-not $py) { $py = Get-Command py -ErrorAction Stop }

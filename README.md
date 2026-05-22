@@ -214,6 +214,25 @@ This project is designed to use real production data, not placeholders:
 
 Important: RPC URLs with API keys are secrets. Keep them in `.env`; do not paste them into `config\settings.json` if you plan to commit that file, and do not commit `.env`.
 
+## One CMD window: scan loop + local web (8844)
+
+From the repo root, this starts a **looping** scanner (writes `reports/dashboard.json`) and the **same** HTTP server that serves the funnel UI, a **positions-style** table (`/positions.html`), and the marketing **`/index.html`** page:
+
+- **Double-click** `START_STACK.bat` in the repo root, **or** from **PowerShell** (note the leading `.\`; without it, PowerShell treats `scripts` as a module name):
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\scripts\start_stack.cmd
+```
+
+Or run the PowerShell launcher directly:
+
+```powershell
+.\scripts\start_stack.ps1
+```
+
+Then open **http://127.0.0.1:8844/positions.html** (table + wallet summary), **http://127.0.0.1:8844/** (funnel + settings), or **http://127.0.0.1:8844/index.html**. HTTP-only (no scanner child): `python -m raydium_lp1.web_stack --no-scan`.
+
 ## Easiest Windows setup: double-click or paste
 
 ### Option A: double-click
@@ -415,6 +434,20 @@ If `python --version` also fails, install Python 3 from <https://www.python.org/
 This project does **not** ask for a seed phrase or private key. Do not paste wallet secrets into config files, `.env`, PowerShell, chat, or GitHub.
 
 The first production-data demo should only prove that live Raydium data can be fetched, normalized, filtered, and reported. A separate, explicit step is required before adding wallet signing or LP-opening logic.
+
+## End-to-end demo (live Raydium, dry-run)
+
+From the repo root, with network access:
+
+```bash
+PYTHONPATH=src python3 scripts/demo_end_to_end.py
+```
+
+This hits **production** Raydium pool list JSON and Solana RPC pool verification (same code paths as ``scan_raydium_lps.py``), writes ``reports/latest.json``, ``reports/dashboard.json``, and related artifacts. Add ``--with-routes`` to also probe Jupiter/Raydium sell quotes (slower). For **offline** canned JSON only (no Raydium network call):
+
+```bash
+PYTHONPATH=src python3 scripts/demo_end_to_end.py --offline-mock
+```
 
 ## Tests
 
