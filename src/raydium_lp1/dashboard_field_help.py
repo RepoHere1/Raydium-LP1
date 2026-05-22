@@ -51,10 +51,11 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "apr24h reacts fastest; apr7d smooths spikes for calmer lists.",
     ),
     "pool_sort_field": (
-        "Raydium list sort column when fetching pages (for example apr24h, fee, "
-        "volume24h). Empty means the apr_field value is used.",
-        "fee surfaces high-fee tickers (many illiquid); volume24h or tvl favors busy "
-        "pools; apr24h chases headline yield.",
+        "Raydium list sort column when fetching pages. Official api-v3 values include "
+        "liquidity, volume24h, fee24h, apr24h, apr7d, apr30d, default (24h volume), and more.",
+        "Chasing high headline APR: use apr24h + desc (or apr7d for smoother weekly yield). "
+        "If you sort by liquidity or volume but keep a high min_apr, the first pages are often "
+        "the wrong shape and you will reject most rows for APR alone.",
     ),
     "sort_type": (
         "Raydium API sort direction: desc = highest first, asc = lowest first.",

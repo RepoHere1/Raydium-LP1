@@ -60,7 +60,7 @@ class DialInAnalystTests(unittest.TestCase):
         ids = [c["id"] for c in d["coherence_checks"]]
         self.assertIn("hard_exit_stricter_than_min_liquidity", ids)
 
-    def test_wallet_wall_narrative(self):
+    def test_wallet_wall_narrative_dry_run_informational(self):
         cfg = _make_config({})
         report = {
             "scanned_count": 100,
@@ -76,6 +76,54 @@ class DialInAnalystTests(unittest.TestCase):
         d = dial_in_analyst.build_scan_diagnosis(cfg, report)
         blob = "\n".join(d["narrative_lines"])
         self.assertIn("max_positions=0", blob)
+        self.assertIn("dry_run", blob)
+        self.assertIn("not wallet-capped", blob)
+        self.assertNotIn("Wallet capacity wall", blob)
+
+    def test_wallet_wall_narrative_live_strict(self):
+        cfg = _make_config({"dry_run": False})
+        report = {
+            "scanned_count": 100,
+            "candidate_count": 0,
+            "candidate_count_pre_capacity": 0,
+            "rejected_count": 100,
+            "rejection_breakdown": {"tvl_below_threshold": 100},
+            "wallet_capacity": {
+                "capacity": {"max_positions": 0, "position_size_sol": 0.1, "reserved_sol": 0.02},
+                "balance": {"sol": 0.0},
+            },
+        }
+        d = dial_in_analyst.build_scan_diagnosis(cfg, report)
+        blob = "\n".join(d["narrative_lines"])
+        self.assertIn("Wallet capacity wall", blob)
+        self.assertIn("max_positions=0", blob)
+
+    def test_pool_sort_liquidity_with_high_min_apr_coherence_and_sort_pressure(self):
+        cfg = _make_config(
+            {
+                "min_apr": 137.0,
+                "pool_sort_field": "liquidity",
+                "apr_field": "apr24h",
+            }
+        )
+        report = {
+            "scanned_count": 500,
+            "candidate_count": 2,
+            "candidate_count_pre_capacity": 2,
+            "rejected_count": 498,
+            "rejection_breakdown": {
+                "apr_below_threshold": 494,
+                "lp_burn_too_low": 2,
+                "pool_age": 2,
+            },
+            "wallet_capacity": {"capacity": {"max_positions": 5}, "balance": {"sol": 10.0}},
+        }
+        d = dial_in_analyst.build_scan_diagnosis(cfg, report)
+        ids = [c["id"] for c in d["coherence_checks"]]
+        self.assertIn("pool_sort_not_apr_while_min_apr_high", ids)
+        keys = [p["setting_key"] for p in d["setting_pressure"]]
+        self.assertEqual(keys[0], "pool_sort_field")
+        self.assertEqual(d["setting_pressure"][0]["direction"], "align_with_apr_feed")
 
     def test_print_appends_to_verdict_log(self):
         with tempfile.TemporaryDirectory() as tmp:

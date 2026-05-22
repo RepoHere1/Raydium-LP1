@@ -8,6 +8,19 @@ Native browser ``title`` tooltips are often missing in embedded previews (for ex
 Cursor’s Simple Browser). The dashboard uses **CSS hover panels** (`.fw-pop` / `.hb-pop`) so help works in embedded
 browsers; native `title` alone is not relied on.
 
+## APR feed (canonical source)
+
+Scanner pool rows come from **Raydium API v3** ``GET /pools/info/list`` (see Raydium docs:
+``poolSortField`` may be ``apr24h``, ``apr7d``, ``apr30d``, ``liquidity``, ``volume24h``,
+``fee24h``, ``default``, etc.). There is no separate hidden APR feed inside this repo: the
+same JSON supplies both sort order and the nested ``day`` / ``week`` / ``month`` APR fields
+that ``apr_field`` selects.
+
+If you want **many high-APR pools per page**, sort by **``apr24h``** (or ``apr7d``) descending
+and raise ``page_size`` / ``pages`` once your safety filters are tight — sorting by **TVL**
+while requiring a **very high min_apr** mostly yields APR rejects because deep-liquidity
+majors often sit below meme APRs.
+
 ## Why APR rejects looked overwhelming
 
 Previously, **APR was checked before TVL and 24h volume**. A pool with trivial depth

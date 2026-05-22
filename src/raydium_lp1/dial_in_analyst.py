@@ -51,8 +51,35 @@ def _dominant_drivers(breakdown: dict[str, int], rejected: int) -> list[dict[str
     return rows
 
 
+def _effective_raydium_sort_field(config: Any) -> str:
+    """Raydium ``poolSortField`` after legacy fallback to ``apr_field``."""
+
+    raw = (getattr(config, "pool_sort_field", None) or "").strip()
+    if raw:
+        return raw.lower()
+    return (getattr(config, "apr_field", "apr24h") or "apr24h").strip().lower()
+
+
+_APR_SORT_FIELDS = frozenset({"apr24h", "apr7d", "apr30d"})
+
+
 def _coherence_notes(config: Any) -> list[dict[str, Any]]:
     notes: list[dict[str, Any]] = []
+    eff = _effective_raydium_sort_field(config)
+    if eff not in _APR_SORT_FIELDS and float(getattr(config, "min_apr", 0) or 0) >= 80.0:
+        notes.append(
+            {
+                "id": "pool_sort_not_apr_while_min_apr_high",
+                "ok": False,
+                "detail": (
+                    f"Raydium list pages are sorted by {eff!r} while min_apr is "
+                    f"{float(config.min_apr):.0f}%. TVL/volume/fee sorts surface deep books first — "
+                    "often lower headline APR than meme tails. For APR-first discovery set "
+                    "pool_sort_field to apr24h, apr7d, or apr30d (and match apr_field); "
+                    "see Raydium API v3 poolSortField docs."
+                ),
+            }
+        )
     if config.hard_exit_min_tvl_usd > 0 and config.min_liquidity_usd > 0:
         if config.hard_exit_min_tvl_usd > config.min_liquidity_usd:
             notes.append(
@@ -127,6 +154,37 @@ def _wallet_wall(report: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _sort_mismatch_apr_pressure(config: Any, breakdown: dict[str, int], rejected: int) -> dict[str, Any] | None:
+    """When APR rejects dominate but Raydium pages are not APR-sorted, nudge pool_sort_field."""
+
+    apr_n = int(breakdown.get("apr_below_threshold", 0))
+    if rejected <= 0 or apr_n <= 0:
+        return None
+    if _pct(apr_n, rejected) < 30.0:
+        return None
+    eff = _effective_raydium_sort_field(config)
+    if eff in _APR_SORT_FIELDS:
+        return None
+    min_apr = float(getattr(config, "min_apr", 0) or 0)
+    if min_apr < 80.0:
+        return None
+    return {
+        "category_driver": "apr_below_threshold",
+        "reject_share_pct": _pct(apr_n, rejected),
+        "setting_key": "pool_sort_field",
+        "direction": "align_with_apr_feed",
+        "rationale": (
+            f"Most rejects are APR-below while Raydium sorts by {eff!r} — the first pages are the wrong shape "
+            f"for a {min_apr:.0f}% APR gate."
+        ),
+        "risk_if_changed": "medium",
+        "concrete_suggestion": (
+            "Set pool_sort_field to apr24h (or apr7d / apr30d) and sortType desc so each page is "
+            "Raydium's own APR-ranked feed; keep apr_field on the same window for threshold checks."
+        ),
+    }
+
+
 def _setting_pressure(
     config: Any,
     breakdown: dict[str, int],
@@ -136,6 +194,10 @@ def _setting_pressure(
         return []
     pressures: list[dict[str, Any]] = []
     ranked = sorted(breakdown.items(), key=lambda kv: -kv[1])
+
+    head = _sort_mismatch_apr_pressure(config, breakdown, rejected)
+    if head:
+        pressures.append(head)
 
     def add(
         *,
@@ -318,11 +380,18 @@ def _narrative_lines(
         f"Cycle: scanned={scanned} candidates={cand} rejected={rej} "
         f"(strategy={config.strategy!r}, require_sell_route={config.require_sell_route})."
     )
+    dry = bool(getattr(config, "dry_run", True)) or (report.get("mode") == "dry_run")
     if wallet_hit and int(wallet_hit.get("max_positions") or 0) <= 0:
-        lines.append(
-            "Wallet capacity wall: max_positions=0 — fund SOL or lower position_size_sol / "
-            "reserve_sol before any pool can become an actionable slot."
-        )
+        if dry:
+            lines.append(
+                "Wallet sizing: max_positions=0 (spendable SOL below position_size_sol + reserve_sol) — "
+                "informational in dry_run; the candidate list is not wallet-capped. Fund SOL before a live run."
+            )
+        else:
+            lines.append(
+                "Wallet capacity wall: max_positions=0 — fund SOL or lower position_size_sol / "
+                "reserve_sol before any pool can become an actionable slot."
+            )
     elif wallet_hit and int(wallet_hit.get("candidate_count_pre_capacity") or 0) > int(
         wallet_hit.get("candidate_count_after_cap") or 0
     ):

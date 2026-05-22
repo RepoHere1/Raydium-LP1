@@ -1478,12 +1478,16 @@ def main(argv: list[str] | None = None) -> int:
     if active_wallet is not None:
         print(f"Wallet: {active_wallet.address} (source={active_wallet.source})")
 
+    show_dashboard = args.dashboard and not args.no_dashboard
+
     rpc_results: list[dict[str, Any]] = []
     if args.check_rpc:
         rpc_results = check_rpc_urls(config.solana_rpc_urls)
         print(json.dumps({"rpc_results": rpc_results}, indent=2))
+    elif show_dashboard and config.solana_rpc_urls:
+        # Dashboard JSON expects rpc_health; avoid requiring a separate --check-rpc pass.
+        rpc_results = check_rpc_urls(list(config.solana_rpc_urls))
 
-    show_dashboard = args.dashboard and not args.no_dashboard
     cap = int(args.show_rejects)
     if cap <= 0:
         cap = 10**7
