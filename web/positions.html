@@ -6,25 +6,27 @@
   <title>Raydium-LP1 · Positions (dry-run)</title>
   <link rel="stylesheet" href="/styles.css"/>
   <style>
-    :root { --bg:#0b0f14; --panel:#121922; --line:#243044; --txt:#e8eef8; --m:#8b9cb5; --a:#4b9bff; --ok:#3ecf98; }
+    :root { --page:#ffffff; --hdr:#f6f7f9; --line:#d8dee9; --txt:#111827; --m:#5b6577; --a:#0b5fff; --panel:#000000; --ink:#e8eef8; --ink2:#9aa7bc; }
     * { box-sizing: border-box; }
-    body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--txt); }
-    header { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; padding:.75rem 1rem; border-bottom:1px solid var(--line); background:#0e141c; }
+    body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--page); color:var(--txt); }
+    header { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; padding:.75rem 1rem; border-bottom:1px solid var(--line); background:var(--hdr); }
     h1 { font-size:1.05rem; margin:0; }
     nav a { color:var(--a); margin-right:.75rem; font-size:.85rem; }
     .pill { font-size:.65rem; text-transform:uppercase; letter-spacing:.06em; color:var(--m); border:1px solid var(--line); border-radius:999px; padding:.12rem .45rem; }
     main { max-width:1280px; margin:0 auto; padding:1rem; }
     .kp { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:.6rem; margin-bottom:1rem; }
-    .k { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:.55rem .7rem; }
-    .k span.l { display:block; font-size:.62rem; color:var(--m); text-transform:uppercase; letter-spacing:.05em; }
+    .k { background:var(--panel); color:var(--ink); border:1px solid #1a1a1a; border-radius:10px; padding:.55rem .7rem; }
+    .k span.l { display:block; font-size:.62rem; color:var(--ink2); text-transform:uppercase; letter-spacing:.05em; }
     .k span.v { font-size:1.05rem; font-weight:600; font-variant-numeric:tabular-nums; }
     h2 { font-size:.9rem; margin:1.2rem 0 .5rem; color:var(--m); font-weight:600; }
-    table { width:100%; border-collapse:collapse; font-size:.82rem; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
-    th, td { padding:.4rem .5rem; border-bottom:1px solid var(--line); text-align:left; }
-    th { color:var(--m); font-weight:500; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }
+    .tbl-wrap { overflow-x:auto; border-radius:10px; border:1px solid #1a1a1a; background:var(--panel); color:var(--ink); }
+    .tbl-wrap h3 { margin:0; padding:.55rem .75rem; font-size:.78rem; color:var(--ink2); border-bottom:1px solid #222; background:#000; font-weight:600; }
+    table { width:100%; border-collapse:collapse; font-size:.82rem; }
+    th, td { padding:.4rem .5rem; border-bottom:1px solid #222; text-align:left; }
+    th { color:var(--ink2); font-weight:500; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }
     tr:last-child td { border-bottom:0; }
-    td.mono { font-family:ui-monospace,Menlo,monospace; font-size:.72rem; color:var(--m); word-break:break-all; }
-    #err { color:#f66; margin:.5rem 0; font-size:.85rem; }
+    td.mono { font-family:ui-monospace,Menlo,monospace; font-size:.72rem; color:var(--ink2); word-break:break-all; }
+    #err { color:#c02626; margin:.5rem 0; font-size:.85rem; }
     #stamp { font-size:.75rem; color:var(--m); }
   </style>
 </head>
@@ -43,11 +45,11 @@
     <div id="err"></div>
     <div class="kp" id="kp"></div>
     <h2>Candidate pools (same as dashboard shortlist)</h2>
-    <div style="overflow-x:auto"><table><thead><tr>
+    <div class="tbl-wrap"><h3>Table</h3><table><thead><tr>
       <th>Pair</th><th>APR %</th><th>TVL $</th><th>Vol24 $</th><th>Momentum</th><th>Pool</th>
     </tr></thead><tbody id="tb"></tbody></table></div>
     <h2>Momentum HOT (top)</h2>
-    <div style="overflow-x:auto"><table><thead><tr>
+    <div class="tbl-wrap"><h3>Table</h3><table><thead><tr>
       <th>Pair</th><th>APR %</th><th>TVL $</th><th>Score</th><th>Pool</th>
     </tr></thead><tbody id="hot"></tbody></table></div>
   </main>
@@ -80,11 +82,11 @@
     $('tb').innerHTML=rows.length?rows.map(function(p){
       return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+
         esc([p.momentum_score,p.momentum_tier].filter(Boolean).join(' '))+'</td><td class="mono">'+esc(p.pool_id||p.id||'')+'</td></tr>';
-    }).join(''):'<tr><td colspan="6" style="color:#8b9cb5">No rows yet — run a scan with --dashboard.</td></tr>';
+    }).join(''):'<tr><td colspan="6" style="color:#9aa7bc">No rows yet — run a scan with --dashboard.</td></tr>';
     var hot=d.momentum_hot_top||[];
     $('hot').innerHTML=hot.length?hot.map(function(p){
       return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(p.liquidity_usd)+'</td><td>'+esc(p.momentum_score!=null?String(p.momentum_score):'')+'</td><td class="mono">'+esc(p.pool_id||p.id||'')+'</td></tr>';
-    }).join(''):'<tr><td colspan="5" style="color:#8b9cb5">No HOT rows.</td></tr>';
+    }).join(''):'<tr><td colspan="5" style="color:#9aa7bc">No HOT rows.</td></tr>';
   }
   var iv=null;
   function arm(){

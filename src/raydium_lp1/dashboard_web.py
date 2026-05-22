@@ -164,47 +164,47 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
 ]
 
 _CSS_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Raydium-LP1 · funnel & settings</title>
+<title>Raydium-LP1 · funnel &amp; settings</title>
 <style>
-:root{--bg:#0e1218;--panel:#171d27;--line:#293241;--txt:#eaf0fa;--m:#93a4ba;--a:#4596ff;--ok:#39d698;--no:#ff6b6b;--wm:#fdb34b;
---sans:ui-sans-serif,system-ui,sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 600px at 10% -6%,#1a2638,#0e1218 55%);color:var(--txt);
-font:14px/1.45 var(--sans)}header{padding:.85rem 1rem;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;
-gap:.5rem 1rem;align-items:center;background:#131a26}h1{font-size:1.06rem;margin:0}
+:root{--page:#ffffff;--hdr:#f6f7f9;--line:#d0d7e2;--txt:#111827;--m:#5b6577;--a:#0b5fff;--ok:#0a8f61;--no:#c02626;--wm:#b45309;
+--sans:ui-sans-serif,system-ui,sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace;--ink:#e8eef8;--ink2:#9aa7bc;--box:#000000}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--txt);font:14px/1.45 var(--sans)}
+header{padding:.85rem 1rem;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;background:var(--hdr)}h1{font-size:1.06rem;margin:0;color:var(--txt)}
 .p{font-size:.65rem;letter-spacing:.06em;color:var(--m);border:1px solid var(--line);border-radius:999px;padding:.15rem .5rem;text-transform:uppercase}
-.pl{border-color:#5a4930;color:var(--wm)}.tb{margin-left:auto;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
-button{font:inherit;border-radius:8px;border:1px solid var(--line);background:#242d3d;color:var(--txt);padding:.4rem .8rem;cursor:pointer}
-button.p{background:rgba(69,150,255,.2);border-color:#3576c9;color:#8ec5ff;font-weight:600}
+.pl{border-color:#d4a574;color:var(--wm)}.tb{margin-left:auto;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+button{font:inherit;border-radius:8px;border:1px solid #c5cdd8;background:#f0f3f8;color:var(--txt);padding:.4rem .8rem;cursor:pointer}
+button.p{background:#0b5fff;border-color:#074bcc;color:#fff;font-weight:600}
 main{padding:1rem;max-width:1340px;margin:0 auto;display:grid;gap:1rem}@media(min-width:1060px){
 main{grid-template-columns:minmax(0,1.06fr) minmax(328px,.94fr)}}
-.cd{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
-.cd>h2{margin:0;padding:.62rem .9rem;background:#151c29;border-bottom:1px solid var(--line);font-size:.93rem;display:flex}
-.bd{padding:.88rem}.sg{font-size:.65rem;color:var(--m);margin:.72rem 0 .35rem;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.cd{border:1px solid #1a1a1a;border-radius:12px;background:var(--box);overflow:hidden;color:var(--ink)}
+.cd>h2{margin:0;padding:.62rem .9rem;background:#000;border-bottom:1px solid #222;font-size:.93rem;display:flex;color:var(--ink2)}
+.bd{padding:.88rem}.sg{font-size:.65rem;color:var(--ink2);margin:.72rem 0 .35rem;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
 .sg:first-child{margin-top:0}.fg{display:grid;grid-template-columns:repeat(auto-fill,minmax(204px,1fr));gap:.72rem}
-.lb{display:flex;flex-direction:column;gap:.25rem;font-size:.62rem;color:var(--m);text-transform:uppercase;letter-spacing:.04em}
-.lb.h{flex-direction:row;text-transform:none;letter-spacing:normal;font-size:.84rem;color:var(--txt);align-items:center;gap:.45rem}
-input,select,textarea{font:inherit;border-radius:8px;border:1px solid var(--line);background:#212a3b;color:var(--txt);padding:.38rem .5rem}
+.lb{display:flex;flex-direction:column;gap:.25rem;font-size:.62rem;color:var(--ink2);text-transform:uppercase;letter-spacing:.04em}
+.lb.h{flex-direction:row;text-transform:none;letter-spacing:normal;font-size:.84rem;color:var(--ink);align-items:center;gap:.45rem}
+input,select,textarea{font:inherit;border-radius:8px;border:1px solid #333;background:#111;color:var(--ink);padding:.38rem .5rem}
 textarea{min-height:64px;font-family:var(--mono);font-size:.8rem}.kp{display:grid;gap:.52rem;margin-bottom:.85rem;
-grid-template-columns:repeat(auto-fit,minmax(114px,1fr))}.k{border:1px solid var(--line);border-radius:8px;background:#202838;padding:.5rem .65rem}
-.k span.x{display:block;font-size:.61rem;color:var(--m);letter-spacing:.05em;text-transform:uppercase}
-.k span.v{font-size:1.12rem;font-weight:600;font-variant-numeric:tabular-nums}.k.g .v{color:var(--ok)}.k.r .v{color:var(--no)}
-.bar{display:grid;grid-template-columns:minmax(0,168px) 1fr 2.25rem;font-size:.8rem;gap:.45rem;margin:.32rem 0;align-items:center}
-.tr{height:7px;border-radius:4px;background:#1e2739;border:1px solid var(--line);overflow:hidden}
-.fil{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--a),#9fd0ff)}
-.ta{width:100%;border-collapse:collapse;font-size:.8rem}.ta th,.ta td{padding:.28rem .4rem;border-bottom:1px solid var(--line)}
-.ta th{text-align:left;color:var(--m);font-weight:500;font-size:.74rem}.ta td.c{font-family:var(--mono);color:var(--m);width:2.75rem}
-ul.z{margin:.45rem 0;color:var(--m);font-size:.84rem;padding-left:1rem;border-left:3px solid var(--line)}
-.pr div{padding:.32rem 0;border-bottom:1px dashed var(--line);font-size:.8rem;color:var(--m)}.pr div:last-child{border:0}
-.tb2{width:100%;font-size:.78rem;border-collapse:collapse}.tb2 th,.tb2 td{border-bottom:1px solid var(--line);padding:.32rem .4rem;text-align:left}
-.tb2 th{color:var(--m)}#st{margin-top:.6rem;font:.8rem var(--mono);color:var(--m)}#st.e{color:var(--no)}#st.o{color:var(--ok)}
-a{color:var(--a)}
+grid-template-columns:repeat(auto-fit,minmax(114px,1fr))}.k{border:1px solid #2a2a2a;border-radius:8px;background:#0a0a0a;padding:.5rem .65rem}
+.k span.x{display:block;font-size:.61rem;color:var(--ink2);letter-spacing:.05em;text-transform:uppercase}
+.k span.v{font-size:1.12rem;font-weight:600;font-variant-numeric:tabular-nums}.k.g .v{color:#5ee9b5}.k.r .v{color:#ff8a8a}
+.bar{display:grid;grid-template-columns:minmax(0,168px) 1fr 2.25rem;font-size:.8rem;gap:.45rem;margin:.32rem 0;align-items:center;color:var(--ink2)}
+.tr{height:7px;border-radius:4px;background:#111;border:1px solid #333;overflow:hidden}
+.fil{height:100%;border-radius:4px;background:linear-gradient(90deg,#4b9bff,#9fd0ff)}
+.ta{width:100%;border-collapse:collapse;font-size:.8rem;color:var(--ink)}.ta th,.ta td{padding:.28rem .4rem;border-bottom:1px solid #222}
+.ta th{text-align:left;color:var(--ink2);font-weight:500;font-size:.74rem}.ta td.c{font-family:var(--mono);color:var(--ink2);width:2.75rem}
+ul.z{margin:.45rem 0;color:var(--ink2);font-size:.84rem;padding-left:1rem;border-left:3px solid #333}
+.pr div{padding:.32rem 0;border-bottom:1px dashed #333;font-size:.8rem;color:var(--ink2)}.pr div:last-child{border:0}
+.tb2{width:100%;font-size:.78rem;border-collapse:collapse;color:var(--ink)}.tb2 th,.tb2 td{border-bottom:1px solid #222;padding:.32rem .4rem;text-align:left}
+.tb2 th{color:var(--ink2)}#st{margin-top:.6rem;font:.8rem var(--mono);color:var(--m)}#st.e{color:#c02626}#st.o{color:#0a8f61}
+.cd a{color:#7ab8ff}.cd a#rj{color:var(--ink2)}
+header a{color:var(--a)}
 </style></head><body>
-<header><h1>Raydium-LP1</h1><span style="margin-left:.35rem;font-size:.82rem"><a href="/positions.html" style="color:#4596ff">Positions</a>
- · <a href="/index.html" style="color:#4596ff">About</a></span><span class="p pl">127.0.0.1 only</span><span class="p" id="stamp">waiting…</span>
+<header><h1>Raydium-LP1</h1><span style="margin-left:.35rem;font-size:.82rem"><a href="/positions.html">Positions</a>
+ · <a href="/index.html">About</a></span><span class="p pl">127.0.0.1 only</span><span class="p" id="stamp">waiting…</span>
 <div class="tb"><label style="font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto 5s</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="p">Save settings</button></div></header>
 <script type="application/json" id="boot">BOOT_JSON</script>
-<main><div><div class="cd"><h2>Funnel <a id="rj" href="api/dashboard" style="margin-left:auto;font-size:.73rem;color:var(--m);font-weight:400;text-decoration:none">raw JSON →</a></h2><div id="fu" class="bd"></div></div>
+<main><div><div class="cd"><h2>Funnel <a id="rj" href="api/dashboard" style="margin-left:auto;font-size:.73rem;font-weight:400;text-decoration:none">raw JSON →</a></h2><div id="fu" class="bd"></div></div>
 <div class="cd"><h2>Dry-run shortlist</h2><div id="li" class="bd"></div></div></div>
 <div class="cd"><h2>Settings</h2><div class="bd"><div id="fo"></div><div id="st"></div></div></div></main>
 <script>
@@ -317,9 +317,9 @@ _CLIENT_JS = r"""
     var mx=Math.max.apply(null,bd.map(function(x){return x[1];}).concat([0]))||1;
     var bars=bd.slice(0,18).map(function(kv){
       return '<div class="bar"><div title="'+esc(kv[0])+'">'+esc(kv[0])+'</div><div class="tr"><div class="fil" style="width:'+
-        ((100*kv[1]/mx).toFixed(1))+'%"></div></div><div style="font-family:var(--mono);font-size:.72rem;color:var(--m);text-align:right">'+kv[1]+'</div></div>';
+        ((100*kv[1]/mx).toFixed(1))+'%"></div></div><div style="font-family:var(--mono);font-size:.72rem;color:var(--ink2);text-align:right">'+kv[1]+'</div></div>';
     }).join('');
-    if(!bars) bars='<p style="color:var(--m);margin:.2rem 0">No breakdown yet.</p>';
+    if(!bars) bars='<p style="color:var(--ink2);margin:.2rem 0">No breakdown yet.</p>';
     var hist=Object.entries(ls.rejection_reason_histogram||{}).slice(0,26);
     var ht=hist.length?('<div class="sg">Exact first reasons</div><table class="ta"><thead><tr><th class="c">#</th><th>reason</th></tr></thead><tbody>'+
       hist.map(function(kv){return '<tr><td class="c">'+kv[1]+'</td><td>'+esc(kv[0])+'</td></tr>';}).join('')+'</tbody></table>'):'';
@@ -339,7 +339,7 @@ _CLIENT_JS = r"""
   }
 
   function renderList(rows){
-    if(!rows||!rows.length){$('#li').innerHTML='<p style="color:var(--m);margin:0">No candidates.</p>';return;}
+    if(!rows||!rows.length){$('#li').innerHTML='<p style="color:var(--ink2);margin:0">No candidates.</p>';return;}
     $('#li').innerHTML='<table class="tb2"><thead><tr><th>Pair</th><th>APR</th><th>TVL</th><th>VOL24</th><th>Mom</th><th>Pool</th></tr></thead><tbody>'+
       rows.slice(0,48).map(function(p){
         return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'%</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+
