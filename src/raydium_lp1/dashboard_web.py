@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from raydium_lp1.dashboard import DEFAULT_DASHBOARD_PATH
-from raydium_lp1.dashboard_field_help import attach_field_help
+from raydium_lp1.dashboard_field_help import attach_field_help, attach_section_help
 from raydium_lp1.settings_io import load_settings_json, merge_known_settings_patch
 from raydium_lp1.strategies import ALLOWED_STRATEGIES
 
@@ -139,6 +139,7 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
 ]
 
 attach_field_help(_FORM_SECTIONS)
+attach_section_help(_FORM_SECTIONS)
 
 _CSS_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Raydium-LP1 · funnel & settings</title>
@@ -161,6 +162,14 @@ main{grid-template-columns:minmax(0,1.06fr) minmax(328px,.94fr)}}
 .lb{display:flex;flex-direction:column;gap:.25rem;font-size:.62rem;color:var(--m);text-transform:uppercase;letter-spacing:.04em}
 .lb.h{flex-direction:row;text-transform:none;letter-spacing:normal;font-size:.84rem;color:var(--txt);align-items:center;gap:.45rem}
 .tipl{cursor:help}
+.fw{position:relative;padding-bottom:.12rem}
+#dash-tip{position:fixed;z-index:100000;left:0;top:0;max-width:min(460px,94vw);padding:.65rem .88rem;background:#0f1624;color:var(--txt);border:1px solid var(--a);border-radius:10px;font-size:.8rem;line-height:1.48;font-weight:400;letter-spacing:normal;text-transform:none;white-space:pre-wrap;box-shadow:0 14px 44px rgba(0,0,0,.58);pointer-events:none;visibility:hidden;opacity:0;transition:opacity .12s ease-out}
+#dash-tip.v{visibility:visible;opacity:1}
+.hint-line{font-size:.72rem;color:#8b9cb8;line-height:1.38;margin:.12rem 0 0;font-weight:500;letter-spacing:.01em;text-transform:none;max-width:42rem}
+.sec-blurb-wrap{margin:-.35rem 0 .55rem 0;max-width:52rem}
+.sec-blurb{font-size:.74rem;line-height:1.42;color:#8b9cbc;font-weight:400;letter-spacing:.01em;text-transform:none;border-left:3px solid rgba(69,150,255,.55);padding:.25rem 0 .25rem .6rem}
+.sec-blurb .sr{margin-top:.35rem;color:#d9e6ff}
+.sg.sg-help{cursor:help}
 input,select,textarea{font:inherit;border-radius:8px;border:1px solid var(--line);background:#212a3b;color:var(--txt);padding:.38rem .5rem}
 textarea{min-height:64px;font-family:var(--mono);font-size:.8rem}.kp{display:grid;gap:.52rem;margin-bottom:.85rem;
 grid-template-columns:repeat(auto-fit,minmax(114px,1fr))}.k{border:1px solid var(--line);border-radius:8px;background:#202838;padding:.5rem .65rem}
@@ -178,8 +187,8 @@ ul.z{margin:.45rem 0;color:var(--m);font-size:.84rem;padding-left:1rem;border-le
 a{color:var(--a)}
 </style></head><body>
 <header><h1>Raydium-LP1</h1><span class="p pl">127.0.0.1 only</span><span class="p" id="stamp">waiting…</span>
-<div class="tb"><label style="font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto 5s</label>
-<button type="button" id="reload">Reload</button><button type="button" id="save" class="p">Save settings</button></div></header>
+<div class="tb"><label style="font-size:.8rem;color:var(--m)" data-tip="Poll GET /api/dashboard on this interval without reloading the page. Turn off if you edit settings and want a stable view."><input type="checkbox" id="auto" checked/> Auto 5s</label>
+<button type="button" id="reload" data-tip="Fetch latest dashboard JSON and reload the settings form from disk (GET /api/dashboard and GET /api/settings).">Reload</button><button type="button" id="save" class="p" data-tip="POST the form to /api/settings and merge into config/settings.json. The scanner only picks this up mid-run if started with --reload-config-each-scan.">Save settings</button></div></header>
 <script type="application/json" id="boot">BOOT_JSON</script>
 <main><div><div class="cd"><h2>Funnel <a id="rj" href="api/dashboard" style="margin-left:auto;font-size:.73rem;color:var(--m);font-weight:400;text-decoration:none">raw JSON →</a></h2><div id="fu" class="bd"></div></div>
 <div class="cd"><h2>Dry-run shortlist</h2><div id="li" class="bd"></div></div></div>
@@ -204,12 +213,75 @@ _CLIENT_JS = r"""
     if(l) return 'Suggested starting point: ' + l;
     return '';
   }
-  function applyFieldTip(el, f){
-    var t=fieldTip(f);
-    if(!t) return;
-    el.title=t;
-    el.classList.add('tipl');
+  const TIP_MAP = {};
+  (SECTIONS||[]).forEach(function(sec){
+    (sec.fields||[]).forEach(function(f){
+      if(f.key){ var t=fieldTip(f); if(t) TIP_MAP[f.key]=t; }
+    });
+  });
+
+  var dashTipEl=null, dashTipTimer=null;
+  function dashTip(){
+    if(dashTipEl) return dashTipEl;
+    dashTipEl=document.createElement('div');
+    dashTipEl.id='dash-tip';
+    dashTipEl.setAttribute('role','tooltip');
+    document.body.appendChild(dashTipEl);
+    return dashTipEl;
   }
+  function hideDashTip(){
+    if(dashTipTimer){ clearTimeout(dashTipTimer); dashTipTimer=null; }
+    if(dashTipEl) dashTipEl.classList.remove('v');
+  }
+  function positionDashTip(anchor){
+    var el=dashTip();
+    requestAnimationFrame(function(){
+      var r=anchor.getBoundingClientRect(), tw=el.offsetWidth, th=el.offsetHeight, vw=window.innerWidth, vh=window.innerHeight;
+      var left=Math.min(Math.max(10,r.left), Math.max(10, vw-tw-10));
+      var top=r.bottom+8;
+      if(top+th>vh-10) top=Math.max(10, r.top-th-8);
+      el.style.left=left+'px';
+      el.style.top=top+'px';
+    });
+  }
+  function showDashTip(text, anchor){
+    if(!text||!anchor) return;
+    var el=dashTip();
+    el.textContent=text;
+    el.classList.add('v');
+    positionDashTip(anchor);
+  }
+  function scheduleHideDashTip(){
+    if(dashTipTimer) clearTimeout(dashTipTimer);
+    dashTipTimer=setTimeout(hideDashTip, 160);
+  }
+  function wireTipHover(el, text){
+    if(!text) return;
+    el.addEventListener('mouseenter', function(){
+      if(dashTipTimer){ clearTimeout(dashTipTimer); dashTipTimer=null; }
+      showDashTip(text, el);
+    });
+    el.addEventListener('mouseleave', scheduleHideDashTip);
+  }
+  function appendSuggested(wrap, f){
+    var s=(f.live_hint||'').trim();
+    if(!s) return;
+    var d=document.createElement('div');
+    d.className='hint-line';
+    d.textContent='Suggested: '+s;
+    wrap.appendChild(d);
+  }
+  function wireFieldWrap(wrap, key){
+    wireTipHover(wrap, TIP_MAP[key]||'');
+  }
+  function wireDataTips(scope){
+    if(!scope) return;
+    scope.querySelectorAll('[data-tip]').forEach(function(el){
+      var txt=el.getAttribute('data-tip');
+      wireTipHover(el, txt||'');
+    });
+  }
+  window.addEventListener('scroll', hideDashTip, true);
 
   function displayFor(f, raw){
     var k=f.key;
@@ -227,17 +299,36 @@ _CLIENT_JS = r"""
     var root=$('#fo'); root.innerHTML='';
     for(var si=0;si<SECTIONS.length;si++){
       var sec=SECTIONS[si];
-      var sg=document.createElement('div'); sg.className='sg'; sg.textContent=sec.title; root.appendChild(sg);
+      var sg=document.createElement('div'); sg.className='sg'; sg.textContent=sec.title;
+      if(sec.section_help||sec.section_rec){
+        sg.classList.add('sg-help');
+        var st=[(sec.section_help||'').trim(),(sec.section_rec||'').trim()].filter(Boolean).join('\n\n');
+        wireTipHover(sg, st);
+      }
+      root.appendChild(sg);
+      if(sec.section_help||sec.section_rec){
+        var sw=document.createElement('div'); sw.className='sec-blurb-wrap';
+        var sb=document.createElement('div'); sb.className='sec-blurb';
+        var p1=document.createElement('div'); p1.textContent=(sec.section_help||'').trim(); sb.appendChild(p1);
+        if((sec.section_rec||'').trim()){
+          var p2=document.createElement('div'); p2.className='sr'; p2.textContent='Try: '+(sec.section_rec||'').trim(); sb.appendChild(p2);
+        }
+        sw.appendChild(sb); root.appendChild(sw);
+      }
       var fg=document.createElement('div'); fg.className='fg';
       for(var fi=0;fi<(sec.fields||[]).length;fi++){
         var f=sec.fields[fi]; var kk=f.key, ty=f.type;
         if(ty==='checkbox'){
+          var wrap=document.createElement('div'); wrap.className='fw';
           var L=document.createElement('label'); L.className='lb h'; var inp=document.createElement('input');
           inp.type='checkbox'; inp.dataset.sk=kk; inp.checked=!!raw[kk];
           L.appendChild(inp); L.appendChild(document.createTextNode(' '+f.label));
-          applyFieldTip(L, f); applyFieldTip(inp, f);
-          fg.appendChild(L); continue;
+          wrap.appendChild(L);
+          appendSuggested(wrap, f);
+          wireFieldWrap(wrap, kk);
+          fg.appendChild(wrap); continue;
         }
+        var wrap=document.createElement('div'); wrap.className='fw';
         var lab=document.createElement('label'); lab.className='lb';
         var cap=document.createElement('span'); cap.textContent=f.label; lab.appendChild(cap); var inp2;
         if(ty==='select'){
@@ -258,8 +349,10 @@ _CLIENT_JS = r"""
           if(f.step) inp2.step=f.step; var dh=displayFor(f, raw); inp2.value=(dh!=='' && dh!==null && dh!==undefined)?dh:'';
         }
         lab.appendChild(inp2);
-        applyFieldTip(lab, f); applyFieldTip(cap, f); applyFieldTip(inp2, f);
-        fg.appendChild(lab);
+        wrap.appendChild(lab);
+        appendSuggested(wrap, f);
+        wireFieldWrap(wrap, kk);
+        fg.appendChild(wrap);
       }
       root.appendChild(fg);
     }
@@ -324,18 +417,21 @@ _CLIENT_JS = r"""
       return '<div><b>'+esc(p.setting_key||'')+'</b> — '+esc(p.direction||'')+' ('+esc(String(p.reject_share_pct))+'% · '+esc(p.category_driver||'')+')<br><small>'+
         esc(p.concrete_suggestion||p.rationale||'')+'</small></div>';
     }).join('');
-    $('#fu').innerHTML='<div class="kp"><div class="k"><span class="x">Scanned</span><span class="v">'+sc+'</span></div>'+
-      '<div class="k g"><span class="x">Candidates</span><span class="v">'+c+'</span></div>'+
-      '<div class="k r"><span class="x">Rejected</span><span class="v">'+rej+'</span></div>'+
-      '<div class="k"><span class="x">Pass share</span><span class="v">'+rate.toFixed(1)+'%</span></div></div>'+
-      '<div class="sg">Reject categories</div>'+bars+ht+
+    $('#fu').innerHTML='<div class="kp">'+
+      '<div class="k" data-tip="Raw pool rows read from Raydium list API this pass (before your CSV export filters)."><span class="x">Scanned</span><span class="v">'+sc+'</span></div>'+
+      '<div class="k g" data-tip="Pools that passed liquidity, volume, APR, and other gates and are eligible for the next stages."><span class="x">Candidates</span><span class="v">'+c+'</span></div>'+
+      '<div class="k r" data-tip="Pools rejected with at least one reason; first reason drives the exact-reason histogram."><span class="x">Rejected</span><span class="v">'+rej+'</span></div>'+
+      '<div class="k" data-tip="Candidates divided by scanned rows — higher means your gates are loose or Raydium sort is favorable."><span class="x">Pass share</span><span class="v">'+rate.toFixed(1)+'%</span></div></div>'+
+      '<div class="sg sg-help" data-tip="Grouped counts from the first rejection reason per pool (e.g. tvl_below_threshold vs apr_below_threshold).">Reject categories</div>'+bars+ht+
       (nar?('<div class="sg">Narrative</div><ul class="z">'+nar+'</ul>'):'')+
       (pr?('<div class="sg">Suggested levers</div><div class="pr">'+pr+'</div>'):'');
+    wireDataTips($('#fu'));
   }
 
   function renderList(rows){
-    if(!rows||!rows.length){$('#li').innerHTML='<p style="color:var(--m);margin:0">No candidates.</p>';return;}
-    $('#li').innerHTML='<table class="tb2"><thead><tr><th>Pair</th><th>APR</th><th>TVL</th><th>VOL24</th><th>Mom</th><th>Pool</th></tr></thead><tbody>'+
+    var cap='<p class="hint-line" style="margin:0 0 .5rem">Rows show open_positions from the dashboard snapshot (pair, APR, TVL, 24h volume, momentum). Pool id is the on-chain address.</p>';
+    if(!rows||!rows.length){$('#li').innerHTML=cap+'<p style="color:var(--m);margin:0">No candidates.</p>';return;}
+    $('#li').innerHTML=cap+'<table class="tb2"><thead><tr><th>Pair</th><th>APR</th><th>TVL</th><th>VOL24</th><th>Mom</th><th>Pool</th></tr></thead><tbody>'+
       rows.slice(0,48).map(function(p){
         return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'%</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+
           (p.momentum_score!=null?esc(String(p.momentum_score))+' '+esc(String(p.momentum_tier||'')):'')+'</td>'+
@@ -381,6 +477,8 @@ _CLIENT_JS = r"""
   refresh().catch(function(e){$('#fu').innerHTML='<p style="color:#f88">'+esc(String(e))+'</p>';});
   loadSettings().catch(function(e){msg(String(e),false);});
   arm();
+  var hdr=document.querySelector('header');
+  if(hdr) wireDataTips(hdr);
 })();
 """
 

@@ -4,6 +4,10 @@ The public Raydium pool browser (for example `sort_by=fee`) mixes a very long ta
 micro pools with a smaller set of deep books. The scanner cannot shrink Raydium’s
 catalog, but it can **classify rejects sensibly** and **gate on depth before APR**.
 
+Native browser ``title`` tooltips are often missing in embedded previews (for example
+Cursor’s Simple Browser). The dashboard uses a **floating ``#dash-tip`` panel** on
+hover plus a **visible “Suggested:” line** under each control.
+
 ## Why APR rejects looked overwhelming
 
 Previously, **APR was checked before TVL and 24h volume**. A pool with trivial depth

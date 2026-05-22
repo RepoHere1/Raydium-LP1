@@ -1,7 +1,12 @@
-"""Long-form hover text for dashboard settings (browser ``title`` tooltips).
+"""Field and section copy for the local settings dashboard.
 
-Each value is ``(help, live_hint)``. ``live_hint`` is a Raydium-style starting
-point, not financial advice — tune from your own scans.
+Each field maps to ``(help, live_hint)``. ``live_hint`` is rendered on the page as a
+visible **Suggested:** line and summarized in the floating ``#dash-tip`` panel on
+hover (native ``title`` is not used for long copy because embedded browsers often
+omit it).
+
+Section titles map to ``(section_help, section_rec)`` for visible blurbs plus
+hover on the section heading.
 """
 
 from __future__ import annotations
@@ -315,6 +320,47 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
 }
 
 
+SECTION_BLURB: dict[str, tuple[str, str]] = {
+    "Liquidity gates": (
+        "These gates shrink Raydium’s long tail before you spend RPC on routing.",
+        "Raise min TVL and min 24h volume before you lower min APR. Use hard TVL for "
+        "cannot-exit depths; use min TVL for economic interest.",
+    ),
+    "Raydium paging": (
+        "Controls how list pages are fetched (sort column, direction, depth).",
+        "Keep pages small (2–5) until filters are tight. fee sort shows many illiquid "
+        "rows; pair with strong TVL/volume floors.",
+    ),
+    "Age, burn, verification": (
+        "Time-in-market, LP burn, and optional Raydium/RPC cross-checks.",
+        "min pool age 6–24h reduces launch noise; max age 0 = off. Full burn is a "
+        "stricter meme filter. On-chain verify costs latency but catches bad rows.",
+    ),
+    "Momentum": (
+        "Ranks and optionally vetoes pools using turnover, age sweet spot, and score.",
+        "Turn on require momentum pass once min score is calibrated. Align "
+        "momentum_min_tvl_usd with min_liquidity_usd so momentum never runs on dust.",
+    ),
+    "Routes and reporting": (
+        "Sell-route probes (e.g. Jupiter) and how strict price impact must be.",
+        "5% impact is loose for small clips; 1–3% is stricter. Enable rejections CSV "
+        "while tuning gates.",
+    ),
+    "Wallet and emergency": (
+        "Sizing and optional emergency exit behaviour.",
+        "Reserve SOL for fees; keep emergency close off until automation is trusted.",
+    ),
+    "LP paper planning": (
+        "Optional concentrated-liquidity band planning in dry-run outputs.",
+        "Enable after scanning is stable; start with default band 15–25% on majors.",
+    ),
+    "Network metadata": (
+        "Strategy tag, RPC list, allow/block lists, and paths for dashboard output.",
+        "Use two RPC providers; allowed quotes SOL,USDC is a flexible default.",
+    ),
+}
+
+
 def attach_field_help(sections: list[dict[str, Any]]) -> None:
     for sec in sections:
         for field in sec.get("fields", []):
@@ -328,3 +374,16 @@ def attach_field_help(sections: list[dict[str, Any]]) -> None:
             field["help"] = help_text
             if live_hint:
                 field["live_hint"] = live_hint
+
+
+def attach_section_help(sections: list[dict[str, Any]]) -> None:
+    for sec in sections:
+        title = sec.get("title")
+        if not isinstance(title, str):
+            continue
+        blurb = SECTION_BLURB.get(title)
+        if not blurb:
+            continue
+        intro, rec = blurb
+        sec["section_help"] = intro
+        sec["section_rec"] = rec
