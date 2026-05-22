@@ -5,6 +5,7 @@
 | File | Purpose |
 |------|---------|
 | `config/settings.example.json` | **Template** — every supported key with safe defaults. Copy this to start. |
+| `config/settings.stack.json` | **One-window stack** (`python -m raydium_lp1.web_stack`): lower `min_apr` for browsing live pools and `spawn_verdict_watcher` for a second Windows console. Override with `--config` if you prefer `config/settings.json`. |
 | `config/settings.momentum.example.json` | **Momentum / fee-rush preset** — copy or merge for your hunting profile. |
 | `config/filters.example.json` | Legacy alternate example (older layout). Prefer `settings.example.json`. |
 
