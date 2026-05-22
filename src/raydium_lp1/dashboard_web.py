@@ -25,6 +25,32 @@ from raydium_lp1.settings_io import load_settings_json, merge_known_settings_pat
 from raydium_lp1.strategies import ALLOWED_STRATEGIES
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.json")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WEB_STATIC_DIR = REPO_ROOT / "web"
+
+
+def _static_mime(path: Path) -> str:
+    if path.suffix.lower() == ".html":
+        return "text/html; charset=utf-8"
+    if path.suffix.lower() == ".css":
+        return "text/css; charset=utf-8"
+    return "application/octet-stream"
+
+
+def _serve_repo_static(url_path: str) -> tuple[bytes, str] | None:
+    """Serve whitelisted static files from ``web/`` and repo ``styles.css``."""
+
+    files: dict[str, Path] = {
+        "/positions.html": WEB_STATIC_DIR / "positions.html",
+        "/index.html": WEB_STATIC_DIR / "index.html",
+        "/styles.css": REPO_ROOT / "styles.css",
+    }
+    if url_path not in files:
+        return None
+    target = files[url_path]
+    if not target.is_file():
+        return None
+    return target.read_bytes(), _static_mime(target)
 
 _FORM_SECTIONS: list[dict[str, Any]] = [
     {
@@ -173,7 +199,8 @@ ul.z{margin:.45rem 0;color:var(--m);font-size:.84rem;padding-left:1rem;border-le
 .tb2 th{color:var(--m)}#st{margin-top:.6rem;font:.8rem var(--mono);color:var(--m)}#st.e{color:var(--no)}#st.o{color:var(--ok)}
 a{color:var(--a)}
 </style></head><body>
-<header><h1>Raydium-LP1</h1><span class="p pl">127.0.0.1 only</span><span class="p" id="stamp">waiting…</span>
+<header><h1>Raydium-LP1</h1><span style="margin-left:.35rem;font-size:.82rem"><a href="/positions.html" style="color:#4596ff">Positions</a>
+ · <a href="/index.html" style="color:#4596ff">About</a></span><span class="p pl">127.0.0.1 only</span><span class="p" id="stamp">waiting…</span>
 <div class="tb"><label style="font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto 5s</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="p">Save settings</button></div></header>
 <script type="application/json" id="boot">BOOT_JSON</script>
@@ -414,6 +441,11 @@ def main(argv: list[str] | None = None) -> int:
 
         def do_GET(self) -> None:  # noqa: N802
             path = up.urlparse(self.path).path
+            static = _serve_repo_static(path)
+            if static is not None:
+                body, ctype = static
+                self._send(200, body, ctype)
+                return
             if path == "/":
                 self._send(200, blob["page"], "text/html; charset=utf-8")
                 return
@@ -463,9 +495,12 @@ def main(argv: list[str] | None = None) -> int:
             self._send_json(200, {"ok": True, "path": str(paths.settings_path.resolve())})
 
     httpd = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
-    print(f"Raydium-LP1 dashboard http://{args.host}:{args.port}/", flush=True)
-    print(f"  dashboard JSON: {paths.dashboard_path}", flush=True)
-    print(f"  settings file: {paths.settings_path}", flush=True)
+    base = f"http://{args.host}:{args.port}"
+    print(f"Raydium-LP1 dashboard {base}/", flush=True)
+    print(f"  positions view: {base}/positions.html", flush=True)
+    print(f"  project page:   {base}/index.html", flush=True)
+    print(f"  dashboard JSON: {paths.dashboard_path.resolve()}", flush=True)
+    print(f"  settings file:  {paths.settings_path.resolve()}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

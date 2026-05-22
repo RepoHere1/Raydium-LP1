@@ -214,6 +214,17 @@ This project is designed to use real production data, not placeholders:
 
 Important: RPC URLs with API keys are secrets. Keep them in `.env`; do not paste them into `config\settings.json` if you plan to commit that file, and do not commit `.env`.
 
+## One CMD window: scan loop + local web (8844)
+
+From the repo root, this starts a **looping** scanner (writes `reports/dashboard.json`) and the **same** HTTP server that serves the funnel UI, a **positions-style** table (`/positions.html`), and the marketing **`/index.html`** page:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\scripts\start_stack.cmd
+```
+
+Then open **http://127.0.0.1:8844/positions.html** (table + wallet summary), **http://127.0.0.1:8844/** (funnel + settings), or **http://127.0.0.1:8844/index.html**. HTTP-only (no scanner child): `python -m raydium_lp1.web_stack --no-scan`.
+
 ## Easiest Windows setup: double-click or paste
 
 ### Option A: double-click

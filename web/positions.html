@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Raydium-LP1 · Positions (dry-run)</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <style>
+    :root { --bg:#0b0f14; --panel:#121922; --line:#243044; --txt:#e8eef8; --m:#8b9cb5; --a:#4b9bff; --ok:#3ecf98; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--txt); }
+    header { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; padding:.75rem 1rem; border-bottom:1px solid var(--line); background:#0e141c; }
+    h1 { font-size:1.05rem; margin:0; }
+    nav a { color:var(--a); margin-right:.75rem; font-size:.85rem; }
+    .pill { font-size:.65rem; text-transform:uppercase; letter-spacing:.06em; color:var(--m); border:1px solid var(--line); border-radius:999px; padding:.12rem .45rem; }
+    main { max-width:1280px; margin:0 auto; padding:1rem; }
+    .kp { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:.6rem; margin-bottom:1rem; }
+    .k { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:.55rem .7rem; }
+    .k span.l { display:block; font-size:.62rem; color:var(--m); text-transform:uppercase; letter-spacing:.05em; }
+    .k span.v { font-size:1.05rem; font-weight:600; font-variant-numeric:tabular-nums; }
+    h2 { font-size:.9rem; margin:1.2rem 0 .5rem; color:var(--m); font-weight:600; }
+    table { width:100%; border-collapse:collapse; font-size:.82rem; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    th, td { padding:.4rem .5rem; border-bottom:1px solid var(--line); text-align:left; }
+    th { color:var(--m); font-weight:500; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }
+    tr:last-child td { border-bottom:0; }
+    td.mono { font-family:ui-monospace,Menlo,monospace; font-size:.72rem; color:var(--m); word-break:break-all; }
+    #err { color:#f66; margin:.5rem 0; font-size:.85rem; }
+    #stamp { font-size:.75rem; color:var(--m); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Positions <span class="pill">dry-run data</span></h1>
+    <nav>
+      <a href="/">Funnel &amp; settings</a>
+      <a href="/index.html">Project</a>
+      <a href="/api/dashboard">raw JSON</a>
+    </nav>
+    <label style="margin-left:auto;font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto 4s</label>
+  </header>
+  <main>
+    <p id="stamp">Loading…</p>
+    <div id="err"></div>
+    <div class="kp" id="kp"></div>
+    <h2>Candidate pools (same as dashboard shortlist)</h2>
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th>Pair</th><th>APR %</th><th>TVL $</th><th>Vol24 $</th><th>Momentum</th><th>Pool</th>
+    </tr></thead><tbody id="tb"></tbody></table></div>
+    <h2>Momentum HOT (top)</h2>
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th>Pair</th><th>APR %</th><th>TVL $</th><th>Score</th><th>Pool</th>
+    </tr></thead><tbody id="hot"></tbody></table></div>
+  </main>
+  <script>
+(function(){
+  function esc(t){var d=document.createElement('div');d.textContent=t==null?'':String(t);return d.innerHTML;}
+  function num(n){return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0});}
+  function $(id){ return document.getElementById(id); }
+  async function load(){
+    $('err').textContent='';
+    var r=await fetch('/api/dashboard');
+    var t=await r.text();
+    var d; try{d=JSON.parse(t);}catch(e){ throw new Error(t.slice(0,200)); }
+    if(!r.ok) throw new Error(d.error||t);
+    $('stamp').textContent='dashboard.json · '+(d.generated_at||'?').replace('T',' ').slice(0,19)+'Z';
+    var wc=d.wallet_capacity||{};
+    var cap=wc.capacity||{};
+    var bal=wc.balance||{};
+    var cells=[
+      ['SOL (wallet)', bal.sol!=null?num(bal.sol):'—'],
+      ['max_positions', cap.max_positions!=null?String(cap.max_positions):'—'],
+      ['position_size_sol', cap.position_size_sol!=null?String(cap.position_size_sol):'—'],
+      ['reserved_sol', cap.reserved_sol!=null?String(cap.reserved_sol):'—'],
+      ['available_sol', cap.available_sol!=null?num(cap.available_sol):'—'],
+    ];
+    $('kp').innerHTML=cells.map(function(c){
+      return '<div class="k"><span class="l">'+esc(c[0])+'</span><span class="v">'+esc(c[1])+'</span></div>';
+    }).join('');
+    var rows=d.open_positions||[];
+    $('tb').innerHTML=rows.length?rows.map(function(p){
+      return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+
+        esc([p.momentum_score,p.momentum_tier].filter(Boolean).join(' '))+'</td><td class="mono">'+esc(p.pool_id||p.id||'')+'</td></tr>';
+    }).join(''):'<tr><td colspan="6" style="color:#8b9cb5">No rows yet — run a scan with --dashboard.</td></tr>';
+    var hot=d.momentum_hot_top||[];
+    $('hot').innerHTML=hot.length?hot.map(function(p){
+      return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(p.liquidity_usd)+'</td><td>'+esc(p.momentum_score!=null?String(p.momentum_score):'')+'</td><td class="mono">'+esc(p.pool_id||p.id||'')+'</td></tr>';
+    }).join(''):'<tr><td colspan="5" style="color:#8b9cb5">No HOT rows.</td></tr>';
+  }
+  var iv=null;
+  function arm(){
+    clearInterval(iv);
+    if($('auto').checked) iv=setInterval(function(){load().catch(function(e){$('err').textContent=String(e);});},4000);
+  }
+  $('auto').onchange=arm;
+  load().catch(function(e){$('err').textContent=String(e);});
+  arm();
+})();
+  </script>
+</body>
+</html>
