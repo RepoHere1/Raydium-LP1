@@ -37,6 +37,13 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("Funnel &amp; settings", html)
         self.assertIn("Project raw JSON", html)
         self.assertIn("json-pre", html)
+        self.assertNotIn("<<<<<<<", html)
+        self.assertNotIn(">>>>>>>", html)
+
+    def test_page_includes_rpc_health_panel(self):
+        html = _page().decode("utf-8")
+        self.assertIn('id="rpc"', html)
+        self.assertIn("renderRpcHealth", html)
 
 
 if __name__ == "__main__":

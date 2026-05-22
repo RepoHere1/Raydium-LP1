@@ -278,6 +278,7 @@ a{color:var(--a)}a#rj{margin-left:auto;font-size:.78rem;font-weight:500;color:va
 <section class="panel"><h2>Scan funnel <a id="rj" href="api/dashboard">GET /api/dashboard →</a></h2><div id="fu" class="bd"></div></section>
 <section class="panel settings-wide"><h2>Settings <span class="sub">POST merges into <code>config/settings.json</code></span></h2><div class="bd"><div id="fo"></div><div id="st"></div></div></section>
 </div>
+<section class="panel settings-wide"><h2>RPC health <span class="pill pill-demo">live</span><span class="sub">Solana <code>getHealth</code> per configured RPC (from <code>rpc_health</code> in dashboard.json)</span></h2><div id="rpc" class="bd"></div></section>
 </div>
 <div id="tab-raw" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-raw" aria-hidden="true">
 <section class="panel"><h2>dashboard.json <span class="sub">Last successful fetch (same file the scanner writes)</span></h2><div class="bd"><pre class="json-pre" id="rawjson">{}</pre></div></section>
@@ -519,6 +520,23 @@ _CLIENT_JS = r"""
       }).join('')+'</tbody></table></div>';
   }
 
+  function renderRpcHealth(el, d){
+    if(!el) return;
+    var rows=d.rpc_health||[];
+    if(!rows.length){
+      el.innerHTML='<p class="muted">No RPC checks in this snapshot. Add <code>solana_rpc_urls</code> in settings and run the scanner with <code>--dashboard</code> so <code>rpc_health</code> fills.</p>';
+      return;
+    }
+    el.innerHTML='<p class="muted">'+rows.length+' endpoint(s) — labeled table mirrors <code>rpc_health</code> in dashboard.json.</p>'+
+      '<div class="tbl-scroll"><table class="tb2"><thead><tr><th>#</th><th>RPC URL (masked)</th><th>OK</th><th>Detail</th></tr></thead><tbody>'+
+      rows.map(function(r,i){
+        var ok=r.ok===true||r.ok==='true'?'yes':'no';
+        var det=String(r.error||'');
+        if(!det && r.response) try{ det=JSON.stringify(r.response).slice(0,160);}catch(e){ det='(response)'; }
+        return '<tr><td>'+esc(String(r.index!=null?r.index:(i+1)))+'</td><td class="mono">'+esc(String(r.url||''))+'</td><td>'+esc(ok)+'</td><td class="mono">'+esc(det)+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+  }
+
   function renderRawJson(d){
     var pre=document.getElementById('rawjson');
     if(!pre) return;
@@ -651,6 +669,7 @@ _CLIENT_JS = r"""
     renderOpenTable($('#openp'), d.open_positions||[], demo);
     renderClosedTable($('#clop'), ls.closed_positions||[]);
     renderAlerts($('#alerts'), d);
+    renderRpcHealth($('#rpc'), d);
     renderRawJson(d);
   }
 
@@ -718,7 +737,13 @@ def _page() -> bytes:
             _CLIENT_JS,
         )
     )
-    return html.encode("utf-8")
+    raw = html.encode("utf-8")
+    if b"<<<<<<<" in raw or b">>>>>>>" in raw:
+        raise RuntimeError(
+            "dashboard_web: generated HTML contains git merge conflict markers — "
+            "fix _CSS_HTML / _CLIENT_JS before serving."
+        )
+    return raw
 
 
 def main(argv: list[str] | None = None) -> int:

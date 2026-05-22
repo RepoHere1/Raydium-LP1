@@ -44,13 +44,17 @@
     <p id="stamp">Loading…</p>
     <div id="err"></div>
     <div class="kp" id="kp"></div>
+    <h2>RPC health</h2>
+    <div class="tbl-wrap"><h3>Solana getHealth (from dashboard.json)</h3><table><thead><tr>
+      <th>#</th><th>RPC URL</th><th>OK</th><th>Detail</th>
+    </tr></thead><tbody id="rpcb"></tbody></table></div>
     <h2>Candidate pools (same as dashboard shortlist)</h2>
     <div class="tbl-wrap"><h3>Table</h3><table><thead><tr>
       <th>Pair</th><th>APR %</th><th>TVL $</th><th>Vol24 $</th><th>Momentum</th><th>Pool</th>
     </tr></thead><tbody id="tb"></tbody></table></div>
     <h2>Momentum HOT (top)</h2>
     <div class="tbl-wrap"><h3>Table</h3><table><thead><tr>
-      <th>Pair</th><th>APR %</th><th>TVL $</th><th>Score</th><th>Pool</th>
+      <th>Pair</th><th>APR %</th><th>TVL $</th><th>Score (CMB)</th><th>Pool</th>
     </tr></thead><tbody id="hot"></tbody></table></div>
   </main>
   <script>
@@ -78,6 +82,13 @@
     $('kp').innerHTML=cells.map(function(c){
       return '<div class="k"><span class="l">'+esc(c[0])+'</span><span class="v">'+esc(c[1])+'</span></div>';
     }).join('');
+    var rpc=d.rpc_health||[];
+    $('rpcb').innerHTML=rpc.length?rpc.map(function(r,i){
+      var ok=(r.ok===true||r.ok==='true')?'yes':'no';
+      var det=String(r.error||'');
+      if(!det && r.response){ try{ det=JSON.stringify(r.response).slice(0,160);}catch(e){ det=''; } }
+      return '<tr><td>'+esc(String(r.index!=null?r.index:(i+1)))+'</td><td class="mono">'+esc(String(r.url||''))+'</td><td>'+esc(ok)+'</td><td class="mono">'+esc(det)+'</td></tr>';
+    }).join(''):'<tr><td colspan="4" style="color:#9aa7bc">No RPC rows — configure solana_rpc_urls and run scanner with --dashboard.</td></tr>';
     var rows=d.open_positions||[];
     $('tb').innerHTML=rows.length?rows.map(function(p){
       return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+
@@ -85,7 +96,10 @@
     }).join(''):'<tr><td colspan="6" style="color:#9aa7bc">No rows yet — run a scan with --dashboard.</td></tr>';
     var hot=d.momentum_hot_top||[];
     $('hot').innerHTML=hot.length?hot.map(function(p){
-      return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(p.liquidity_usd)+'</td><td>'+esc(p.momentum_score!=null?String(p.momentum_score):'')+'</td><td class="mono">'+esc(p.pool_id||p.id||'')+'</td></tr>';
+      var tvl=p.tvl_usd!=null&&p.tvl_usd!==''?p.tvl_usd:p.liquidity_usd;
+      var sc=p.combined_score!=null&&p.combined_score!==''?p.combined_score:p.score;
+      var scStr=(sc!=null&&sc!==''&&isFinite(Number(sc)))?(Math.round(Number(sc)*10)/10).toString():'';
+      return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(tvl)+'</td><td>'+esc(scStr)+'</td><td class="mono">'+esc(p.pool_id||p.id||'')+'</td></tr>';
     }).join(''):'<tr><td colspan="5" style="color:#9aa7bc">No HOT rows.</td></tr>';
   }
   var iv=null;
