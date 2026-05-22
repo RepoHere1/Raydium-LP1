@@ -233,6 +233,8 @@ Or run the PowerShell launcher directly:
 
 Then open **http://127.0.0.1:8844/scan_log.html** (live scanner console mirror), **http://127.0.0.1:8844/positions.html** (table + wallet summary), **http://127.0.0.1:8844/** (funnel + settings), or **http://127.0.0.1:8844/index.html**. The stack opens the scan log tab automatically on Windows/macOS/Linux when the scanner child is running. HTTP-only (no scanner child): `python -m raydium_lp1.web_stack --no-scan`.
 
+If the browser shows **ERR_CONNECTION_REFUSED**: nothing is listening on that URL. Confirm the stack printed `Raydium-LP1 dashboard http://127.0.0.1:8844/` (this project uses **8844**, not 8000), run from the **repo root** so paths resolve, and hit **`http://127.0.0.1:8844/health`** — you should see `{"ok": true, ...}`. The HTTP server binds **before** the scanner starts so the UI stays up even if the scanner child fails to launch.
+
 The stack uses **`config/settings.stack.json`** when present (committed default: **`min_apr` 3.5%**, **`spawn_verdict_watcher` true** on Windows opens a second window tailing `reports/verdict_stream.log`). To use your own file instead, pass `--config config\settings.json`.
 
 ## Easiest Windows setup: double-click or paste

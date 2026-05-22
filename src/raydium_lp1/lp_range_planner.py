@@ -92,10 +92,27 @@ def pick_width_pct(
     default_pct: float,
     mode: str,
     risk_profile: str,
+    sweet_width_candidates: tuple[float, ...] | None = None,
 ) -> tuple[float, str]:
-    """Choose band width %. ``mode`` auto|symmetric."""
+    """Choose band width %. ``mode`` auto|symmetric|clmm_dynamic_sweet_spot."""
 
     mode_l = (mode or "auto").strip().lower()
+    if mode_l == "clmm_dynamic_sweet_spot":
+        sweet = tuple(sorted({float(x) for x in (sweet_width_candidates or ()) if float(x) > 0})) or (
+            8.0,
+            20.0,
+            40.0,
+        )
+        w, sub = pick_width_pct(
+            pool,
+            momentum,
+            candidates=sweet,
+            default_pct=default_pct,
+            mode="auto",
+            risk_profile=risk_profile,
+        )
+        return w, f"clmm_dynamic_sweet_spot:{sub}"
+
     if mode_l in {"symmetric", "fixed", "popular_20", "manual_default"}:
         return default_pct, f"fixed:{mode_l}"
 
@@ -136,6 +153,21 @@ def pick_width_pct(
     return nearest, rationale
 
 
+def expand_band_edge_buffer(lo: float, hi: float, spot: float, buffer_pct: float) -> tuple[float, float]:
+    """Push CLMM band edges slightly away from ``spot`` (extra inactive slack vs API min/max)."""
+
+    if buffer_pct <= 0 or spot <= 0 or hi <= lo:
+        return lo, hi
+    pad = spot * (buffer_pct / 100.0)
+    lo2 = lo - pad
+    hi2 = hi + pad
+    if lo2 <= 0:
+        lo2 = max(lo * (1 - buffer_pct / 200.0), 1e-18)
+    if hi2 <= lo2:
+        return lo, hi
+    return lo2, hi2
+
+
 def asymmetric_quote_band(spot: float, width_pct: float, skew: float) -> tuple[float, float]:
     """Linear quote-per-base band; total fractional width ~= width_pct/100."""
 
@@ -156,6 +188,9 @@ class LPPlannerConfig:
     range_mode: str = "auto"
     default_width_pct: float = 20.0
     width_candidates: tuple[float, ...] = (12.0, 20.0, 30.0, 50.0)
+    sweet_spot_width_candidates: tuple[float, ...] = (8.0, 20.0, 40.0)
+    band_edge_buffer_pct: float = 0.0
+    single_sided_zap_deposit: bool = False
     skew_use_momentum: bool = True
     full_range_parallel: bool = False
     full_range_budget_fraction: float = 0.25
@@ -168,11 +203,17 @@ def planner_config_from_scanner(config: Any) -> LPPlannerConfig:
     w = getattr(config, "lp_range_width_candidates", (12.0, 20.0, 30.0, 50.0))
     if isinstance(w, list):
         w = tuple(float(x) for x in w)
+    sw = getattr(config, "lp_sweet_spot_width_candidates", (8.0, 20.0, 40.0))
+    if isinstance(sw, list):
+        sw = tuple(float(x) for x in sw)
     return LPPlannerConfig(
         enabled=bool(getattr(config, "lp_planning_enabled", False)),
         range_mode=str(getattr(config, "lp_range_mode", "auto")),
         default_width_pct=float(getattr(config, "lp_default_range_width_pct", 20.0)),
         width_candidates=w if isinstance(w, tuple) and w else (12.0, 20.0, 30.0, 50.0),
+        sweet_spot_width_candidates=sw if isinstance(sw, tuple) and sw else (8.0, 20.0, 40.0),
+        band_edge_buffer_pct=float(getattr(config, "lp_band_edge_buffer_pct", 0.0)),
+        single_sided_zap_deposit=bool(getattr(config, "lp_single_sided_zap_deposit", False)),
         skew_use_momentum=bool(getattr(config, "lp_skew_use_momentum", True)),
         full_range_parallel=bool(getattr(config, "lp_full_range_parallel", False)),
         full_range_budget_fraction=_clamp(float(getattr(config, "lp_full_range_budget_fraction", 0.25)), 0.0, 1.0),
@@ -192,6 +233,7 @@ def plan_for_pool(pool: Mapping[str, Any], momentum: Mapping[str, Any] | None, l
         default_pct=lp_cfg.default_width_pct,
         mode=lp_cfg.range_mode,
         risk_profile=lp_cfg.risk_profile,
+        sweet_width_candidates=lp_cfg.sweet_spot_width_candidates,
     )
 
     clmmish = is_clmm_style_pool(pool)
@@ -214,6 +256,9 @@ def plan_for_pool(pool: Mapping[str, Any], momentum: Mapping[str, Any] | None, l
         }
     else:
         lo, hi = asymmetric_quote_band(spot, width_pct, skew)
+        buf = float(lp_cfg.band_edge_buffer_pct)
+        if buf > 0:
+            lo, hi = expand_band_edge_buffer(lo, hi, spot, buf)
         concentrated = {
             "style": "concentrated_banded",
             "spot_quote_per_base": spot,
@@ -224,6 +269,7 @@ def plan_for_pool(pool: Mapping[str, Any], momentum: Mapping[str, Any] | None, l
             "skew_notes": skew_notes,
             "lower_quote_per_base": round(lo, 8),
             "upper_quote_per_base": round(hi, 8),
+            "band_edge_buffer_pct": round(buf, 3),
         }
 
     fracs = dict(
@@ -247,6 +293,22 @@ def plan_for_pool(pool: Mapping[str, Any], momentum: Mapping[str, Any] | None, l
         else {"enabled": False}
     )
 
+    raydium_clmm_terms: dict[str, Any] = {
+        "liquidity_model": (
+            "Raydium CLMM concentrated liquidity (custom price range; asymmetric liquidity deposits)"
+        ),
+        "deposit_path": (
+            "single_sided_zap_deposit"
+            if lp_cfg.single_sided_zap_deposit
+            else "dual_asset_balanced_deposit"
+        ),
+    }
+    if lp_cfg.single_sided_zap_deposit:
+        raydium_clmm_terms["zap_note"] = (
+            "Open with pay token only (SOL / USDC / USDT / USD1 …): swap to pool ratio before add-liquidity "
+            "(Raydium UI single-sided / zap deposit) — execution not wired in this dry-run build."
+        )
+
     return {
         "execution": "paper_plan_only",
         "pool_id": str(pool.get("id") or ""),
@@ -258,6 +320,7 @@ def plan_for_pool(pool: Mapping[str, Any], momentum: Mapping[str, Any] | None, l
         "concentrated": concentrated,
         "parallel_full_range": parallel_full,
         "budget_split": fracs,
+        "raydium_clmm_terms": raydium_clmm_terms,
         "policy": {**lp_slots.policy_note(max_per_mint=lp_cfg.max_lps_per_mint)},
         "disclaimer": (
             "Heuristic from public API fields — not a probability-of-profit guarantee. "

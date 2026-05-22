@@ -59,6 +59,22 @@ def _parse_lp_width_candidates(raw: dict[str, Any]) -> tuple[float, ...]:
     return (12.0, 20.0, 30.0, 50.0)
 
 
+def _parse_lp_sweet_spot_candidates(raw: dict[str, Any]) -> tuple[float, ...]:
+    v = raw.get("lp_sweet_spot_width_candidates")
+    if isinstance(v, list) and v:
+        out: list[float] = []
+        for item in v:
+            try:
+                f = float(item)
+                if f > 0:
+                    out.append(f)
+            except (TypeError, ValueError):
+                continue
+        if out:
+            return tuple(sorted(set(out)))
+    return (8.0, 20.0, 40.0)
+
+
 @dataclass(frozen=True)
 class ScannerConfig:
     """Runtime filters used before a pool can become a candidate."""
@@ -76,7 +92,7 @@ class ScannerConfig:
     min_liquidity_usd: float = 1_000.0
     min_volume_24h_usd: float = 100.0
     max_position_usd: float = 25.0
-    allowed_quote_symbols: set[str] = field(default_factory=lambda: {"SOL", "USDC", "USDT"})
+    allowed_quote_symbols: set[str] = field(default_factory=lambda: {"SOL", "USDC", "USDT", "USD1"})
     blocked_token_symbols: set[str] = field(default_factory=set)
     blocked_mints: set[str] = field(default_factory=set)
     require_pool_id: bool = True
@@ -128,9 +144,12 @@ class ScannerConfig:
     momentum_probe_market_lists: bool = True
     # Paper-only CLMM / concentrated band hints (no signed txs in this build).
     lp_planning_enabled: bool = False
-    lp_range_mode: str = "auto"  # auto | symmetric | fixed | popular_20 | manual_default
+    lp_range_mode: str = "auto"  # auto | symmetric | fixed | popular_20 | manual_default | clmm_dynamic_sweet_spot
     lp_default_range_width_pct: float = 20.0
     lp_range_width_candidates: tuple[float, ...] = (12.0, 20.0, 30.0, 50.0)
+    lp_sweet_spot_width_candidates: tuple[float, ...] = (8.0, 20.0, 40.0)
+    lp_band_edge_buffer_pct: float = 0.0
+    lp_single_sided_zap_deposit: bool = False
     lp_skew_use_momentum: bool = True
     lp_full_range_parallel: bool = False
     lp_full_range_budget_fraction: float = 0.25
@@ -173,7 +192,7 @@ class ScannerConfig:
             min_liquidity_usd=float(raw_with_strategy.get("min_liquidity_usd", cls.min_liquidity_usd)),
             min_volume_24h_usd=float(raw_with_strategy.get("min_volume_24h_usd", cls.min_volume_24h_usd)),
             max_position_usd=float(raw_with_strategy.get("max_position_usd", cls.max_position_usd)),
-            allowed_quote_symbols=set(map(str.upper, raw_with_strategy.get("allowed_quote_symbols", ["SOL", "USDC", "USDT"]))),
+            allowed_quote_symbols=set(map(str.upper, raw_with_strategy.get("allowed_quote_symbols", ["SOL", "USDC", "USDT", "USD1"]))),
             blocked_token_symbols=set(map(str.upper, raw_with_strategy.get("blocked_token_symbols", []))),
             blocked_mints=set(raw_with_strategy.get("blocked_mints", [])),
             require_pool_id=bool(raw_with_strategy.get("require_pool_id", True)),
@@ -238,6 +257,9 @@ class ScannerConfig:
             lp_range_mode=str(raw_with_strategy.get("lp_range_mode", "auto")),
             lp_default_range_width_pct=float(raw_with_strategy.get("lp_default_range_width_pct", 20.0)),
             lp_range_width_candidates=_parse_lp_width_candidates(dict(raw_with_strategy)),
+            lp_sweet_spot_width_candidates=_parse_lp_sweet_spot_candidates(dict(raw_with_strategy)),
+            lp_band_edge_buffer_pct=float(raw_with_strategy.get("lp_band_edge_buffer_pct", 0.0)),
+            lp_single_sided_zap_deposit=bool(raw_with_strategy.get("lp_single_sided_zap_deposit", False)),
             lp_skew_use_momentum=bool(raw_with_strategy.get("lp_skew_use_momentum", True)),
             lp_full_range_parallel=bool(raw_with_strategy.get("lp_full_range_parallel", False)),
             lp_full_range_budget_fraction=float(raw_with_strategy.get("lp_full_range_budget_fraction", 0.25)),

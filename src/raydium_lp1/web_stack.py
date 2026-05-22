@@ -1,7 +1,8 @@
 """Run the looping scanner and the local HTTP dashboard in **one console**.
 
-Starts ``scripts/scan_raydium_lps.py`` with ``--loop --dashboard --reload-config-each-scan``
-as a child process, then serves ``raydium_lp1.dashboard_web`` on 127.0.0.1 (8844 by default).
+Binds the dashboard HTTP server **first** (so ``http://127.0.0.1:8844/health`` works even if
+the scanner child fails), then starts ``scripts/scan_raydium_lps.py`` with
+``--loop --dashboard --reload-config-each-scan`` as a child process.
 
 Unless you pass ``--config``, the scanner reads ``config/settings.stack.json`` when that file
 exists (demo-friendly ``min_apr`` and ``spawn_verdict_watcher``). On Windows, a true
@@ -31,7 +32,7 @@ import threading
 import time
 from pathlib import Path
 
-from raydium_lp1.dashboard_web import WEB_SCAN_CONSOLE_PATH, main as dash_main
+from raydium_lp1.dashboard_web import WEB_SCAN_CONSOLE_PATH, bind_dashboard, serve_dashboard_forever
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -158,6 +159,12 @@ def main(argv: list[str] | None = None) -> int:
     args, scan_extra = parser.parse_known_args(argv)
     print(f"[stack] Scanner --config {args.config}", file=sys.stderr)
 
+    dash_argv = ["--host", args.host, "--port", str(args.port)]
+    if not args.no_scan:
+        dash_argv += ["--open-browser", "/scan_log.html"]
+
+    _, httpd, _ = bind_dashboard(dash_argv)
+
     proc: subprocess.Popen[bytes] | None = None
     if not args.no_scan:
         cmd = [
@@ -175,29 +182,29 @@ def main(argv: list[str] | None = None) -> int:
         env = os.environ.copy()
         env["PYTHONPATH"] = str(REPO / "src")
         env["PYTHONUNBUFFERED"] = "1"
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(REPO),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        _start_scanner_stdout_tee(proc, WEB_SCAN_CONSOLE_PATH)
-        time.sleep(0.6)
-        _maybe_spawn_verdict_watcher(args.config)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(REPO),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            _start_scanner_stdout_tee(proc, WEB_SCAN_CONSOLE_PATH)
+            time.sleep(0.6)
+            _maybe_spawn_verdict_watcher(args.config)
 
-        def _stop_scanner() -> None:
-            if proc is not None and proc.poll() is None:
-                proc.terminate()
+            def _stop_scanner() -> None:
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
 
-        atexit.register(_stop_scanner)
-
-    dash_argv = ["--host", args.host, "--port", str(args.port)]
-    if not args.no_scan:
-        dash_argv += ["--open-browser", "/scan_log.html"]
+            atexit.register(_stop_scanner)
+        except OSError as exc:
+            print(f"[stack] scanner child failed to start (dashboard HTTP is still up): {exc}", file=sys.stderr)
+            proc = None
 
     try:
-        return int(dash_main(dash_argv))
+        return serve_dashboard_forever(httpd)
     finally:
         if proc is not None and proc.poll() is None:
             proc.terminate()

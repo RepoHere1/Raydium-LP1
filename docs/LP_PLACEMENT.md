@@ -42,6 +42,13 @@ transaction.
   `lp_planning_enabled` is true.
 - Aggregated file: **`reports/lp_placement_latest.json`**.
 
+## CLMM “sweet spot” mode (settings)
+
+Set **`lp_range_mode`** to **`clmm_dynamic_sweet_spot`** to reuse the live-data width scorer from `auto`, but snap widths only to **`lp_sweet_spot_width_candidates`** (default **8 / 20 / 40**). This is still **Raydium CLMM concentrated liquidity** (custom price range; asymmetric deposits) in Raydium’s vocabulary — not a separate on-chain program.
+
+- **`lp_band_edge_buffer_pct`** (e.g. **3**) widens the suggested band slightly *outside* the API-derived spot (paper slack before real tick math).
+- **`lp_single_sided_zap_deposit`**: when true, plans assume a **zap / single-sided deposit** path (pay SOL, USDC, USDT, USD1, … only; swap to ratio then add liquidity). Execution is **not** wired in this repo; it tags `lp_placement_plan.raydium_clmm_terms` for downstream builders.
+
 ## Wizard / settings
 
 See `lp_*` and `risk_profile` keys in `settings_schema.py`, wizard prompts in

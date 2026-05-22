@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from raydium_lp1.dashboard import DEFAULT_DASHBOARD_PATH
 from raydium_lp1.settings_io import load_settings_json, merge_known_settings_patch
@@ -137,9 +138,37 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
         "title": "LP paper planning",
         "fields": [
             {"key": "lp_planning_enabled", "label": "LP planning", "type": "checkbox"},
-            {"key": "lp_range_mode", "label": "Range mode", "type": "text"},
+            {
+                "key": "lp_range_mode",
+                "label": "CLMM range mode (Raydium concentrated liquidity)",
+                "type": "select",
+                "options": [
+                    "auto",
+                    "symmetric",
+                    "fixed",
+                    "popular_20",
+                    "manual_default",
+                    "clmm_dynamic_sweet_spot",
+                ],
+            },
+            {
+                "key": "lp_single_sided_zap_deposit",
+                "label": "Single-sided zap deposit (pay token only: swap-to-ratio then add liquidity)",
+                "type": "checkbox",
+            },
             {"key": "lp_default_range_width_pct", "label": "Default band %", "type": "number", "step": "any"},
-            {"key": "lp_range_width_candidates_json", "label": "Band width candidates JSON", "type": "json_text"},
+            {"key": "lp_range_width_candidates_json", "label": "Band width candidates JSON (auto modes)", "type": "json_text"},
+            {
+                "key": "lp_sweet_spot_width_candidates_json",
+                "label": "Sweet-spot width % JSON (clmm_dynamic_sweet_spot only)",
+                "type": "json_text",
+            },
+            {
+                "key": "lp_band_edge_buffer_pct",
+                "label": "CLMM band edge buffer % (expand range outside spot)",
+                "type": "number",
+                "step": "any",
+            },
             {"key": "lp_skew_use_momentum", "label": "Skew bands via momentum", "type": "checkbox"},
             {"key": "lp_full_range_parallel", "label": "Parallel full-range paper leg", "type": "checkbox"},
             {"key": "lp_full_range_budget_fraction", "label": "Full-range budget frac", "type": "number", "step": "any"},
@@ -229,6 +258,7 @@ _CLIENT_JS = r"""
     var k=f.key;
     if(k==='route_sources_json') return JSON.stringify(raw.route_sources||['jupiter','raydium']);
     if(k==='lp_range_width_candidates_json') return JSON.stringify(raw.lp_range_width_candidates||[12,20,30,50]);
+    if(k==='lp_sweet_spot_width_candidates_json') return JSON.stringify(raw.lp_sweet_spot_width_candidates||[8,20,40]);
     if(k==='solana_rpc_urls_lines') return (raw.solana_rpc_urls||[]).join('\n');
     if(k==='blocked_mints_lines') return (raw.blocked_mints||[]).join('\n');
     if(k==='allowed_quote_symbols_csv') return (raw.allowed_quote_symbols||[]).join(', ');
@@ -283,6 +313,10 @@ _CLIENT_JS = r"""
       if(k==='lp_range_width_candidates_json'){
         var arr=JSON.parse(el.value.trim()||'[]'); if(!Array.isArray(arr)) throw new Error('not array');
         patch.lp_range_width_candidates=arr.map(Number); continue;
+      }
+      if(k==='lp_sweet_spot_width_candidates_json'){
+        var arr2=JSON.parse(el.value.trim()||'[]'); if(!Array.isArray(arr2)) throw new Error('not array');
+        patch.lp_sweet_spot_width_candidates=arr2.map(Number); continue;
       }
       if(k==='solana_rpc_urls_lines'){
         patch.solana_rpc_urls=el.value.split(/\r?\n/).map(function(s){return s.trim();}).filter(Boolean); continue;
@@ -415,9 +449,7 @@ def _page() -> bytes:
     return html.encode("utf-8")
 
 
-def main(argv: list[str] | None = None) -> int:
-    import urllib.parse as up  # noqa: PLC0415
-
+def _parse_dashboard_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Raydium-LP1 local dashboard (127.0.0.1 only).")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (default loopback).")
     parser.add_argument("--port", type=int, default=8844)
@@ -429,12 +461,10 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="After the server binds, open the default browser to PATH (e.g. /scan_log.html).",
     )
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
 
-    paths = WebPaths(dashboard_path=args.dashboard, settings_path=args.settings)
 
-    blob = {"page": _page()}
-
+def _dashboard_handler_factory(paths: WebPaths, blob: dict[str, bytes]) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: Any) -> None:
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -451,7 +481,11 @@ def main(argv: list[str] | None = None) -> int:
             self._send(code, raw, "application/json; charset=utf-8")
 
         def do_GET(self) -> None:  # noqa: N802
-            path = up.urlparse(self.path).path
+            path = urlparse(self.path).path
+            if path == "/health":
+                port = int(self.server.server_address[1])
+                self._send_json(200, {"ok": True, "service": "raydium-lp1-dashboard", "port": port})
+                return
             static = _serve_repo_static(path)
             if static is not None:
                 body, ctype = static
@@ -504,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
             self._send_json(404, {"error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
-            path = up.urlparse(self.path).path
+            path = urlparse(self.path).path
             if path != "/api/settings":
                 self._send_json(404, {"error": "not found"})
                 return
@@ -522,14 +556,29 @@ def main(argv: list[str] | None = None) -> int:
                 return
             self._send_json(200, {"ok": True, "path": str(paths.settings_path.resolve())})
 
-    httpd = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
+    return DashboardHandler
+
+
+def bind_dashboard(argv: list[str] | None = None) -> tuple[argparse.Namespace, ThreadingHTTPServer, str]:
+    """Parse CLI, bind ``ThreadingHTTPServer``, print URLs, optional browser tab.
+
+    Use from ``web_stack`` so HTTP comes up even if the scanner subprocess fails later.
+    """
+
+    args = _parse_dashboard_args(argv)
+    paths = WebPaths(dashboard_path=args.dashboard, settings_path=args.settings)
+    blob = {"page": _page()}
+    handler_cls = _dashboard_handler_factory(paths, blob)
+    httpd = ThreadingHTTPServer((args.host, args.port), handler_cls)
     base = f"http://{args.host}:{args.port}"
     print(f"Raydium-LP1 dashboard {base}/", flush=True)
+    print(f"  health check:   {base}/health", flush=True)
     print(f"  positions view: {base}/positions.html", flush=True)
     print(f"  scan console:   {base}/scan_log.html", flush=True)
     print(f"  project page:   {base}/index.html", flush=True)
     print(f"  dashboard JSON: {paths.dashboard_path.resolve()}", flush=True)
     print(f"  settings file:  {paths.settings_path.resolve()}", flush=True)
+    print("  (Use port 8844 from this log — not 8000 — if the browser says connection refused.)", flush=True)
     ob = (args.open_browser or "").strip()
     if ob:
         if not ob.startswith("/"):
@@ -547,12 +596,21 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[dashboard] --open-browser {browse_url!r} failed: {exc}", file=sys.stderr, flush=True)
 
         threading.Thread(target=_open_browser, daemon=True, name="open-browser").start()
+    return args, httpd, base
+
+
+def serve_dashboard_forever(httpd: ThreadingHTTPServer) -> int:
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.", flush=True)
         return 0
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    _, httpd, _ = bind_dashboard(argv)
+    return serve_dashboard_forever(httpd)
 
 
 if __name__ == "__main__":
