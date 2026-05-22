@@ -218,9 +218,17 @@ Important: RPC URLs with API keys are secrets. Keep them in `.env`; do not paste
 
 From the repo root, this starts a **looping** scanner (writes `reports/dashboard.json`) and the **same** HTTP server that serves the funnel UI, a **positions-style** table (`/positions.html`), and the marketing **`/index.html`** page:
 
+- **Double-click** `START_STACK.bat` in the repo root, **or** from **PowerShell** (note the leading `.\`; without it, PowerShell treats `scripts` as a module name):
+
 ```powershell
 cd C:\Users\Taylor\Raydium-LP1
 .\scripts\start_stack.cmd
+```
+
+Or run the PowerShell launcher directly:
+
+```powershell
+.\scripts\start_stack.ps1
 ```
 
 Then open **http://127.0.0.1:8844/positions.html** (table + wallet summary), **http://127.0.0.1:8844/** (funnel + settings), or **http://127.0.0.1:8844/index.html**. HTTP-only (no scanner child): `python -m raydium_lp1.web_stack --no-scan`.

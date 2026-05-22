@@ -48,6 +48,13 @@ class LPRangePlannerTests(unittest.TestCase):
         self.assertTrue(plan["parallel_full_range"]["enabled"])
         self.assertIn("lower_quote_per_base", plan["concentrated"])
 
+    def test_momentum_skew_exit_tier_without_detective_dict(self) -> None:
+        """Regression: tier exit_now used `sk` before assignment when detective was missing."""
+
+        sk, notes = lp_range_planner.momentum_skew({"tier": "exit_now"}, use_momentum=True)
+        self.assertLess(sk, 0.0)
+        self.assertTrue(any("exit" in n for n in notes))
+
 
 if __name__ == "__main__":
     unittest.main()
