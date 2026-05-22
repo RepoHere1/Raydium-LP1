@@ -605,12 +605,13 @@ def filter_pool(pool: dict[str, Any], config: ScannerConfig) -> tuple[bool, list
             f"${config.hard_exit_min_tvl_usd:.2f} (too shallow to count on selling back to SOL)"
         )
 
-    if pool["apr"] < config.min_apr:
-        reasons.append(f"apr {pool['apr']:.2f} below {config.min_apr:.2f}")
+    # TVL / volume before APR so dust pools surface as depth rejects, not fake APR buckets.
     if pool["liquidity_usd"] < config.min_liquidity_usd:
         reasons.append(f"liquidity ${pool['liquidity_usd']:.2f} below ${config.min_liquidity_usd:.2f}")
     if pool["volume_24h_usd"] < config.min_volume_24h_usd:
         reasons.append(f"24h volume ${pool['volume_24h_usd']:.2f} below ${config.min_volume_24h_usd:.2f}")
+    if pool["apr"] < config.min_apr:
+        reasons.append(f"apr {pool['apr']:.2f} below {config.min_apr:.2f}")
 
     symbols = {pool["mint_a_symbol"], pool["mint_b_symbol"]} - {""}
     if config.allowed_quote_symbols and symbols.isdisjoint(config.allowed_quote_symbols):

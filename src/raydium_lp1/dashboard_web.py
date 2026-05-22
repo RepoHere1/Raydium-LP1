@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from raydium_lp1.dashboard import DEFAULT_DASHBOARD_PATH
+from raydium_lp1.dashboard_field_help import attach_field_help
 from raydium_lp1.settings_io import load_settings_json, merge_known_settings_patch
 from raydium_lp1.strategies import ALLOWED_STRATEGIES
 
@@ -137,6 +138,8 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
     },
 ]
 
+attach_field_help(_FORM_SECTIONS)
+
 _CSS_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Raydium-LP1 · funnel & settings</title>
 <style>
@@ -157,6 +160,7 @@ main{grid-template-columns:minmax(0,1.06fr) minmax(328px,.94fr)}}
 .sg:first-child{margin-top:0}.fg{display:grid;grid-template-columns:repeat(auto-fill,minmax(204px,1fr));gap:.72rem}
 .lb{display:flex;flex-direction:column;gap:.25rem;font-size:.62rem;color:var(--m);text-transform:uppercase;letter-spacing:.04em}
 .lb.h{flex-direction:row;text-transform:none;letter-spacing:normal;font-size:.84rem;color:var(--txt);align-items:center;gap:.45rem}
+.tipl{cursor:help}
 input,select,textarea{font:inherit;border-radius:8px;border:1px solid var(--line);background:#212a3b;color:var(--txt);padding:.38rem .5rem}
 textarea{min-height:64px;font-family:var(--mono);font-size:.8rem}.kp{display:grid;gap:.52rem;margin-bottom:.85rem;
 grid-template-columns:repeat(auto-fit,minmax(114px,1fr))}.k{border:1px solid var(--line);border-radius:8px;background:#202838;padding:.5rem .65rem}
@@ -193,6 +197,20 @@ _CLIENT_JS = r"""
   function esc(t){var d=document.createElement('div');d.textContent=t==null?'':String(t);return d.innerHTML;}
   function num(n){return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0});}
 
+  function fieldTip(f){
+    var h=(f.help||'').trim(), l=(f.live_hint||'').trim();
+    if(h && l) return h + '\n\nSuggested starting point: ' + l;
+    if(h) return h;
+    if(l) return 'Suggested starting point: ' + l;
+    return '';
+  }
+  function applyFieldTip(el, f){
+    var t=fieldTip(f);
+    if(!t) return;
+    el.title=t;
+    el.classList.add('tipl');
+  }
+
   function displayFor(f, raw){
     var k=f.key;
     if(k==='route_sources_json') return JSON.stringify(raw.route_sources||['jupiter','raydium']);
@@ -216,7 +234,9 @@ _CLIENT_JS = r"""
         if(ty==='checkbox'){
           var L=document.createElement('label'); L.className='lb h'; var inp=document.createElement('input');
           inp.type='checkbox'; inp.dataset.sk=kk; inp.checked=!!raw[kk];
-          L.appendChild(inp); L.appendChild(document.createTextNode(' '+f.label)); fg.appendChild(L); continue;
+          L.appendChild(inp); L.appendChild(document.createTextNode(' '+f.label));
+          applyFieldTip(L, f); applyFieldTip(inp, f);
+          fg.appendChild(L); continue;
         }
         var lab=document.createElement('label'); lab.className='lb';
         var cap=document.createElement('span'); cap.textContent=f.label; lab.appendChild(cap); var inp2;
@@ -237,7 +257,9 @@ _CLIENT_JS = r"""
           inp2=document.createElement('input'); inp2.type=(ty==='number'?'number':'text'); inp2.dataset.sk=kk;
           if(f.step) inp2.step=f.step; var dh=displayFor(f, raw); inp2.value=(dh!=='' && dh!==null && dh!==undefined)?dh:'';
         }
-        lab.appendChild(inp2); fg.appendChild(lab);
+        lab.appendChild(inp2);
+        applyFieldTip(lab, f); applyFieldTip(cap, f); applyFieldTip(inp2, f);
+        fg.appendChild(lab);
       }
       root.appendChild(fg);
     }

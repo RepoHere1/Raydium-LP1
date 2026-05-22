@@ -72,6 +72,28 @@ class ScannerTests(unittest.TestCase):
         url = pool_list_url(config, page=1)
         self.assertIn("poolSortField=volume24h", url)
 
+    def test_liquidity_reason_before_apr_when_both_fail(self):
+        """Thin pools should not flood histograms as apr_below_threshold."""
+        config = ScannerConfig(
+            min_apr=325.0,
+            min_liquidity_usd=10_000.0,
+            min_volume_24h_usd=1.0,
+        )
+        pool = normalize_pool(
+            {
+                "id": "pool-1",
+                "apr24h": 0.01,
+                "tvl": 50.0,
+                "volume24h": 500_000,
+                "mintA": {"symbol": "SOL", "address": "sol-mint"},
+                "mintB": {"symbol": "TEST", "address": "test-mint"},
+            },
+            "apr24h",
+        )
+        ok, reasons = filter_pool(pool, config)
+        self.assertFalse(ok)
+        self.assertTrue(reasons[0].startswith("liquidity"))
+
     def test_hard_exit_rejects_micro_tvl_first(self):
         config = ScannerConfig(
             min_apr=50.0,

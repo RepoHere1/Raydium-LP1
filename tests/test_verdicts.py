@@ -241,7 +241,8 @@ class ScannerVerdictIntegrationTests(unittest.TestCase):
         self.assertIn("PAIR_NAME", out)
         self.assertIn("good", out)
         self.assertIn("bad", out)
-        self.assertIn("apr_below_threshold", report["rejection_breakdown"])
+        # Thin pool fails TVL before APR is evaluated (avoids dust flooding apr buckets).
+        self.assertIn("tvl_below_threshold", report["rejection_breakdown"])
 
 
 if __name__ == "__main__":
