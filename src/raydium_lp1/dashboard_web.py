@@ -27,6 +27,7 @@ from raydium_lp1.strategies import ALLOWED_STRATEGIES
 DEFAULT_SETTINGS_PATH = Path("config/settings.json")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_STATIC_DIR = REPO_ROOT / "web"
+WEB_SCAN_CONSOLE_LOG = REPO_ROOT / "reports" / "web_scan_console.log"
 
 
 def _static_mime(path: Path) -> str:
@@ -194,6 +195,9 @@ grid-template-columns:repeat(auto-fit,minmax(114px,1fr))}.k{border:1px solid #2a
 .ta th{text-align:left;color:var(--ink2);font-weight:500;font-size:.74rem}.ta td.c{font-family:var(--mono);color:var(--ink2);width:2.75rem}
 ul.z{margin:.45rem 0;color:var(--ink2);font-size:.84rem;padding-left:1rem;border-left:3px solid #333}
 .pr div{padding:.32rem 0;border-bottom:1px dashed #333;font-size:.8rem;color:var(--ink2)}.pr div:last-child{border:0}
+.pr.levers div{color:#facc15;font-size:.88rem;line-height:1.45}
+.pr.levers div b{color:#fef08a;font-weight:700}
+.pr.levers small{color:#fef9c3;font-size:.82rem;display:block;margin-top:.25rem}
 .tb2{width:100%;font-size:.78rem;border-collapse:collapse;color:var(--ink)}.tb2 th,.tb2 td{border-bottom:1px solid #222;padding:.32rem .4rem;text-align:left}
 .tb2 th{color:var(--ink2)}#st{margin-top:.6rem;font:.8rem var(--mono);color:var(--m)}#st.e{color:#c02626}#st.o{color:#0a8f61}
 .cd a{color:#7ab8ff}.cd a#rj{color:var(--ink2)}
@@ -335,7 +339,7 @@ _CLIENT_JS = r"""
       '<div class="k"><span class="x">Pass share</span><span class="v">'+rate.toFixed(1)+'%</span></div></div>'+
       '<div class="sg">Reject categories</div>'+bars+ht+
       (nar?('<div class="sg">Narrative</div><ul class="z">'+nar+'</ul>'):'')+
-      (pr?('<div class="sg">Suggested levers</div><div class="pr">'+pr+'</div>'):'');
+      (pr?('<div class="sg">Suggested levers</div><div class="pr levers">'+pr+'</div>'):'');
   }
 
   function renderList(rows){
@@ -441,6 +445,8 @@ def main(argv: list[str] | None = None) -> int:
 
         def do_GET(self) -> None:  # noqa: N802
             path = up.urlparse(self.path).path
+            if path != "/" and path.endswith("/"):
+                path = path.rstrip("/")
             static = _serve_repo_static(path)
             if static is not None:
                 body, ctype = static
@@ -473,10 +479,31 @@ def main(argv: list[str] | None = None) -> int:
                     return
                 self._send_json(200, data)
                 return
+            if path == "/api/scan_console":
+                if WEB_SCAN_CONSOLE_LOG.is_file():
+                    try:
+                        raw = WEB_SCAN_CONSOLE_LOG.read_bytes()
+                    except OSError as exc:
+                        self._send(500, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
+                        return
+                    self._send(200, raw, "text/plain; charset=utf-8")
+                    return
+                msg = (
+                    "(No scan console log here. It is written when you run "
+                    "`python -m raydium_lp1.web_stack` with the scanner child, which tees stdout to "
+                    f"{WEB_SCAN_CONSOLE_LOG.name}.)\n"
+                )
+                self._send(200, msg.encode("utf-8"), "text/plain; charset=utf-8")
+                return
+            if path == "/health":
+                self._send_json(200, {"ok": True, "service": "raydium-lp1-dashboard", "port": self.server.server_address[1]})
+                return
             self._send_json(404, {"error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
             path = up.urlparse(self.path).path
+            if path != "/" and path.endswith("/"):
+                path = path.rstrip("/")
             if path != "/api/settings":
                 self._send_json(404, {"error": "not found"})
                 return

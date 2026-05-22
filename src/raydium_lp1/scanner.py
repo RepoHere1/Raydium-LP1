@@ -317,6 +317,35 @@ def number(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def apr_number(value: Any, default: float = 0.0) -> float:
+    """Parse APR from Raydium payloads, including capped UI strings like ``'>999.99%'``.
+
+    Raydium's pool table sometimes emits a literal ``>999.99%`` when true APR exceeds
+    their display cap. Feeding that through :func:`float` would fail and previously
+    collapsed to ``0.0``, which made filters and dial-in hints look "fabricated".
+    """
+
+    if value in (None, ""):
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    s = str(value).strip().replace(",", "")
+    if not s:
+        return default
+    capped_display = s.startswith(">")
+    if capped_display:
+        s = s[1:].strip()
+    if s.endswith("%"):
+        s = s[:-1].strip()
+    try:
+        v = float(s)
+    except (TypeError, ValueError):
+        return default
+    if capped_display and v >= 900.0:
+        return max(v, 1000.0)
+    return v
+
+
 def nested_get(payload: dict[str, Any], *keys: str, default: Any = None) -> Any:
     """Return the first present top-level key from a Raydium pool payload."""
 
@@ -364,24 +393,24 @@ def pool_apr(pool: dict[str, Any], apr_field: str) -> float:
     if isinstance(period_obj, dict):
         # Prefer the canonical "apr" if present; otherwise fee + rewards.
         if "apr" in period_obj and period_obj["apr"] is not None:
-            return number(period_obj["apr"])
-        fee_apr = number(period_obj.get("feeApr"))
+            return apr_number(period_obj["apr"])
+        fee_apr = apr_number(period_obj.get("feeApr"))
         rewards = period_obj.get("rewardApr")
         if isinstance(rewards, list):
-            fee_apr += sum(number(item) for item in rewards)
+            fee_apr += sum(apr_number(item) for item in rewards)
         if fee_apr:
             return fee_apr
 
     # Legacy / flat shapes (still used by some older endpoints and our own
     # mocked test fixtures).
-    direct = number(pool.get(apr_field), default=-1.0)
+    direct = apr_number(pool.get(apr_field), default=-1.0)
     if direct >= 0:
         return direct
     apr_obj = pool.get("apr")
     if isinstance(apr_obj, dict):
         day = apr_field.removeprefix("apr")
         for key in (day, apr_field, day.lower()):
-            value = number(apr_obj.get(key), default=-1.0)
+            value = apr_number(apr_obj.get(key), default=-1.0)
             if value >= 0:
                 return value
     return 0.0
