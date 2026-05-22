@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Raydium-LP1 · Scan console</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <style>
+    :root { --page:#ffffff; --hdr:#f6f7f9; --line:#d8dee9; --txt:#111; --m:#5a6578; --a:#0b5fff; --panel:#000000; --pre:#e8eef8; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:13px/1.4 ui-monospace,Menlo,Consolas,monospace; background:var(--page); color:var(--txt); }
+    header { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; padding:.75rem 1rem; border-bottom:1px solid var(--line); background:var(--hdr); }
+    h1 { font-size:1.05rem; margin:0; font-family:system-ui,sans-serif; }
+    nav a { color:var(--a); margin-right:.75rem; font-size:.85rem; font-family:system-ui,sans-serif; }
+    .pill { font-size:.65rem; text-transform:uppercase; letter-spacing:.06em; color:var(--m); border:1px solid var(--line); border-radius:999px; padding:.12rem .45rem; font-family:system-ui,sans-serif; }
+    main { max-width:1280px; margin:0 auto; padding:1rem; }
+    #stamp { font-size:.75rem; color:var(--m); font-family:system-ui,sans-serif; }
+    #err { color:#c00; margin:.5rem 0; font-size:.85rem; font-family:system-ui,sans-serif; }
+    .panel { background:var(--panel); color:var(--pre); border-radius:10px; border:1px solid #222; overflow:hidden; }
+    .panel h2 { margin:0; padding:.55rem .75rem; font-size:.78rem; font-weight:600; font-family:system-ui,sans-serif; color:#9aa7bc; border-bottom:1px solid #222; background:#000; }
+    pre { margin:0; padding:.75rem .85rem; white-space:pre-wrap; word-break:break-word; max-height:min(78vh,920px); overflow:auto; font-size:12px; line-height:1.35; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Scan console <span class="pill">stack stdout</span></h1>
+    <nav>
+      <a href="/">Funnel &amp; settings</a>
+      <a href="/positions.html">Positions</a>
+      <a href="/index.html">Project</a>
+      <a href="/api/scan_console">raw text</a>
+    </nav>
+    <label style="margin-left:auto;font-size:.8rem;color:var(--m);font-family:system-ui,sans-serif"><input type="checkbox" id="auto" checked/> Auto 2s</label>
+  </header>
+  <main>
+    <p id="stamp">Loading…</p>
+    <div id="err"></div>
+    <div class="panel">
+      <h2>Scanner + HTTP log (same lines as the stack console)</h2>
+      <pre id="log"></pre>
+    </div>
+  </main>
+  <script>
+(function(){
+  function $(id){ return document.getElementById(id); }
+  async function load(){
+    $('err').textContent='';
+    var r=await fetch('/api/scan_console?'+Date.now());
+    var t=await r.text();
+    if(!r.ok) throw new Error(t.slice(0,200));
+    $('log').textContent=t;
+    $('stamp').textContent='Last fetch '+new Date().toISOString().replace('T',' ').slice(0,19)+'Z · /api/scan_console';
+  }
+  var iv=null;
+  function arm(){
+    clearInterval(iv);
+    if($('auto').checked) iv=setInterval(function(){load().catch(function(e){$('err').textContent=String(e);});},2000);
+  }
+  $('auto').onchange=arm;
+  load().catch(function(e){$('err').textContent=String(e);});
+  arm();
+})();
+  </script>
+</body>
+</html>

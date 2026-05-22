@@ -6,7 +6,8 @@ as a child process, then serves ``raydium_lp1.dashboard_web`` on 127.0.0.1 (8844
 Unless you pass ``--config``, the scanner reads ``config/settings.stack.json`` when that file
 exists (demo-friendly ``min_apr`` and ``spawn_verdict_watcher``). On Windows, a true
 ``spawn_verdict_watcher`` opens ``scripts/watch_verdict.ps1`` in a new console, matching
-``scripts/run_scan.ps1``.
+``scripts/run_scan.ps1``. Scanner stdout/stderr are teed to ``reports/web_scan_console.log`` and
+mirrored at ``/scan_log.html`` (browser opens that page when the stack starts).
 
 Windows CMD::
 
@@ -26,10 +27,56 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
+from raydium_lp1.dashboard_web import WEB_SCAN_CONSOLE_PATH, main as dash_main
+
 REPO = Path(__file__).resolve().parents[2]
+
+
+def _start_scanner_stdout_tee(proc: subprocess.Popen[bytes], log_path: Path, *, max_bytes: int = 2_500_000) -> None:
+    """Mirror scanner stdout/stderr to the parent console and ``reports/web_scan_console.log``."""
+
+    def runner() -> None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            log_path.write_bytes(b"")
+        except OSError:
+            pass
+        stdout = proc.stdout
+        if stdout is None:
+            return
+        try:
+            while True:
+                chunk = stdout.read(8192)
+                if not chunk:
+                    break
+                try:
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+                except BrokenPipeError:
+                    pass
+                try:
+                    with open(log_path, "ab") as lf:
+                        lf.write(chunk)
+                        lf.flush()
+                except OSError:
+                    pass
+                try:
+                    if log_path.stat().st_size > max_bytes:
+                        tail = log_path.read_bytes()[-(max_bytes * 3 // 4) :]
+                        log_path.write_bytes(tail)
+                except OSError:
+                    pass
+        finally:
+            try:
+                stdout.close()
+            except OSError:
+                pass
+
+    threading.Thread(target=runner, daemon=True, name="scanner-stdout-tee").start()
 
 
 def _default_stack_config_path() -> Path:
@@ -127,7 +174,15 @@ def main(argv: list[str] | None = None) -> int:
         ]
         env = os.environ.copy()
         env["PYTHONPATH"] = str(REPO / "src")
-        proc = subprocess.Popen(cmd, cwd=str(REPO), env=env)
+        env["PYTHONUNBUFFERED"] = "1"
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(REPO),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        _start_scanner_stdout_tee(proc, WEB_SCAN_CONSOLE_PATH)
         time.sleep(0.6)
         _maybe_spawn_verdict_watcher(args.config)
 
@@ -137,10 +192,12 @@ def main(argv: list[str] | None = None) -> int:
 
         atexit.register(_stop_scanner)
 
-    from raydium_lp1.dashboard_web import main as dash_main
+    dash_argv = ["--host", args.host, "--port", str(args.port)]
+    if not args.no_scan:
+        dash_argv += ["--open-browser", "/scan_log.html"]
 
     try:
-        return int(dash_main(["--host", args.host, "--port", str(args.port)]))
+        return int(dash_main(dash_argv))
     finally:
         if proc is not None and proc.poll() is None:
             proc.terminate()
