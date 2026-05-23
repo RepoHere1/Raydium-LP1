@@ -414,6 +414,31 @@
   };
 
   var timer=null;
+  var dashEs=null;
+  var refreshQueued=false;
+  function queueRefresh(){
+    if(refreshQueued) return;
+    refreshQueued=true;
+    setTimeout(function(){
+      refreshQueued=false;
+      refresh().catch(function(){});
+    },80);
+  }
+  function connectDashboardStream(){
+    if(typeof EventSource==='undefined') return;
+    if(dashEs){
+      try{dashEs.close();}catch(e){}
+      dashEs=null;
+    }
+    try{
+      dashEs=new EventSource('/api/dashboard/events');
+      dashEs.addEventListener('tick',function(){ queueRefresh(); });
+      dashEs.onerror=function(){};
+    }catch(e){}
+  }
+  window.addEventListener('beforeunload',function(){
+    if(dashEs){ try{dashEs.close();}catch(e){} dashEs=null; }
+  });
   function arm(){
     clearInterval(timer);
     if(document.getElementById('auto').checked) timer=setInterval(function(){refresh().catch(function(){});},4000);
@@ -427,4 +452,5 @@
   refresh().catch(function(e){$('#err').textContent=String(e);$('#fu').innerHTML='<p style="color:var(--no)">'+esc(String(e))+'</p>';});
   loadSettings().catch(function(e){msg(String(e),false);});
   arm();
+  connectDashboardStream();
 })();

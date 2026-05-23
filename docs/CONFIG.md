@@ -66,7 +66,7 @@ python scripts\scan_raydium_lps.py --config config\settings.json --json 2>$null 
 After a scan, open:
 
 - `reports\dashboard.json` — includes `momentum_hot_top` (top 25 HOT), rejection breakdown, and `scan_diagnosis` for tuning filters
-- Loopback web UI: run `.\scripts\run_dashboard_web.ps1` then open `http://127.0.0.1:8844/` — pair the scanner with `--loop --dashboard --reload-config-each-scan` so settings edits apply each cycle. The page uses tabs (**Positions · dry-run**, **Funnel & settings**, **Project raw JSON**) plus a wallet strip and fixed momentum columns (APR/TVL/vol/score/pool). The HTML shell and client script live under **`web/dashboard_shell.html`** and **`web/dashboard_client.js`** (not embedded in `dashboard_web.py`) so a bad Git merge is less likely to corrupt the UI.
+- Loopback web UI: run `.\scripts\run_dashboard_web.ps1` then open `http://127.0.0.1:8844/` — pair the scanner with `--loop --dashboard --reload-config-each-scan` so settings edits apply each cycle. The browser also subscribes to **`GET /api/dashboard/events`** (Server-Sent Events): when the scanner rewrites `dashboard.json`, the UI refetches immediately instead of waiting for the next 4s poll. The page uses tabs (**Positions · dry-run**, **Funnel & settings**, **Project raw JSON**) plus a wallet strip and fixed momentum columns (APR/TVL/vol/score/pool). The HTML shell and client script live under **`web/dashboard_shell.html`** and **`web/dashboard_client.js`** (not embedded in `dashboard_web.py`) so a bad Git merge is less likely to corrupt the UI.
 - `reports\momentum_sniffer.json` — full detective breakdown per pool
 - `reports\latest.json` — all candidates with `momentum` objects
 

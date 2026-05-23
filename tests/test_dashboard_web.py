@@ -1,9 +1,10 @@
 """Dashboard HTML/JS wiring (tooltips, hints)."""
 
+import tempfile
 import unittest
 from pathlib import Path
 
-from raydium_lp1.dashboard_web import REPO_ROOT, _FORM_SECTIONS, _page
+from raydium_lp1.dashboard_web import REPO_ROOT, _FORM_SECTIONS, _dashboard_signature, _page
 
 
 class DashboardWebPageTests(unittest.TestCase):
@@ -50,6 +51,27 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn('id="rpc"', html)
         js = (REPO_ROOT / "web" / "dashboard_client.js").read_text(encoding="utf-8")
         self.assertIn("renderRpcHealth", js)
+
+    def test_dashboard_signature_tracks_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "dash.json"
+            self.assertIsNone(_dashboard_signature(p))
+            p.write_text("{}", encoding="utf-8")
+            a = _dashboard_signature(p)
+            self.assertIsNotNone(a)
+            p.write_text('{"x":1}', encoding="utf-8")
+            b = _dashboard_signature(p)
+            self.assertNotEqual(a, b)
+
+    def test_sse_push_wiring_in_client_and_server_module(self):
+        py = (REPO_ROOT / "src" / "raydium_lp1" / "dashboard_web.py").read_text(encoding="utf-8")
+        self.assertIn("/api/dashboard/events", py)
+        self.assertIn("_stream_dashboard_sse", py)
+        js = (REPO_ROOT / "web" / "dashboard_client.js").read_text(encoding="utf-8")
+        self.assertIn("EventSource", js)
+        self.assertIn("/api/dashboard/events", js)
+        html = _page().decode("utf-8")
+        self.assertIn("api/dashboard/events", html)
 
 
 if __name__ == "__main__":

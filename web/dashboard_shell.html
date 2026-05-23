@@ -86,7 +86,7 @@ a{color:var(--a)}a#rj{margin-left:auto;font-size:.78rem;font-weight:500;color:va
 <header class="topbar"><h1>Raydium-LP1</h1><span style="margin-left:.25rem;font-size:.84rem"><a href="/positions.html">Positions table</a> · <a href="/index.html">Stack landing</a></span><span class="badge badge-warn">127.0.0.1 only</span><span class="badge" id="stamp">…</span>
 <div class="tb"><label style="font-size:.84rem;color:var(--muted)"><input type="checkbox" id="auto" checked/> Auto 4s</label>
 <button type="button" id="reload">Reload</button><button type="button" id="save" class="p">Save settings</button></div></header>
-<p class="hint-bar">Hover any <strong>setting row</strong> for the full field guide (CSS popover). Tables scroll inside the shaded box — full lists, not truncated.</p>
+<p class="hint-bar">Live updates: the page opens <code>GET /api/dashboard/events</code> (SSE) and refetches whenever <code>dashboard.json</code> changes on disk — run the scanner with <code>--dashboard</code> (e.g. <code>--loop --reload-config-each-scan</code>) or <code>python -m raydium_lp1.web_stack</code> so Raydium data keeps writing that file. Hover any <strong>setting row</strong> for the full field guide (CSS popover). Tables scroll inside the shaded box — full lists, not truncated.</p>
 <div id="err"></div>
 <div id="mode-bar" class="mode-bar mode-demo">Loading mode…</div>
 <script type="application/json" id="boot">BOOT_JSON</script>

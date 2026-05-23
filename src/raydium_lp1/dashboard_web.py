@@ -6,20 +6,26 @@ boot JSON; ``GET /dashboard_client.js`` serves the browser bundle from
 Git conflict markers inside Python string literals).
 
 ``GET /api/dashboard`` and ``GET /api/settings`` return JSON.
+``GET /api/dashboard/events`` streams **Server-Sent Events**: whenever the dashboard JSON file
+changes (mtime/size), the server emits ``tick`` so the browser can refetch immediately (no
+extra Raydium traffic from the UI — the scanner still writes the file).
 ``POST /api/settings`` merges an object into ``config/settings.json`` (scanner-known keys only).
 
 Use with::
 
     python -m raydium_lp1.dashboard_web
 
-and run the scanner with ``--dashboard --loop --reload-config-each-scan`` while you tune gates.
+and run the scanner with ``--dashboard --loop --reload-config-each-scan`` while you tune gates,
+or ``python -m raydium_lp1.web_stack`` so the scanner child and dashboard share one process.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import stat
 import sys
+import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -185,6 +191,56 @@ class WebPaths:
     settings_path: Path
 
 
+def _dashboard_signature(dpath: Path) -> tuple[int, int] | None:
+    """Return ``(mtime_ns, size)`` for a regular file, or ``None`` if missing/unreadable."""
+
+    try:
+        st = dpath.stat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    return (int(st.st_mtime_ns), int(st.st_size))
+
+
+def _stream_dashboard_sse(wfile: Any, dpath: Path) -> None:
+    """Write SSE until the client disconnects; emit ``tick`` when ``dpath`` changes."""
+
+    poll_s = 0.75
+    heartbeat_s = 15.0
+    last_sig = _dashboard_signature(dpath)
+    last_beat = time.monotonic()
+    try:
+        while True:
+            time.sleep(poll_s)
+            now = time.monotonic()
+            sig = _dashboard_signature(dpath)
+            if sig != last_sig:
+                last_sig = sig
+                payload = {
+                    "mtime_ns": sig[0] if sig else None,
+                    "size": sig[1] if sig else None,
+                    "exists": sig is not None,
+                }
+                line = (
+                    "event: tick\ndata: "
+                    + json.dumps(payload, separators=(",", ":"))
+                    + "\n\n"
+                )
+                wfile.write(line.encode("utf-8"))
+                wfile.flush()
+            if now - last_beat >= heartbeat_s:
+                wfile.write(b": ping\n\n")
+                wfile.flush()
+                last_beat = now
+    except (BrokenPipeError, ConnectionResetError, TimeoutError):
+        return
+    except OSError as exc:
+        if getattr(exc, "errno", None) in (104, 32, 10053):  # ECONNRESET / EPIPE-ish
+            return
+        raise
+
+
 def _page() -> bytes:
     """Assemble ``GET /`` HTML from ``web/dashboard_shell.html`` + boot JSON.
 
@@ -276,6 +332,20 @@ def main(argv: list[str] | None = None) -> int:
                     return
                 self._send_json(200, data)
                 return
+            if path == "/api/dashboard/events":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+                try:
+                    self.wfile.write(b": stream open\n\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                _stream_dashboard_sse(self.wfile, paths.dashboard_path)
+                return
             if path == "/api/settings":
                 sp = paths.settings_path
                 try:
@@ -330,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     httpd = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     base = f"http://{args.host}:{args.port}"
     print(f"Raydium-LP1 dashboard {base}/", flush=True)
+    print(f"  SSE push:       {base}/api/dashboard/events (refetch when dashboard JSON changes)", flush=True)
     print(f"  positions view: {base}/positions.html", flush=True)
     print(f"  project page:   {base}/index.html", flush=True)
     print(f"  dashboard JS:   {DASHBOARD_CLIENT_JS.resolve()}", flush=True)
