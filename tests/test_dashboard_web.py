@@ -1,8 +1,9 @@
 """Dashboard HTML/JS wiring (tooltips, hints)."""
 
 import unittest
+from pathlib import Path
 
-from raydium_lp1.dashboard_web import _FORM_SECTIONS, _page
+from raydium_lp1.dashboard_web import REPO_ROOT, _FORM_SECTIONS, _page
 
 
 class DashboardWebPageTests(unittest.TestCase):
@@ -31,7 +32,7 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("fw-pop", html)
         self.assertIn("sec-hw", html)
         self.assertIn("mode-bar", html)
-        self.assertIn("renderAll", html)
+        self.assertIn("/dashboard_client.js", html)
         self.assertIn("tab-panel", html)
         self.assertIn("Positions · dry-run data", html)
         self.assertIn("Funnel &amp; settings", html)
@@ -39,11 +40,16 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("json-pre", html)
         self.assertNotIn("<<<<<<<", html)
         self.assertNotIn(">>>>>>>", html)
+        js = (REPO_ROOT / "web" / "dashboard_client.js").read_text(encoding="utf-8")
+        self.assertIn("renderAll", js)
+        self.assertNotIn("<<<<<<<", js)
+        self.assertNotIn(">>>>>>>", js)
 
     def test_page_includes_rpc_health_panel(self):
         html = _page().decode("utf-8")
         self.assertIn('id="rpc"', html)
-        self.assertIn("renderRpcHealth", html)
+        js = (REPO_ROOT / "web" / "dashboard_client.js").read_text(encoding="utf-8")
+        self.assertIn("renderRpcHealth", js)
 
 
 if __name__ == "__main__":

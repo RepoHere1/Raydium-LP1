@@ -1,0 +1,117 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Raydium-LP1 · dashboard</title>
+<style>
+:root{--bg:#eef2f7;--card:#fff;--line:#d5dbe8;--txt:#1e293b;--muted:#64748b;--a:#2563eb;--ok:#059669;--no:#dc2626;--amber:#d97706;
+--sans:ui-sans-serif,system-ui,sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(165deg,#f8fafc 0%,var(--bg) 42%,#e8eef6 100%);color:var(--txt);font:15px/1.5 var(--sans)}
+.topbar{padding:1rem 1.25rem;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:.65rem 1rem;align-items:center;background:rgba(255,255,255,.92);backdrop-filter:blur(8px)}
+.topbar h1{font-size:1.15rem;margin:0;font-weight:700;letter-spacing:-.02em}
+.badge{font-size:.68rem;letter-spacing:.06em;border:1px solid var(--line);border-radius:999px;padding:.2rem .55rem;color:var(--muted);text-transform:uppercase;background:#fff}
+.badge-warn{border-color:#fcd34d;color:var(--amber);background:#fffbeb}
+.tb{margin-left:auto;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+button{font:inherit;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--txt);padding:.45rem .85rem;cursor:pointer;box-shadow:0 1px 2px rgba(15,23,42,.06)}
+button:hover{border-color:#c7d2e8;background:#f8fafc}
+button.p{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;font-weight:600}
+.hint-bar{margin:0;padding:.55rem 1.25rem;font-size:.82rem;color:var(--muted);background:rgba(255,255,255,.65);border-bottom:1px solid var(--line)}
+.mode-bar{margin:0;padding:.65rem 1.25rem;font-size:.9rem;line-height:1.45;border-bottom:1px solid var(--line)}
+.mode-bar.mode-demo{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.mode-bar.mode-live{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}
+.mode-tag{display:inline-block;font-weight:800;font-size:.72rem;letter-spacing:.08em;margin-right:.5rem;padding:.12rem .45rem;border-radius:6px;background:rgba(0,0,0,.06)}
+.panel{border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:0 4px 24px rgba(15,23,42,.06);overflow:visible}
+.panel>h2{margin:0;padding:.75rem 1rem;font-size:1rem;font-weight:650;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#fafbfe,#fff);border-radius:14px 14px 0 0;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+.panel>h2 .sub{font-weight:400;font-size:.82rem;color:var(--muted);margin-left:auto}
+.bd{padding:1rem;overflow:visible}
+.pill{font-size:.68rem;font-weight:700;padding:.18rem .5rem;border-radius:6px;margin-left:.35rem;vertical-align:middle}
+.pill-demo{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
+.pill-live{background:#d1fae5;color:#065f46;border:1px solid #6ee7b7}
+.muted{color:var(--muted);font-size:.88rem;margin:.25rem 0 .75rem}
+.tbl-scroll{max-height:70vh;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.tbl-scroll .tb2{margin:0}
+.sg{font-size:.68rem;color:var(--muted);margin:.85rem 0 .4rem;text-transform:uppercase;letter-spacing:.07em;font-weight:700}
+.sg:first-child{margin-top:0}
+.fg{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.85rem}
+.lb{display:flex;flex-direction:column;gap:.28rem;font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.lb.h{flex-direction:row;text-transform:none;letter-spacing:normal;font-size:.88rem;color:var(--txt);align-items:center;gap:.45rem}
+.fw{position:relative;padding-bottom:.2rem}
+.fw-pop{display:none;position:absolute;left:0;top:calc(100% - 2px);z-index:80;min-width:260px;max-width:min(440px,92vw);padding:.75rem .9rem;background:#fff;border:1px solid #c7d2e8;border-radius:10px;box-shadow:0 12px 36px rgba(15,23,42,.14);font-size:.82rem;line-height:1.45;font-weight:400;color:var(--txt);text-transform:none;letter-spacing:normal;white-space:pre-wrap}
+.fw:hover .fw-pop,.fw:focus-within .fw-pop{display:block}
+.sec-hw{position:relative;margin-bottom:.15rem}
+.sec-hw .sec-pop{display:none;position:absolute;left:0;top:100%;z-index:75;min-width:280px;max-width:min(480px,94vw);margin-top:4px;padding:.75rem .9rem;background:#fff;border:1px solid #c7d2e8;border-radius:10px;box-shadow:0 12px 36px rgba(15,23,42,.12);font-size:.82rem;line-height:1.45;color:var(--txt);white-space:pre-wrap}
+.sec-hw:hover .sec-pop{display:block}
+.sg-h{cursor:help;text-decoration:underline dotted rgba(100,116,139,.5);text-underline-offset:3px}
+.hint-line{font-size:.78rem;color:var(--muted);line-height:1.38;margin:.15rem 0 0;font-weight:500;text-transform:none;letter-spacing:.01em;max-width:48rem}
+.sec-blurb-wrap{margin:.15rem 0 .65rem;max-width:54rem}
+.sec-blurb{font-size:.8rem;line-height:1.45;color:var(--muted);border-left:3px solid #93c5fd;padding:.2rem 0 .2rem .65rem}
+.sec-blurb .sr{margin-top:.35rem;color:var(--txt);font-weight:500}
+input,select,textarea{font:inherit;border-radius:10px;border:1px solid var(--line);background:#f8fafc;color:var(--txt);padding:.42rem .55rem}
+input:focus,select:focus,textarea:focus{outline:2px solid #bfdbfe;outline-offset:0;border-color:#93c5fd;background:#fff}
+textarea{min-height:64px;font-family:var(--mono);font-size:.8rem}
+.kp{display:grid;gap:.55rem;margin-bottom:1rem;grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
+.hb{position:relative}
+.hb.k{border:1px solid var(--line);border-radius:10px;background:#f8fafc;padding:.55rem .65rem}
+.hb.k .x{display:block;font-size:.65rem;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
+.hb.k .v{font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums}
+.hb.k.g .v{color:var(--ok)}.hb.k.r .v{color:var(--no)}
+.hb-pop{left:0;right:auto}
+.hb:hover .hb-pop{display:block}
+.bar{display:grid;grid-template-columns:minmax(0,180px) 1fr 2.25rem;font-size:.82rem;gap:.45rem;margin:.35rem 0;align-items:center;color:var(--muted)}
+.tr{height:8px;border-radius:5px;background:#e2e8f0;border:1px solid var(--line);overflow:hidden}
+.fil{height:100%;border-radius:4px;background:linear-gradient(90deg,#60a5fa,#93c5fd)}
+.ta{width:100%;border-collapse:collapse;font-size:.82rem}.ta th,.ta td{padding:.32rem .45rem;border-bottom:1px solid var(--line)}
+.ta th{text-align:left;color:var(--muted);font-weight:600;font-size:.76rem}.ta td.c{font-family:var(--mono);width:2.75rem}
+ul.z{margin:.5rem 0;color:var(--muted);font-size:.88rem;padding-left:1rem;border-left:3px solid #cbd5e1}
+.pr div{padding:.35rem 0;border-bottom:1px dashed var(--line);font-size:.84rem;color:var(--muted)}.pr div:last-child{border:0}
+.pr.levers div{color:#854d0e;font-size:.88rem;line-height:1.45}
+.pr.levers div b{color:#713f12;font-weight:700}
+.pr.levers small{color:#57534e;font-size:.82rem;display:block;margin-top:.25rem}
+.tb2{width:100%;font-size:.8rem;border-collapse:collapse}.tb2 th,.tb2 td{border-bottom:1px solid var(--line);padding:.4rem .45rem;text-align:left}
+.tb2 th{color:var(--muted);font-weight:600;position:sticky;top:0;background:#f8fafc;z-index:1}
+.tb2 .mono{font-family:var(--mono);font-size:.74rem;word-break:break-all}
+#st{margin-top:.75rem;font:.82rem var(--mono);color:var(--muted)}#st.e{color:var(--no)}#st.o{color:var(--ok)}
+#err:empty{display:none}#err{color:var(--no);font-size:.88rem;padding:.5rem 1.25rem;background:#fef2f2;border-bottom:1px solid #fecaca}
+a{color:var(--a)}a#rj{margin-left:auto;font-size:.78rem;font-weight:500;color:var(--muted)}
+.settings-wide{max-width:100%}
+.tabs{display:flex;flex-wrap:wrap;gap:.35rem;padding:.55rem 1.25rem;border-bottom:1px solid var(--line);background:rgba(255,255,255,.92);align-items:center}
+.tabs .tab-btn{font:inherit;font-size:.84rem;padding:.38rem .85rem;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--txt);cursor:pointer}
+.tabs .tab-btn:hover{background:#f8fafc;border-color:#c7d2e8}
+.tabs .tab-btn[aria-selected="true"]{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8;font-weight:650}
+.tab-panel{display:none;flex-direction:column;gap:1.1rem;padding:1rem 1.25rem 2.5rem;max-width:1280px;margin:0 auto;width:100%}
+.tab-panel.active{display:flex}
+.json-pre{margin:0;max-height:78vh;overflow:auto;padding:1rem;background:#0f172a;color:#e2e8f0;font:12px/1.45 var(--mono);border-radius:10px;white-space:pre}
+.topbar a{color:var(--a);font-size:.84rem;text-decoration:none;font-weight:500}
+.topbar a:hover{text-decoration:underline}
+@media(min-width:1100px){.funnel-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem;align-items:start}.funnel-grid .settings-wide{grid-column:1/-1}}
+</style></head><body>
+<header class="topbar"><h1>Raydium-LP1</h1><span style="margin-left:.25rem;font-size:.84rem"><a href="/positions.html">Positions table</a> · <a href="/index.html">Stack landing</a></span><span class="badge badge-warn">127.0.0.1 only</span><span class="badge" id="stamp">…</span>
+<div class="tb"><label style="font-size:.84rem;color:var(--muted)"><input type="checkbox" id="auto" checked/> Auto 4s</label>
+<button type="button" id="reload">Reload</button><button type="button" id="save" class="p">Save settings</button></div></header>
+<p class="hint-bar">Hover any <strong>setting row</strong> for the full field guide (CSS popover). Tables scroll inside the shaded box — full lists, not truncated.</p>
+<div id="err"></div>
+<div id="mode-bar" class="mode-bar mode-demo">Loading mode…</div>
+<script type="application/json" id="boot">BOOT_JSON</script>
+<nav class="tabs" role="tablist" aria-label="Dashboard views">
+<button type="button" class="tab-btn" role="tab" id="tabbtn-pos" aria-controls="tab-pos" aria-selected="true">Positions · dry-run data</button>
+<button type="button" class="tab-btn" role="tab" id="tabbtn-funnel" aria-controls="tab-funnel" aria-selected="false">Funnel &amp; settings</button>
+<button type="button" class="tab-btn" role="tab" id="tabbtn-raw" aria-controls="tab-raw" aria-selected="false">Project raw JSON</button>
+</nav>
+<div id="tab-pos" class="tab-panel active" role="tabpanel" aria-labelledby="tabbtn-pos" aria-hidden="false">
+<section class="panel"><h2>Wallet &amp; capacity <span class="pill pill-demo">live RPC read</span><span class="sub">Sizing only — tables below are full filter passes in dry-run</span></h2><div id="wall" class="bd"></div></section>
+<section class="panel"><h2>Candidate pools <span class="pill pill-demo">shortlist</span><span class="sub">Same rows as <code>last_scan.candidates</code> in dashboard.json</span></h2><div id="cand" class="bd"></div></section>
+<section class="panel"><h2>Momentum HOT (top) <span class="pill pill-demo">sniffer</span><span class="sub"><code>momentum_hot_top</code> — fee-rush leaderboard</span></h2><div id="mom" class="bd"></div></section>
+<section class="panel"><h2>Open / watchlist <span class="pill pill-demo">dry-run stand-in</span><span class="sub">Mirrors positions when executor is off — not on-chain fills</span></h2><div id="openp" class="bd"></div></section>
+<section class="panel"><h2>Closed <span class="pill pill-live">live slot</span><span class="sub">Reserved when your runner writes <code>closed_positions</code></span></h2><div id="clop" class="bd"></div></section>
+<section class="panel"><h2>Recent alerts</h2><div id="alerts" class="bd"></div></section>
+</div>
+<div id="tab-funnel" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-funnel" aria-hidden="true">
+<div class="funnel-grid">
+<section class="panel"><h2>Scan funnel <a id="rj" href="api/dashboard">GET /api/dashboard →</a></h2><div id="fu" class="bd"></div></section>
+<section class="panel settings-wide"><h2>Settings <span class="sub">POST merges into <code>config/settings.json</code></span></h2><div class="bd"><div id="fo"></div><div id="st"></div></div></section>
+</div>
+<section class="panel settings-wide"><h2>RPC health <span class="pill pill-demo">live</span><span class="sub">Solana <code>getHealth</code> per configured RPC (from <code>rpc_health</code> in dashboard.json)</span></h2><div id="rpc" class="bd"></div></section>
+</div>
+<div id="tab-raw" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-raw" aria-hidden="true">
+<section class="panel"><h2>dashboard.json <span class="sub">Last successful fetch (same file the scanner writes)</span></h2><div class="bd"><pre class="json-pre" id="rawjson">{}</pre></div></section>
+</div>
+<script src="/dashboard_client.js" defer></script>
+</body></html>
