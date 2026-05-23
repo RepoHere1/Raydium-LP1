@@ -264,6 +264,61 @@ def _clamp_pages(requested: int) -> int:
     return requested
 
 
+def _tax_or_slippage_percent(raw: dict[str, Any]) -> tuple[float | None, bool]:
+    """
+    Return (percent, verified).
+    percent: estimated sell tax / max sell slippage, in percent.
+    verified: True only when the source is explicit enough to trust as a hard gate.
+    """
+    for key in (
+        "sell_tax_pct",
+        "tax_sell_pct",
+        "max_sell_slippage_pct",
+        "sell_slippage_pct",
+        "transfer_tax_pct",
+        "hidden_tax_pct",
+    ):
+        v = raw.get(key)
+        try:
+            if v is None or v == "":
+                continue
+            pct = float(v)
+            if pct < 0:
+                continue
+            return pct, True
+        except (TypeError, ValueError):
+            continue
+
+    flags = raw.get("risk") or raw.get("security") or raw.get("token_security") or {}
+    if isinstance(flags, dict):
+        for key in ("sellTax", "buyTax", "maxSellSlippage", "sellSlippage", "tax"):
+            v = flags.get(key)
+            try:
+                if v is None or v == "":
+                    continue
+                pct = float(v)
+                if pct < 0:
+                    continue
+                return pct, True
+            except (TypeError, ValueError):
+                continue
+
+    return None, False
+
+
+def _reject_if_tax_too_high(pool: dict[str, Any]) -> tuple[bool, str | None]:
+    raw = pool.get("raw") if isinstance(pool.get("raw"), dict) else pool
+    pct, verified = _tax_or_slippage_percent(raw)
+    if pct is None:
+        return False, None
+
+    if pct > 15.0:
+        if verified:
+            return True, f"hard reject: verified sell tax/slippage {pct:.2f}% > 15%"
+        return False, f"warning: unverified sell tax/slippage {pct:.2f}% > 15%; source shaky"
+
+    return False, None
+
 def _clamp_page_size(requested: int) -> int:
     if requested < 10:
         return 10
@@ -1629,3 +1684,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

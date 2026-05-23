@@ -1,18 +1,16 @@
 """Local funnel + settings dashboard (loopback-only HTTP).
 
-``GET /`` serves HTML assembled from ``web/dashboard_shell.html`` plus the
-boot JSON; ``GET /dashboard_client.js`` serves the browser bundle from
-``web/dashboard_client.js`` (kept outside this module so merges cannot leave
-Git conflict markers inside Python string literals).
+GET / serves HTML assembled from web/dashboard_shell.html plus the boot JSON.
+GET /dashboard_client.js serves the browser bundle from web/dashboard_client.js.
 
-``GET /api/dashboard`` and ``GET /api/settings`` return JSON.
-``POST /api/settings`` merges an object into ``config/settings.json`` (scanner-known keys only).
+GET /api/dashboard and GET /api/settings return JSON.
+POST /api/settings merges an object into config/settings.json (scanner-known keys only).
 
 Use with::
 
     python -m raydium_lp1.dashboard_web
 
-and run the scanner with ``--dashboard --loop --reload-config-each-scan`` while you tune gates.
+and run the scanner with --dashboard --loop --reload-config-each-scan while you tune gates.
 """
 
 from __future__ import annotations
@@ -48,9 +46,209 @@ def _static_mime(path: Path) -> str:
     return "application/octet-stream"
 
 
-def _serve_repo_static(url_path: str) -> tuple[bytes, str] | None:
-    """Serve whitelisted static files from ``web/`` and repo ``styles.css``."""
+def pool_link(pool_id: str, source: str | None = None) -> str:
+    pid = (pool_id or "").strip()
+    if not pid:
+        return ""
+    s = (source or "").lower()
+    href = "https://raydium.io/portfolio/?position_tab=standard"
+    if "dexscreener" in s:
+        href = f"https://dexscreener.com/solana/{pid}"
+    elif "raydium" in s:
+        href = "https://raydium.io/portfolio/?position_tab=standard"
+    short = pid[:4] + "..." + pid[-4:] if len(pid) > 12 else pid
+    return f'<a class="pool-pill" href="{href}" target="_blank" rel="noopener noreferrer" title="{pid}" data-copy="{pid}"><code>{short}</code></a>'
 
+
+def health_class(value: str | None) -> str:
+    v = (value or "").strip().lower()
+    if v in ("critical", "red", "bad"):
+        return "crit"
+    if v in ("warning", "warn", "yellow"):
+        return "warn"
+    return "ok"
+
+
+def cell(cls: str, value: str) -> str:
+    return f'<td class="{cls}">{value}</td>'
+
+
+def render_table_header() -> str:
+    return "".join([
+        "<thead><tr>",
+        "<th>Pair</th>",
+        "<th>APR</th>",
+        "<th>%TVL</th>",
+        "<th>TVL</th>",
+        "<th>Vol24</th>",
+        "<th>Health</th>",
+        "<th>Mom</th>",
+        "<th>Pool id</th>",
+        "</tr></thead>",
+    ])
+
+
+def paginate_rows(rows: list[dict[str, Any]], page: int, page_size: int = 30) -> list[dict[str, Any]]:
+    page = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 30))
+    start = (page - 1) * page_size
+    end = start + page_size
+    return rows[start:end]
+
+
+def render_table_rows(rows: list[dict[str, Any]]) -> str:
+    return "".join(render_pool_row(row) for row in rows)
+
+
+def render_table_rows_live(rows: list[dict[str, Any]], page: int = 1, page_size: int = 30) -> str:
+    return render_table_rows(paginate_rows(rows, page, page_size))
+
+
+def render_table_rows_demo(rows: list[dict[str, Any]], page: int = 1, page_size: int = 30) -> str:
+    return render_table_rows(paginate_rows(rows, page, page_size))
+
+
+def render_pool_row(row: dict[str, Any]) -> str:
+    return "".join(render_pool_row(row) for row in rows)
+
+
+def render_table_rows_live(rows: list[dict[str, Any]]) -> str:
+    return render_table_rows(rows)
+
+
+def render_table_rows_demo(rows: list[dict[str, Any]]) -> str:
+    return render_table_rows(rows)
+
+
+def render_pool_row(row: dict[str, Any]) -> str:
+    pair = str(row.get("pair", ""))
+    apr = float(row.get("apr", 0) or 0)
+    tvl = float(row.get("liquidity_usd", 0) or 0)
+    vol24 = float(row.get("volume_24h_usd", 0) or 0)
+    mom = float(row.get("momentum_score", 0) or 0)
+    tvl_pct = float(row.get("tvl_pct", row.get("percent_tvl", 0)) or 0)
+    health_raw = row.get("health")
+    health_value = (health_raw or {}).get("score") if isinstance(health_raw, dict) else health_raw
+    health_label = str(row.get("health_label", health_value or ""))
+    health_cls = health_class(health_value if health_value is not None else health_label)
+    pair_cls = "pair ok"
+    if health_cls == "warn":
+        pair_cls = "pair warn"
+    elif health_cls == "crit":
+        pair_cls = "pair crit"
+    return "".join([
+        cell(pair_cls, pair),
+        cell("apr ok" if apr >= 0 else "apr", f"{apr:.2f}"),
+        cell("tvl ok" if tvl >= 0 else "tvl", f"{tvl:,.0f}"),
+        cell("tvlpct ok" if tvl_pct >= 0 else "tvlpct", f"{tvl_pct:.2f}"),
+        cell("vol24 ok" if vol24 >= 0 else "vol24", f"{vol24:,.0f}"),
+        cell(f"health {health_cls}", health_label),
+        cell("mom ok" if mom >= 0 else "mom", f"{mom:.2f}"),
+        cell("poolid", pool_addr_html),
+    ])
+
+
+def health_class(value: str | None) -> str:
+    v = (value or "").strip().lower()
+    if v in ("critical", "red", "bad"):
+        return "crit"
+    if v in ("warning", "warn", "yellow"):
+        return "warn"
+    return "ok"
+
+
+def cell(cls: str, value: str) -> str:
+    return f'<td class="{cls}">{value}</td>'
+
+
+def render_table_header() -> str:
+    return "".join([
+        "<thead><tr>",
+        "<th>Pair</th>",
+        "<th>APR</th>",
+        "<th>%TVL</th>",
+        "<th>TVL</th>",
+        "<th>Vol24</th>",
+        "<th>Health</th>",
+        "<th>Mom</th>",
+        "<th>Pool id</th>",
+        "</tr></thead>",
+    ])
+
+
+def paginate_rows(rows: list[dict[str, Any]], page: int, page_size: int = 30) -> list[dict[str, Any]]:
+    page = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 30))
+    start = (page - 1) * page_size
+    end = start + page_size
+    return rows[start:end]
+
+
+def render_table_rows(rows: list[dict[str, Any]]) -> str:
+    return "".join(render_pool_row(row) for row in rows)
+
+
+def render_table_rows_live(rows: list[dict[str, Any]], page: int = 1, page_size: int = 30) -> str:
+    return render_table_rows(paginate_rows(rows, page, page_size))
+
+
+def render_table_rows_demo(rows: list[dict[str, Any]], page: int = 1, page_size: int = 30) -> str:
+    return render_table_rows(paginate_rows(rows, page, page_size))
+
+
+def render_pool_row(row: dict[str, Any]) -> str:
+    return "".join(render_pool_row(row) for row in rows)
+
+
+def render_table_rows_live(rows: list[dict[str, Any]]) -> str:
+    return render_table_rows(rows)
+
+
+def render_table_rows_demo(rows: list[dict[str, Any]]) -> str:
+    return render_table_rows(rows)
+
+
+def render_pool_row(row: dict[str, Any]) -> str:
+    pair = str(row.get("pair", ""))
+    apr = float(row.get("apr", 0) or 0)
+    tvl = float(row.get("liquidity_usd", 0) or 0)
+    vol24 = float(row.get("volume_24h_usd", 0) or 0)
+    mom = float(row.get("momentum_score", 0) or 0)
+    tvl_pct = float(row.get("tvl_pct", row.get("percent_tvl", 0)) or 0)
+    health_raw = row.get("health")
+    health_value = (health_raw or {}).get("score") if isinstance(health_raw, dict) else health_raw
+    health_label = str(row.get("health_label", health_value or ""))
+    health_cls = health_class(health_value if health_value is not None else health_label)
+    pair_cls = "pair ok"
+    if health_cls == "warn":
+        pair_cls = "pair warn"
+    elif health_cls == "crit":
+        pair_cls = "pair crit"
+    return "".join([
+        cell(pair_cls, pair),
+        cell("apr ok" if apr >= 0 else "apr", f"{apr:.2f}"),
+        cell("tvl ok" if tvl >= 0 else "tvl", f"{tvl:,.0f}"),
+        cell("tvlpct ok" if tvl_pct >= 0 else "tvlpct", f"{tvl_pct:.2f}"),
+        cell("vol24 ok" if vol24 >= 0 else "vol24", f"{vol24:,.0f}"),
+        cell(f"health {health_cls}", health_label),
+        cell("mom ok" if mom >= 0 else "mom", f"{mom:.2f}"),
+        cell("poolid", pool_addr_html),
+    ])
+
+
+def health_class(value: str | None) -> str:
+    v = (value or "").strip().lower()
+    if v in ("critical", "red", "bad"):
+        return "crit"
+    if v in ("warning", "warn", "yellow"):
+        return "warn"
+    return "ok"
+
+
+def cell(cls: str, value: str) -> str:
+    return f'<td class="{cls}">{value}</td>'
+
+def _serve_repo_static(url_path: str) -> tuple[bytes, str] | None:
     files: dict[str, Path] = {
         "/positions.html": WEB_STATIC_DIR / "positions.html",
         "/index.html": WEB_STATIC_DIR / "index.html",
@@ -63,6 +261,7 @@ def _serve_repo_static(url_path: str) -> tuple[bytes, str] | None:
     if not target.is_file():
         return None
     return target.read_bytes(), _static_mime(target)
+
 
 _FORM_SECTIONS: list[dict[str, Any]] = [
     {
@@ -186,52 +385,34 @@ class WebPaths:
 
 
 def _page() -> bytes:
-    """Assemble ``GET /`` HTML from ``web/dashboard_shell.html`` + boot JSON.
-
-    The large client script lives in ``web/dashboard_client.js`` so routine Git
-    merges on ``dashboard_web.py`` cannot corrupt the browser bundle with
-    conflict markers inside Python string literals.
-    """
-
     if not DASHBOARD_SHELL_HTML.is_file():
-        raise RuntimeError(
-            f"Dashboard UI shell missing: {DASHBOARD_SHELL_HTML}. "
-            "Restore web/dashboard_shell.html from the repository."
-        )
+        raise RuntimeError(f"Dashboard UI shell missing: {DASHBOARD_SHELL_HTML}.")
     shell = DASHBOARD_SHELL_HTML.read_text(encoding="utf-8")
     if "BOOT_JSON" not in shell:
         raise RuntimeError(f"{DASHBOARD_SHELL_HTML} must contain the BOOT_JSON placeholder")
-    boot_payload = {"form_sections": _FORM_SECTIONS}
-    html = shell.replace(
-        "BOOT_JSON",
-        json.dumps(boot_payload, separators=(",", ":")),
-    )
+    boot_payload = {"form_sections": _FORM_SECTIONS, "table_page_size": 30, "mode_tabs": ["LIVE", "DEMO"]}
+    html = shell.replace("BOOT_JSON", json.dumps(boot_payload, separators=(",", ":")))
     raw = html.encode("utf-8")
     if b"<<<<<<<" in raw or b">>>>>>>" in raw:
-        raise RuntimeError(
-            "dashboard shell contains git merge conflict markers — fix web/dashboard_shell.html"
-        )
+        raise RuntimeError("dashboard shell contains git merge conflict markers")
     if DASHBOARD_CLIENT_JS.is_file():
         js_bytes = DASHBOARD_CLIENT_JS.read_bytes()
         if b"<<<<<<<" in js_bytes or b">>>>>>>" in js_bytes:
-            raise RuntimeError(
-                "dashboard_client.js contains git merge conflict markers — fix web/dashboard_client.js"
-            )
+            raise RuntimeError("dashboard_client.js contains git merge conflict markers")
     return raw
 
 
 def main(argv: list[str] | None = None) -> int:
-    import urllib.parse as up  # noqa: PLC0415
+    import urllib.parse as up
 
     parser = argparse.ArgumentParser(description="Raydium-LP1 local dashboard (127.0.0.1 only).")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind address (default loopback).")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8844)
     parser.add_argument("--dashboard", type=Path, default=DEFAULT_DASHBOARD_PATH)
     parser.add_argument("--settings", type=Path, default=DEFAULT_SETTINGS_PATH)
     args = parser.parse_args(argv)
 
     paths = WebPaths(dashboard_path=args.dashboard, settings_path=args.settings)
-
     blob = {"page": _page()}
 
     class DashboardHandler(BaseHTTPRequestHandler):
@@ -249,10 +430,8 @@ def main(argv: list[str] | None = None) -> int:
             raw = json.dumps(obj, indent=2, sort_keys=True).encode("utf-8") + b"\n"
             self._send(code, raw, "application/json; charset=utf-8")
 
-        def do_GET(self) -> None:  # noqa: N802
-            path = up.urlparse(self.path).path
-            if path != "/" and path.endswith("/"):
-                path = path.rstrip("/")
+        def do_GET(self) -> None:
+            path = up.urlparse(self.path).path.rstrip("/") or "/"
             static = _serve_repo_static(path)
             if static is not None:
                 body, ctype = static
@@ -264,10 +443,7 @@ def main(argv: list[str] | None = None) -> int:
             if path == "/api/dashboard":
                 dpath = paths.dashboard_path
                 if not dpath.exists():
-                    self._send_json(
-                        404,
-                        {"error": f"Dashboard not found: {dpath} (run scanner with --dashboard)"},
-                    )
+                    self._send_json(404, {"error": f"Dashboard not found: {dpath}"})
                     return
                 try:
                     data = json.loads(dpath.read_text(encoding="utf-8"))
@@ -277,9 +453,8 @@ def main(argv: list[str] | None = None) -> int:
                 self._send_json(200, data)
                 return
             if path == "/api/settings":
-                sp = paths.settings_path
                 try:
-                    data = load_settings_json(sp)
+                    data = load_settings_json(paths.settings_path)
                 except (OSError, ValueError) as exc:
                     self._send_json(500, {"error": str(exc)})
                     return
@@ -294,22 +469,15 @@ def main(argv: list[str] | None = None) -> int:
                         return
                     self._send(200, raw, "text/plain; charset=utf-8")
                     return
-                msg = (
-                    "(No scan console log here. It is written when you run "
-                    "`python -m raydium_lp1.web_stack` with the scanner child, which tees stdout to "
-                    f"{WEB_SCAN_CONSOLE_LOG.name}.)\n"
-                )
-                self._send(200, msg.encode("utf-8"), "text/plain; charset=utf-8")
+                self._send(200, b"(scan console log not found)\n", "text/plain; charset=utf-8")
                 return
             if path == "/health":
                 self._send_json(200, {"ok": True, "service": "raydium-lp1-dashboard", "port": self.server.server_address[1]})
                 return
             self._send_json(404, {"error": "not found"})
 
-        def do_POST(self) -> None:  # noqa: N802
-            path = up.urlparse(self.path).path
-            if path != "/" and path.endswith("/"):
-                path = path.rstrip("/")
+        def do_POST(self) -> None:
+            path = up.urlparse(self.path).path.rstrip("/") or "/"
             if path != "/api/settings":
                 self._send_json(404, {"error": "not found"})
                 return
@@ -344,3 +512,14 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
+
+
+
+
+
+
+
+
