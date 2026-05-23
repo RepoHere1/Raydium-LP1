@@ -13,10 +13,12 @@ import unittest
 
 from raydium_lp1.scanner import (
     ScannerConfig,
+    effective_pool_type,
     filter_pool,
     normalize_pool,
     pool_apr,
     pool_fee_24h,
+    pool_list_url,
     pool_volume,
 )
 
@@ -66,6 +68,19 @@ LIVE_POOL = {
 }
 
 
+class RaydiumUrlTests(unittest.TestCase):
+    def test_empty_pool_type_becomes_all(self):
+        self.assertEqual(effective_pool_type(""), "all")
+        self.assertEqual(effective_pool_type("   "), "all")
+        self.assertEqual(effective_pool_type("standard"), "standard")
+
+    def test_pool_list_url_never_emits_blank_pool_type(self):
+        cfg = ScannerConfig(pool_type="")
+        url = pool_list_url(cfg, page=1)
+        self.assertIn("poolType=all", url)
+        self.assertNotIn("poolType=&", url)
+
+
 class LiveApiParsingTests(unittest.TestCase):
     def test_wsol_alias_to_sol(self):
         pool = normalize_pool(LIVE_POOL, "apr24h")
@@ -105,6 +120,28 @@ class LiveApiParsingTests(unittest.TestCase):
         self.assertEqual(pool["type"], "Standard")
         self.assertEqual(pool["lp_mint_address"], "LpMintTest1111111111111111111111111111111111")
         self.assertEqual(pool["config_account_id"], "CfgAccTest1111111111111111111111111111111111")
+
+    def test_standard_pool_extracts_market_and_lp_mint(self):
+        standard = {
+            **LIVE_POOL,
+            "id": "AthPool1111111111111111111111111111111111111",
+            "marketId": "Mkt1111111111111111111111111111111111111111",
+            "lpMint": {"address": "LpMint1111111111111111111111111111111111"},
+        }
+        pool = normalize_pool(standard, "apr24h")
+        self.assertEqual(pool["market_id"], "Mkt1111111111111111111111111111111111111111")
+        self.assertEqual(pool["lp_mint_address"], "LpMint1111111111111111111111111111111111")
+
+    def test_token_mint_never_uses_config_id(self):
+        bad = {
+            "id": "pool-real-id",
+            "mintA": {"id": "BgxH5ifebqHDuiADWKhLjXGP5hWZeZLoCdmeWJLkRqLP", "symbol": "SOL"},
+            "mintB": {"address": "TokenMint1111111111111111111111111111111111", "symbol": "X"},
+        }
+        pool = normalize_pool(bad, "apr24h")
+        self.assertEqual(pool["id"], "pool-real-id")
+        self.assertEqual(pool["mint_a"], "")
+        self.assertEqual(pool["mint_b"], "TokenMint1111111111111111111111111111111111")
 
     def test_pool_state_prefers_pool_id_over_generic_id(self):
         trimmed = {

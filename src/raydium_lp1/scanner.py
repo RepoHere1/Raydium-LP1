@@ -13,7 +13,7 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -25,9 +25,12 @@ from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
 from raydium_lp1 import emergency, health, lp_range_planner, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1.http_fetch import fetch_json_get, make_json_get_fetcher
+from raydium_lp1.http_json import load_json_from_urlopen_response
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
+DEFAULT_POOL_TYPE = "all"
 DEFAULT_CONFIG_PATH = Path("config/settings.json")
 FALLBACK_CONFIG_PATH = Path("config/filters.example.json")
 DEFAULT_ENV_PATH = Path(".env")
@@ -70,7 +73,7 @@ class ScannerConfig:
     pages: int = 1
     http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS
     page_delay_seconds: float = DEFAULT_PAGE_DELAY_SECONDS
-    pool_type: str = "all"
+    pool_type: str = DEFAULT_POOL_TYPE
     sort_type: str = "desc"
     min_liquidity_usd: float = 1_000.0
     min_volume_24h_usd: float = 100.0
@@ -122,6 +125,8 @@ class ScannerConfig:
     momentum_sweet_max_pool_age_hours: float = 168.0
     momentum_min_tvl_usd: float = 0.0
     sort_candidates_by_momentum: bool = True
+    # When momentum is off, rank the shortlist by Raydium ``day.apr`` (highest first).
+    sort_candidates_by_apr: bool = False
     momentum_top_hot: int = 25
     momentum_detective_enabled: bool = True
     momentum_probe_market_lists: bool = True
@@ -136,6 +141,18 @@ class ScannerConfig:
     lp_main_budget_fraction: float = 0.75
     lp_max_positions_per_mint: int = 2
     risk_profile: str = "balanced"  # balanced | degen
+    # Fast candidate discovery: TVL sort, no Jupiter route probes, no on-chain verify.
+    scan_tune_mode: bool = False
+    # High-APR discovery: liquid pools first, APR-ranked shortlist (matches raydium.io day.apr).
+    scan_hyper_apr_mode: bool = False
+
+    def __post_init__(self) -> None:
+        """Drop invalid RPC URLs from any construction path (not only ``from_file``)."""
+
+        raw = list(self.solana_rpc_urls)
+        cleaned = pool_verify.filter_rpc_urls(raw, warn=True)
+        if cleaned != raw:
+            object.__setattr__(self, "solana_rpc_urls", cleaned)
 
     @classmethod
     def from_file(cls, path: Path) -> "ScannerConfig":
@@ -149,6 +166,8 @@ class ScannerConfig:
         config_urls = [str(value).strip() for value in raw.get("solana_rpc_urls", []) if str(value).strip()]
         env_strategy = os.environ.get("RAYDIUM_LP1_STRATEGY", "").strip() or None
         raw_with_strategy = strategies.apply_strategy(raw, env_strategy or raw.get("strategy"))
+        merged_rpc = dedupe([*env_urls, *config_urls])
+        rpc_clean = pool_verify.filter_rpc_urls(merged_rpc) or [pool_verify.DEFAULT_PUBLIC_RPC]
         return cls(
             min_apr=float(raw_with_strategy.get("min_apr", cls.min_apr)),
             apr_field=str(raw_with_strategy.get("apr_field", cls.apr_field)),
@@ -157,7 +176,7 @@ class ScannerConfig:
             pages=_clamp_pages(int(raw_with_strategy.get("pages", cls.pages))),
             http_timeout_seconds=max(3, int(raw_with_strategy.get("http_timeout_seconds", DEFAULT_HTTP_TIMEOUT_SECONDS))),
             page_delay_seconds=max(0.0, float(raw_with_strategy.get("page_delay_seconds", DEFAULT_PAGE_DELAY_SECONDS))),
-            pool_type=str(raw_with_strategy.get("pool_type", cls.pool_type)),
+            pool_type=effective_pool_type(str(raw_with_strategy.get("pool_type", cls.pool_type))),
             sort_type=str(raw_with_strategy.get("sort_type", cls.sort_type)),
             min_liquidity_usd=float(raw_with_strategy.get("min_liquidity_usd", cls.min_liquidity_usd)),
             min_volume_24h_usd=float(raw_with_strategy.get("min_volume_24h_usd", cls.min_volume_24h_usd)),
@@ -168,7 +187,7 @@ class ScannerConfig:
             require_pool_id=bool(raw_with_strategy.get("require_pool_id", True)),
             dry_run=bool(raw_with_strategy.get("dry_run", True)),
             raydium_api_base=str(raw_with_strategy.get("raydium_api_base") or os.environ.get("RAYDIUM_API_BASE") or RAYDIUM_API_BASE),
-            solana_rpc_urls=dedupe([*env_urls, *config_urls]),
+            solana_rpc_urls=rpc_clean,
             strategy=strategies.normalize_strategy(str(raw_with_strategy.get("strategy", strategies.STRATEGY_CUSTOM))),
             require_sell_route=bool(raw_with_strategy.get("require_sell_route", True)),
             route_sources=tuple(
@@ -182,8 +201,9 @@ class ScannerConfig:
             min_burn_percent=float(raw_with_strategy.get("min_burn_percent", 0.0)),
             track_liquidity_health=bool(raw_with_strategy.get("track_liquidity_health", True)),
             liquidity_history_path=str(
-                raw_with_strategy.get("liquidity_history_path", "reports/liquidity_history.json")
-            ),
+                raw_with_strategy.get("liquidity_history_path") or "reports/liquidity_history.json"
+            ).strip()
+            or "reports/liquidity_history.json",
             emergency_close_enabled=bool(raw_with_strategy.get("emergency_close_enabled", True)),
             emergency_alerts_path=str(
                 raw_with_strategy.get("emergency_alerts_path", "reports/alerts.json")
@@ -220,6 +240,7 @@ class ScannerConfig:
             ),
             momentum_min_tvl_usd=float(raw_with_strategy.get("momentum_min_tvl_usd", 0.0)),
             sort_candidates_by_momentum=bool(raw_with_strategy.get("sort_candidates_by_momentum", True)),
+            sort_candidates_by_apr=bool(raw_with_strategy.get("sort_candidates_by_apr", False)),
             momentum_top_hot=max(1, int(raw_with_strategy.get("momentum_top_hot", 25))),
             momentum_detective_enabled=bool(raw_with_strategy.get("momentum_detective_enabled", True)),
             momentum_probe_market_lists=bool(raw_with_strategy.get("momentum_probe_market_lists", True)),
@@ -233,6 +254,8 @@ class ScannerConfig:
             lp_main_budget_fraction=float(raw_with_strategy.get("lp_main_budget_fraction", 0.75)),
             lp_max_positions_per_mint=max(1, int(raw_with_strategy.get("lp_max_positions_per_mint", 2))),
             risk_profile=str(raw_with_strategy.get("risk_profile") or "balanced"),
+            scan_tune_mode=bool(raw_with_strategy.get("scan_tune_mode", False)),
+            scan_hyper_apr_mode=bool(raw_with_strategy.get("scan_hyper_apr_mode", False)),
         )
 
 
@@ -251,6 +274,13 @@ def _clamp_pages(requested: int) -> int:
         )
         return MAX_PAGES_HARD_CEILING
     return requested
+
+
+def effective_pool_type(pool_type: str | None) -> str:
+    """Raydium list API returns HTTP 500 when ``poolType`` is empty — use ``all``."""
+
+    value = str(pool_type or "").strip()
+    return value if value else DEFAULT_POOL_TYPE
 
 
 def _clamp_page_size(requested: int) -> int:
@@ -327,8 +357,12 @@ def token_symbol(token: Any) -> str:
 
 
 def token_mint(token: Any) -> str:
+    """SPL token mint only — never use generic ``id`` (pool/config accounts also have ``id``)."""
+
     if isinstance(token, dict):
-        return str(token.get("address") or token.get("mint") or token.get("id") or "")
+        addr = token.get("address") or token.get("mint")
+        if addr:
+            return str(addr)
     return ""
 
 
@@ -444,6 +478,7 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
     lp_mint_address = str(lp_mint_obj.get("address") or "")
     cfg_obj = pool.get("config") if isinstance(pool.get("config"), dict) else {}
     config_account_id = str(cfg_obj.get("id") or "")
+    market_id = str(pool.get("marketId") or pool.get("market_id") or "")
     pool_state_id = str(nested_get(pool, "poolId", "ammId", "id", default=""))
 
     return {
@@ -473,6 +508,7 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
         "mint_a_tags": list(mint_a.get("tags") or []) if isinstance(mint_a, dict) else [],
         "mint_b_tags": list(mint_b.get("tags") or []) if isinstance(mint_b, dict) else [],
         "lp_mint_address": lp_mint_address,
+        "market_id": market_id,
         "config_account_id": config_account_id,
         "raw": pool,
     }
@@ -493,32 +529,35 @@ def extract_pool_items(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def fetch_json(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS) -> dict[str, Any]:
-    request = Request(url, headers={"accept": "application/json", "user-agent": "Raydium-LP1/0.6"})
-    try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - intentional public API read
-            return json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        raise RuntimeError(f"API returned HTTP {exc.code} for {url}") from exc
-    except URLError as exc:
-        reason = getattr(exc, "reason", exc)
-        raise RuntimeError(f"API request failed for {url}: {reason}") from exc
-    except TimeoutError as exc:
-        raise RuntimeError(f"API request timed out after {timeout}s for {url}") from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"API returned invalid JSON for {url}: {exc}") from exc
+    return fetch_json_get(
+        url,
+        timeout=timeout,
+        headers={
+            "accept": "application/json",
+            "accept-encoding": "identity",
+            "user-agent": "Raydium-LP1/0.7",
+        },
+    )
 
 
 def post_json(url: str, payload: dict[str, Any], timeout: int = 12) -> dict[str, Any]:
+    if not pool_verify.is_valid_solana_rpc_url(url):
+        raise RuntimeError(f"Invalid Solana RPC URL for POST: {url!r}")
     data = json.dumps(payload).encode("utf-8")
     request = Request(
         url,
         data=data,
-        headers={"content-type": "application/json", "accept": "application/json", "user-agent": "Raydium-LP1/0.2"},
+        headers={
+            "content-type": "application/json",
+            "accept": "application/json",
+            "accept-encoding": "identity",
+            "user-agent": "Raydium-LP1/0.2",
+        },
         method="POST",
     )
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - user-configured RPC read
-            return json.loads(response.read().decode("utf-8"))
+            return load_json_from_urlopen_response(response)
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(str(exc)) from exc
 
@@ -526,6 +565,7 @@ def post_json(url: str, payload: dict[str, Any], timeout: int = 12) -> dict[str,
 def check_rpc_urls(urls: list[str]) -> list[dict[str, Any]]:
     """Ping configured Solana RPCs with getHealth for live-source diagnostics."""
 
+    urls = pool_verify.filter_rpc_urls(urls, warn=False) or [pool_verify.DEFAULT_PUBLIC_RPC]
     results: list[dict[str, Any]] = []
     for index, url in enumerate(urls, start=1):
         masked = mask_secret_url(url)
@@ -557,9 +597,81 @@ def raydium_pool_sort_param(config: ScannerConfig) -> str:
     return psf or config.apr_field
 
 
+def effective_scan_config(config: ScannerConfig) -> ScannerConfig:
+    """Apply fast tune / hyper-APR overrides (no route/RPC verify during discovery)."""
+
+    if config.scan_hyper_apr_mode:
+        sort_field = (config.pool_sort_field or "").strip() or "liquidity"
+        return replace(
+            config,
+            pool_sort_field=sort_field,
+            hard_exit_min_tvl_usd=0.0,
+            require_sell_route=False,
+            verify_pool_on_chain=False,
+            verify_pool_raydium_api=False,
+            require_verified_raydium_pool=False,
+            momentum_enabled=False,
+            momentum_detective_enabled=False,
+            momentum_probe_market_lists=False,
+            sort_candidates_by_momentum=False,
+            sort_candidates_by_apr=True,
+        )
+    if not config.scan_tune_mode:
+        return config
+    sort_field = (config.pool_sort_field or "").strip() or "liquidity"
+    return replace(
+        config,
+        pool_sort_field=sort_field,
+        require_sell_route=False,
+        verify_pool_on_chain=False,
+        verify_pool_raydium_api=False,
+        require_verified_raydium_pool=False,
+        momentum_enabled=False,
+        momentum_detective_enabled=False,
+        momentum_probe_market_lists=False,
+        sort_candidates_by_momentum=False,
+        sort_candidates_by_apr=True,
+    )
+
+
+def print_scan_config_warnings(config: ScannerConfig, *, stream_cfg: verdicts.StreamConfig | None = None) -> None:
+    """Warn when Raydium sort order will flood the funnel with APR dust."""
+
+    if not stream_cfg or not stream_cfg.enabled:
+        return
+    sort_by = raydium_pool_sort_param(config)
+    if config.scan_hyper_apr_mode:
+        print(
+            "[scan] HYPER-APR MODE — Raydium list by "
+            f"{sort_by}; shortlist ranked by day.apr (same % as raydium.io). "
+            f"min_apr={config.min_apr} min_liquidity_usd={config.min_liquidity_usd:,.0f}; "
+            "no Jupiter route probes.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    if config.scan_tune_mode:
+        print(
+            "[scan] TUNE MODE — sorted by "
+            f"{sort_by}, shortlist ranked by day.apr; no sell-route probes, no on-chain verify.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    if sort_by == config.apr_field:
+        print(
+            f"[scan] WARNING: Raydium list sorted by {sort_by} (APR-first). "
+            "Page 1 is mostly $0–$5 TVL dust — almost all [REJ]. "
+            "Fix: browser → pool_sort_field=liquidity, min_liquidity_usd=10000, "
+            "uncheck require_sell_route — OR run: .\\scripts\\run_tune_scan.ps1",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def pool_list_url(config: ScannerConfig, page: int = 1) -> str:
     params = {
-        "poolType": config.pool_type,
+        "poolType": effective_pool_type(config.pool_type),
         "poolSortField": raydium_pool_sort_param(config),
         "sortType": config.sort_type,
         "pageSize": config.page_size,
@@ -680,14 +792,68 @@ def assess_capacity(
     }
 
 
+def _sellability_checker_for(config: ScannerConfig) -> Any:
+    if not config.require_sell_route:
+        return None
+    max_impact = config.max_route_price_impact_pct if config.max_route_price_impact_pct > 0 else 0.0
+    route_timeout = min(8, max(3, int(config.http_timeout_seconds)))
+    route_fetcher = make_json_get_fetcher(timeout=route_timeout, max_attempts=2)
+
+    def _sell_check(p: dict) -> routes.SellabilityResult:
+        return routes.check_pool_sellability(
+            p,
+            base_symbols=tuple(s.upper() for s in sorted(config.allowed_quote_symbols)),
+            sources=config.route_sources,
+            fetcher=route_fetcher,
+            max_route_price_impact_pct=max_impact,
+        )
+
+    return _sell_check
+
+
+def _settings_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _reload_config_if_changed(
+    path: Path,
+    config: ScannerConfig,
+    last_mtime: float,
+) -> tuple[ScannerConfig, float]:
+    """Reload settings from disk when the file mtime advances."""
+
+    mtime = _settings_mtime(path)
+    if mtime <= last_mtime + 1e-6:
+        return config, last_mtime
+    try:
+        new_cfg = ScannerConfig.from_file(path)
+    except ValueError as exc:
+        print(f"[scan] settings changed but reload failed: {exc}", file=sys.stderr, flush=True)
+        return config, last_mtime
+    print(
+        f"[scan] reloaded {path} · min_apr={new_cfg.min_apr} "
+        f"min_tvl={new_cfg.min_liquidity_usd} hard_exit_tvl={new_cfg.hard_exit_min_tvl_usd} "
+        f"pages={new_cfg.pages}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return new_cfg, mtime
+
+
 def scan(
     config: ScannerConfig,
     *,
+    config_path: Path | None = None,
+    reload_config_when_changed: bool = False,
     sellability_checker: Any = None,
     wallet_config: wallet_mod.WalletConfig | None = None,
     rpc_post: Any = None,
     verdict_stream: verdicts.StreamConfig | None = None,
     write_rejections_override: bool | None = None,
+    live_dashboard: bool = True,
 ) -> dict[str, Any]:
     """Run a single scan pass.
 
@@ -696,6 +862,17 @@ def scan(
     ``write_rejections_override`` when set (non-``None``) forces rejection CSV
     on/off for this run regardless of ``config.write_rejections``.
     """
+
+    config = effective_scan_config(config)
+    fixed_pool_type = effective_pool_type(config.pool_type)
+    if fixed_pool_type != str(config.pool_type or "").strip():
+        print(
+            f"[scan] fixed empty pool_type → {fixed_pool_type!r} "
+            f"(Raydium returns HTTP 500 for poolType=)",
+            file=sys.stderr,
+            flush=True,
+        )
+    config = replace(config, pool_type=fixed_pool_type)
 
     from collections import Counter as _Counter
     candidates: list[dict[str, Any]] = []
@@ -710,6 +887,7 @@ def scan(
     stream_cfg = verdict_stream if verdict_stream is not None else verdicts.make_stream_config(enabled=False)
     if verdict_stream is not None and verdict_stream.enabled:
         verdict_stream.row_emit_count = 0
+        verdict_stream.rejects_suppressed = 0
 
     adapter = networks.get_adapter(config.network)
     if not adapter.supports_live:
@@ -756,53 +934,135 @@ def scan(
             ),
         }
 
-    if sellability_checker is None and config.require_sell_route:
-        max_impact = config.max_route_price_impact_pct if config.max_route_price_impact_pct > 0 else 0.0
+    print_scan_config_warnings(config, stream_cfg=stream_cfg)
 
-        def _sell_check(p: dict) -> routes.SellabilityResult:
-            return routes.check_pool_sellability(
-                p,
-                base_symbols=tuple(s.upper() for s in sorted(config.allowed_quote_symbols)),
-                sources=config.route_sources,
-                max_route_price_impact_pct=max_impact,
-            )
+    wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
 
-        sellability_checker = _sell_check
+    if sellability_checker is None:
+        sellability_checker = _sellability_checker_for(config)
+    if sellability_checker is not None and stream_cfg.enabled:
+        route_timeout = min(8, max(3, int(config.http_timeout_seconds)))
+        print(
+            f"[scan] sell-route probes ON (Jupiter/Raydium, timeout={route_timeout}s each, "
+            f"sources={list(config.route_sources)}) — disable require_sell_route in settings "
+            "to speed up APR/TVL tuning scans.",
+            file=sys.stderr,
+            flush=True,
+        )
 
-    for page in range(1, config.pages + 1):
+    settings_mtime = _settings_mtime(config_path) if config_path else 0.0
+    pages_failed = 0
+    dashboard_mod.write_scan_heartbeat(
+        phase="scan_start",
+        pages_total=config.pages,
+        scanned_so_far=0,
+    )
+
+    page = 1
+    while page <= config.pages:
+        if config_path is not None and reload_config_when_changed:
+            config, settings_mtime = _reload_config_if_changed(config_path, config, settings_mtime)
+            sellability_checker = _sellability_checker_for(config)
         url = pool_list_url(config, page=page)
+        page_pass = 0
+        page_reject = 0
+        suppressed_at_page_start = stream_cfg.rejects_suppressed
         # Always announce the in-flight request so users can tell a slow
         # remote API apart from a hard hang.
+        if page == 1:
+            print(
+                f"[scan] Raydium list poolType={effective_pool_type(config.pool_type)!r} "
+                f"(settings pool_type={config.pool_type!r})",
+                file=sys.stderr,
+                flush=True,
+            )
         print(
             f"[scan] page {page}/{config.pages} (page_size={config.page_size}, "
             f"sort={raydium_pool_sort_param(config)}, timeout={config.http_timeout_seconds}s)...",
             file=sys.stderr,
             flush=True,
         )
-        response = fetch_json(url, timeout=config.http_timeout_seconds)
+        dashboard_mod.write_scan_heartbeat(
+            phase="page_fetch",
+            pages_total=config.pages,
+            page=page,
+            scanned_so_far=scanned,
+            candidates_so_far=len(candidates),
+            rejected_so_far=len(rejected),
+            pages_failed=pages_failed,
+        )
+        try:
+            response = fetch_json(url, timeout=config.http_timeout_seconds)
+        except RuntimeError as exc:
+            pages_failed += 1
+            err = str(exc)
+            print(
+                f"[scan] page {page}/{config.pages} FAILED (skipping): {err}",
+                file=sys.stderr,
+                flush=True,
+            )
+            dashboard_mod.write_scan_heartbeat(
+                phase="page_failed",
+                pages_total=config.pages,
+                page=page,
+                scanned_so_far=scanned,
+                candidates_so_far=len(candidates),
+                rejected_so_far=len(rejected),
+                pages_failed=pages_failed,
+                last_error=err,
+            )
+            if page < config.pages and config.page_delay_seconds > 0:
+                time.sleep(config.page_delay_seconds)
+            page += 1
+            continue
         items = extract_pool_items(response)
+        page_pools = [normalize_pool(item, config.apr_field) for item in items]
         if stream_cfg.enabled:
             verdicts.print_verdict_column_headers(stream_cfg, page=page)
-        if page < config.pages and config.page_delay_seconds > 0:
-            time.sleep(config.page_delay_seconds)
-        page_pools = [normalize_pool(item, config.apr_field) for item in items]
+        verify_enabled = (
+            config.require_verified_raydium_pool
+            or config.verify_pool_on_chain
+            or config.verify_pool_raydium_api
+        )
         if config.verify_pool_on_chain:
-            pool_verify.prefetch_account_owners(
-                [str(p.get("id") or "") for p in page_pools if p.get("id")],
-                config.solana_rpc_urls,
-                owner_cache=on_chain_owner_cache,
-                rpc_post=rpc_post,
-            )
-        for pool in page_pools:
+            verify_ids = [
+                str(p.get("id") or "")
+                for p in page_pools
+                if p.get("id") and filter_pool(p, config)[0]
+            ]
+            if verify_ids:
+                pool_verify.prefetch_account_owners(
+                    verify_ids,
+                    config.solana_rpc_urls,
+                    owner_cache=on_chain_owner_cache,
+                    rpc_post=rpc_post,
+                )
+        page_pool_total = len(page_pools)
+        for pool_idx, pool in enumerate(page_pools, start=1):
+            if page_pool_total > 400 and pool_idx % 250 == 0:
+                print(
+                    f"[scan] page {page}/{config.pages}: processed {pool_idx}/{page_pool_total} pools…",
+                    file=sys.stderr,
+                    flush=True,
+                )
             scanned += 1
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
             if config.lp_planning_enabled and pool.get("raw") is not None:
                 public_pool["raw"] = pool["raw"]
-            if (
-                config.require_verified_raydium_pool
-                or config.verify_pool_on_chain
-                or config.verify_pool_raydium_api
-            ):
+            ok, reasons = filter_pool(pool, config)
+            if not ok:
+                verdicts.emit_reject(public_pool, reasons, stream_cfg, idx=reject_idx)
+                reject_idx += 1
+                page_reject += 1
+                category = verdicts._classify_reason(reasons[0]) if reasons else "other"
+                rejection_counts[category] += 1
+                if reasons:
+                    key = reasons[0][:200]
+                    reason_histogram[key] += 1
+                rejected.append({**public_pool, "reasons": reasons})
+                continue
+
+            if verify_enabled:
                 verification = pool_verify.validate_pool(
                     public_pool,
                     api_base=config.raydium_api_base,
@@ -823,18 +1083,8 @@ def scan(
                     rejection_counts[cat] += 1
                     reason_histogram[verify_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": verify_reasons})
+                    page_reject += 1
                     continue
-            ok, reasons = filter_pool(pool, config)
-            if not ok:
-                verdicts.emit_reject(public_pool, reasons, stream_cfg, idx=reject_idx)
-                reject_idx += 1
-                category = verdicts._classify_reason(reasons[0]) if reasons else "other"
-                rejection_counts[category] += 1
-                if reasons:
-                    key = reasons[0][:200]
-                    reason_histogram[key] += 1
-                rejected.append({**public_pool, "reasons": reasons})
-                continue
 
             if sellability_checker is not None:
                 sell = sellability_checker(public_pool)
@@ -848,6 +1098,7 @@ def scan(
                     if sell_reasons:
                         reason_histogram[sell_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": sell_reasons})
+                    page_reject += 1
                     continue
 
             mom_cfg = momentum.momentum_config_from_scanner(config)
@@ -862,17 +1113,85 @@ def scan(
                     if mom_reasons:
                         reason_histogram[mom_reasons[0][:200]] += 1
                     rejected.append({**public_pool, "reasons": mom_reasons})
+                    page_reject += 1
                     continue
 
             verdicts.emit_pass(public_pool, stream_cfg)
             candidates.append(public_pool)
+            page_pass += 1
+
+        suppressed_this_page = stream_cfg.rejects_suppressed - suppressed_at_page_start
+        if stream_cfg.enabled:
+            verdicts.print_page_verdict_rollup(
+                stream_cfg,
+                page=page,
+                total_pages=config.pages,
+                api_pool_count=len(page_pools),
+                passed=page_pass,
+                rejected=page_reject,
+                suppressed_this_page=suppressed_this_page,
+            )
+        if live_dashboard:
+            try:
+                dashboard_mod.write_live_scan_dashboard(
+                    config=config,
+                    candidates=candidates,
+                    scanned_count=scanned,
+                    rejected_count=len(rejected),
+                    rejection_breakdown={str(k): int(v) for k, v in rejection_counts.items()},
+                    scan_phase="scanning",
+                    scan_page=page,
+                    pages_total=config.pages,
+                    raydium_api_base=config.raydium_api_base,
+                    sort_by_apr=config.sort_candidates_by_apr,
+                    wallet_capacity=wallet_capacity_info,
+                )
+            except OSError:
+                pass
+
+        if page < config.pages and config.page_delay_seconds > 0:
+            time.sleep(config.page_delay_seconds)
+        page += 1
+
+    dashboard_mod.write_scan_heartbeat(
+        phase="scan_complete",
+        pages_total=config.pages,
+        scanned_so_far=scanned,
+        candidates_so_far=len(candidates),
+        rejected_so_far=len(rejected),
+        pages_failed=pages_failed,
+    )
+    if pages_failed:
+        print(
+            f"[scan] warning: {pages_failed} page(s) failed (network/API); "
+            f"results are partial — consider lowering pages/page_size or raising http_timeout_seconds",
+            file=sys.stderr,
+            flush=True,
+        )
+    if pages_failed >= config.pages and scanned == 0:
+        print(
+            "[scan] ERROR: Raydium returned no pool pages (check pool_type=all in settings — "
+            "empty poolType causes HTTP 500). Candidates cleared for this cycle.",
+            file=sys.stderr,
+            flush=True,
+        )
+        candidates.clear()
 
     health_summary = {"healthy": 0, "warning": 0, "critical": 0}
     triggered_alerts: list[dict[str, Any]] = []
     assessments: list[Any] = []
     if config.track_liquidity_health and candidates:
-        history_path = Path(config.liquidity_history_path)
-        assessments, _ = health.assess_pools(candidates, history_path=history_path)
+        history_path = health.normalize_history_path(config.liquidity_history_path)
+        try:
+            assessments, _ = health.assess_pools(candidates, history_path=history_path)
+        except OSError as exc:
+            print(
+                f"[scan] liquidity history save failed ({history_path}): {exc} — "
+                "check liquidity_history_path in settings (must not be blank)",
+                file=sys.stderr,
+                flush=True,
+            )
+            assessments = []
         for pool, assessment in zip(candidates, assessments):
             pool["health"] = assessment.to_dict()
             health_summary[assessment.score] = health_summary.get(assessment.score, 0) + 1
@@ -915,6 +1234,8 @@ def scan(
                                     or (p.get("momentum") or {}).get("score") or 0),
                 reverse=True,
             )
+    elif config.sort_candidates_by_apr and candidates:
+        candidates.sort(key=lambda p: float(p.get("apr") or 0), reverse=True)
         momentum_hot_top = momentum_detective.build_hot_leaderboard(
             candidates, top_n=config.momentum_top_hot
         )
@@ -986,7 +1307,6 @@ def scan(
         )
         triggered_alerts = [alert.to_dict() for alert in alerts]
 
-    wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
     max_positions = int(wallet_capacity_info["capacity"]["max_positions"]) if wallet_config is not None else None
     # In dry-run, always show the full filter-pass list; wallet/RPC capacity is informational only.
     if wallet_config is not None and max_positions is not None and not config.dry_run:
@@ -1041,6 +1361,7 @@ def scan(
         "hard_exit_min_tvl_usd": config.hard_exit_min_tvl_usd,
         "lp_planning_enabled": config.lp_planning_enabled,
         "risk_profile": config.risk_profile,
+        "pages_failed": pages_failed,
         "scanned_count": scanned,
         "candidate_count": len(capped_candidates),
         "candidate_count_pre_capacity": len(candidates),
@@ -1067,6 +1388,19 @@ def scan(
         "momentum_hold_hours": config.momentum_hold_hours,
         "momentum_hot_top": momentum_hot_top,
         "momentum_market_pulse_sizes": {k: len(v) for k, v in market_pulse.items()},
+        "scan_tune_mode": config.scan_tune_mode,
+        "scan_hyper_apr_mode": config.scan_hyper_apr_mode,
+        "sort_candidates_by_apr": config.sort_candidates_by_apr,
+        "sort_candidates_by_momentum": config.sort_candidates_by_momentum,
+        "pages_total": config.pages,
+        "scan_feed": {
+            "phase": "api_error" if pages_failed >= config.pages and scanned == 0 else "complete",
+            "page": config.pages,
+            "pages_total": config.pages,
+            "is_partial": False,
+            "pages_failed": pages_failed,
+            "api_error": pages_failed >= config.pages and scanned == 0,
+        },
     }
 
 
@@ -1142,7 +1476,13 @@ def print_report(report: dict[str, Any]) -> None:
         print_reject_dial_in_hints(report)
         return
 
-    print("\nCandidates (dry-run watch list; sorted by momentum when enabled)")
+    if report.get("sort_candidates_by_apr"):
+        sort_note = "sorted by Raydium day.apr (highest first)"
+    elif report.get("momentum_enabled") and report.get("sort_candidates_by_momentum", True):
+        sort_note = "sorted by momentum score"
+    else:
+        sort_note = "Raydium page order"
+    print(f"\nCandidates (dry-run watch list; {sort_note})")
     if report.get("momentum_enabled"):
         hold = report.get("momentum_hold_hours", 24)
         print(f"  Momentum hold bias: ~{hold:.0f}h — exit when health=critical or momentum tier=exit_now")
@@ -1410,6 +1750,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Disable dashboard output even if it would otherwise run.",
     )
+    parser.add_argument(
+        "--reload-config-each-scan",
+        action="store_true",
+        help="With --loop, reload settings from --config and dotenv before each scan (use with the web dashboard).",
+    )
     args = parser.parse_args(argv)
 
     if args.list_strategies:
@@ -1424,13 +1769,27 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["RAYDIUM_LP1_STRATEGY"] = args.strategy
     config_path = resolve_config_path(args.config)
     try:
+        from raydium_lp1.settings_io import repair_settings_file_if_needed
+
+        repaired = repair_settings_file_if_needed(config_path)
+        if repaired:
+            print(
+                f"[scan] repaired {config_path}: {', '.join(repaired)} "
+                f"(empty pool_type breaks Raydium list API)",
+                file=sys.stderr,
+                flush=True,
+            )
         config = ScannerConfig.from_file(config_path)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
     if not config.dry_run:
-        print("Refusing to run: this build is dry-run only. Set dry_run=true.", file=sys.stderr)
-        return 2
+        print(
+            "[scan] LIVE mode — scans run with wallet-capped open slots; "
+            "automated swaps are not executed in this build (monitor + plan only).",
+            file=sys.stderr,
+            flush=True,
+        )
 
     try:
         active_wallet = wallet_mod.load_wallet()
@@ -1502,16 +1861,55 @@ def main(argv: list[str] | None = None) -> int:
     )
     wr_override = True if args.write_rejections else None
 
+    if args.reload_config_each_scan and not args.loop:
+        print(
+            "[scan] Note: --reload-config-each-scan only applies together with --loop.",
+            file=sys.stderr,
+            flush=True,
+        )
+
     while True:
+        if args.loop and args.reload_config_each_scan:
+            load_dotenv()
+            if args.strategy:
+                os.environ["RAYDIUM_LP1_STRATEGY"] = args.strategy
+            try:
+                config = ScannerConfig.from_file(config_path)
+            except ValueError as exc:
+                print(f"Config reload failed: {exc}", file=sys.stderr)
+                time.sleep(args.interval)
+                continue
+            print(
+                f"[scan] reloaded {config_path} · min_apr={config.min_apr} "
+                f"min_tvl={config.min_liquidity_usd} hard_exit_tvl={config.hard_exit_min_tvl_usd} "
+                f"pages={config.pages}",
+                file=sys.stderr,
+                flush=True,
+            )
         try:
             report = scan(
                 config,
+                config_path=config_path if args.reload_config_each_scan else None,
+                reload_config_when_changed=args.reload_config_each_scan,
                 wallet_config=active_wallet,
                 verdict_stream=stream_cfg,
                 write_rejections_override=wr_override,
             )
         except RuntimeError as exc:
-            print(f"Scan failed: {exc}", file=sys.stderr)
+            print(f"Scan failed: {exc}", file=sys.stderr, flush=True)
+            dashboard_mod.write_scan_heartbeat(
+                phase="scan_failed",
+                pages_total=config.pages,
+                last_error=str(exc),
+            )
+            if args.loop:
+                print(
+                    f"[scan] loop: retrying in {args.interval}s (dashboard.json unchanged until a full scan succeeds)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(args.interval)
+                continue
             return 1
 
         report["scan_diagnosis"] = dial_in_analyst.build_scan_diagnosis(config, report)
@@ -1535,6 +1933,15 @@ def main(argv: list[str] | None = None) -> int:
                 alerts_path=Path(config.emergency_alerts_path),
             )
             dashboard_mod.write_dashboard(data)
+            try:
+                from raydium_lp1 import settings_optimizer
+
+                settings_optimizer.run_cycle(
+                    settings_path=config_path,
+                    dashboard_path=dashboard_mod.DEFAULT_DASHBOARD_PATH,
+                )
+            except OSError:
+                pass
             print("")
             dashboard_mod.print_dashboard(data)
 

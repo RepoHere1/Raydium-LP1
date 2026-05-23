@@ -55,19 +55,34 @@ class RouteCheckerTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.best_source, "base-token")
 
-    def test_check_sell_route_records_all_sources(self):
+    def test_check_sell_route_records_all_sources_when_none_ok(self):
         result = routes.check_sell_route(
-            "GOODMINT",
+            "BLOCKMINT",
             "TEST",
             base_symbols=("SOL",),
             sources=("jupiter", "raydium"),
             fetcher=_fake_fetch,
         )
-        self.assertTrue(result.ok)
-        # Two sources x one base = up to two records.
+        self.assertFalse(result.ok)
         source_names = {entry["source"] for entry in result.sources}
         self.assertEqual(source_names, {"jupiter", "raydium"})
-        self.assertIsNotNone(result.best_source)
+
+    def test_check_sell_route_stops_after_first_ok_route(self):
+        calls: list[str] = []
+
+        def fetch(url: str) -> dict:
+            calls.append(url)
+            return {"data": {"outAmount": 1, "routePlan": [{"swapInfo": {"label": "x"}}]}}
+
+        result = routes.check_sell_route(
+            "GOODMINT",
+            "TEST",
+            base_symbols=("SOL", "USDC"),
+            sources=("jupiter", "raydium"),
+            fetcher=fetch,
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(len(calls), 1)
 
     def test_check_sell_route_blocks_when_all_sources_fail(self):
         result = routes.check_sell_route(
@@ -103,7 +118,7 @@ class RouteCheckerTests(unittest.TestCase):
         log = routes.format_sellability_log(result)
         self.assertIn("sellability", log)
         self.assertIn("jupiter", log)
-        self.assertIn("raydium", log)
+        self.assertTrue(result.ok)
 
 
 class SellabilityImpactTests(unittest.TestCase):

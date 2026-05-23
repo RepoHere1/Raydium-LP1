@@ -12,10 +12,14 @@ field is the pool **state account** pubkey. We verify:
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
-from typing import Any, Callable
-from urllib.parse import quote
+from typing import Any, Callable, Iterable
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
+
+from raydium_lp1.http_json import load_json_from_urlopen_response
+
 
 # Raydium pool program IDs (mainnet) -> short label shown in verdict stream.
 RAYDIUM_POOL_PROGRAMS: dict[str, str] = {
@@ -37,6 +41,35 @@ RAYDIUM_POOL_INFO_IDS = "/pools/info/ids"
 RAYDIUM_UI_POOL_URL = "https://raydium.io/liquidity/increase/?mode=add&pool_id={pool_id}"
 
 RpcPost = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+
+def is_valid_solana_rpc_url(url: str) -> bool:
+    """Reject junk list entries (e.g. comma-split typos like ``y`` from ``...,y``)."""
+
+    u = (url or "").strip()
+    if len(u) < 8:
+        return False
+    parsed = urlparse(u)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+def filter_rpc_urls(urls: Iterable[str], *, warn: bool = True) -> list[str]:
+    """Return only usable HTTP(S) RPC endpoints, deduped in order."""
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in urls:
+        u = str(raw).strip()
+        if is_valid_solana_rpc_url(u):
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        elif u and warn:
+            print(
+                f"[config] skipping invalid Solana RPC URL (use full https://…): {u!r}",
+                file=sys.stderr,
+            )
+    return out
 
 
 @dataclass(frozen=True)
@@ -138,7 +171,7 @@ def fetch_raydium_pool_by_id(
     def _default_fetch(u: str, t: int) -> dict[str, Any]:
         request = Request(u, headers={"accept": "application/json", "user-agent": "Raydium-LP1/verify"})
         with urlopen(request, timeout=t) as response:  # noqa: S310
-            return json.loads(response.read().decode("utf-8"))
+            return load_json_from_urlopen_response(response)
 
     loader = fetch_json or _default_fetch
     try:
@@ -165,7 +198,7 @@ def prefetch_account_owners(
     pending = [pk for pk in pubkeys if pk and pk not in owner_cache]
     if not pending:
         return
-    urls = [u for u in rpc_urls if u.strip()] or [DEFAULT_PUBLIC_RPC]
+    urls = filter_rpc_urls(rpc_urls, warn=False) or [DEFAULT_PUBLIC_RPC]
 
     def _post(url: str, keys: list[str]) -> dict[str, Any]:
         body = {
@@ -179,11 +212,16 @@ def prefetch_account_owners(
         request = Request(
             url,
             data=json.dumps(body).encode("utf-8"),
-            headers={"content-type": "application/json"},
+            headers={
+                "content-type": "application/json",
+                "accept": "application/json",
+                "accept-encoding": "identity",
+                "user-agent": "Raydium-LP1/pool-verify",
+            },
             method="POST",
         )
         with urlopen(request, timeout=12) as resp:  # noqa: S310
-            return json.loads(resp.read().decode("utf-8"))
+            return load_json_from_urlopen_response(resp)
 
     for start in range(0, len(pending), chunk_size):
         chunk = pending[start : start + chunk_size]
@@ -224,11 +262,16 @@ def get_account_owner(
         request = Request(
             rpc_url,
             data=json.dumps(body).encode("utf-8"),
-            headers={"content-type": "application/json"},
+            headers={
+                "content-type": "application/json",
+                "accept": "application/json",
+                "accept-encoding": "identity",
+                "user-agent": "Raydium-LP1/pool-verify",
+            },
             method="POST",
         )
         with urlopen(request, timeout=timeout) as resp:  # noqa: S310
-            response = json.loads(resp.read().decode("utf-8"))
+            response = load_json_from_urlopen_response(resp)
     value = (response.get("result") or {}).get("value")
     if not value:
         return None
@@ -250,7 +293,7 @@ def verify_on_chain_owner(
     if pool_id in cache:
         owner = cache[pool_id]
     else:
-        urls = [u for u in rpc_urls if u.strip()] or [DEFAULT_PUBLIC_RPC]
+        urls = filter_rpc_urls(rpc_urls, warn=False) or [DEFAULT_PUBLIC_RPC]
         for url in urls:
             try:
                 owner = get_account_owner(pool_id, url, rpc_post=rpc_post)
@@ -262,7 +305,11 @@ def verify_on_chain_owner(
 
     reasons: list[str] = []
     if owner is None:
-        reasons.append(f"on-chain: no account at {pool_id} (not a live pool state pubkey)")
+        if len(pool_id) <= 12:
+            short = pool_id
+        else:
+            short = f"{pool_id[:6]}…{pool_id[-4:]}"
+        reasons.append(f"on-chain: no RPC account ({short}); id is wrong or not LP state")
         return False, None, reasons
     if owner in NON_POOL_OWNERS:
         reasons.append(

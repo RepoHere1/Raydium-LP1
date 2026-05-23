@@ -65,6 +65,8 @@ def momentum_skew(momentum: Mapping[str, Any] | None, *, use_momentum: bool) -> 
     notes: list[str] = []
     if not use_momentum or not momentum:
         return 0.0, notes
+
+    sk = 0.0
     det = momentum.get("detective")
     if isinstance(det, dict):
         bias = float(det.get("inflow_bias") or 0)

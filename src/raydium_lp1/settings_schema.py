@@ -59,6 +59,7 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "momentum_detective_enabled",
     "momentum_probe_market_lists",
     "sort_candidates_by_momentum",
+    "sort_candidates_by_apr",
     "lp_planning_enabled",
     "lp_range_mode",
     "lp_default_range_width_pct",
@@ -69,4 +70,10 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "lp_main_budget_fraction",
     "lp_max_positions_per_mint",
     "risk_profile",
+    "scan_loop",
+    "scan_loop_interval_seconds",
+    "spawn_verdict_watcher",
+    "scan_tune_mode",
+    "scan_hyper_apr_mode",
+    "settings_optimizer_auto_apply",
 )

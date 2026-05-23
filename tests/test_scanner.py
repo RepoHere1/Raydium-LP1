@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -6,6 +7,7 @@ from unittest.mock import patch
 
 from raydium_lp1.scanner import (
     ScannerConfig,
+    effective_scan_config,
     extract_pool_items,
     filter_pool,
     load_dotenv,
@@ -110,6 +112,45 @@ class ScannerTests(unittest.TestCase):
             self.assertIn("https://solana-rpc.publicnode.com", config.solana_rpc_urls)
             self.assertIn("https://extra.example", config.solana_rpc_urls)
 
+    def test_junk_solana_rpc_urls_in_json_are_dropped(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            config_path = Path(tempdir) / "settings.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "min_apr": 999.99,
+                        "solana_rpc_urls": ["https://extra.example", "y", "ftp://bad/x"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                config = ScannerConfig.from_file(config_path)
+        self.assertIn("https://extra.example", config.solana_rpc_urls)
+        self.assertNotIn("y", config.solana_rpc_urls)
+        self.assertTrue(all(str(u).startswith("http") for u in config.solana_rpc_urls))
+
+    def test_scanner_config_constructor_strips_invalid_rpc_urls(self):
+        cfg = ScannerConfig(solana_rpc_urls=["y", "https://only-good.example/rpc"])
+        self.assertEqual(cfg.solana_rpc_urls, ["https://only-good.example/rpc"])
+
+    def test_env_comma_list_drops_invalid_tail_tokens(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            env_path = Path(tempdir) / ".env"
+            config_path = Path(tempdir) / "settings.json"
+            env_path.write_text(
+                "SOLANA_RPC_URL=https://good.example/rpc\n"
+                "SOLANA_RPC_URLS=https://a.example.com,y\n",
+                encoding="utf-8",
+            )
+            config_path.write_text('{"min_apr": 999.99}', encoding="utf-8")
+            with patch.dict(os.environ, {}, clear=True):
+                load_dotenv(env_path)
+                config = ScannerConfig.from_file(config_path)
+        self.assertEqual(config.solana_rpc_urls[0], "https://good.example/rpc")
+        self.assertIn("https://a.example.com", config.solana_rpc_urls)
+        self.assertNotIn("y", config.solana_rpc_urls)
+
     def test_write_reports_creates_json_and_csv(self):
         report = {
             "scanned_at": "2026-05-13T00:00:00+00:00",
@@ -128,6 +169,26 @@ class ScannerTests(unittest.TestCase):
             write_reports(report, Path(tempdir))
             self.assertTrue((Path(tempdir) / "latest.json").exists())
             self.assertTrue((Path(tempdir) / "candidates.csv").exists())
+
+
+class EffectiveScanConfigTests(unittest.TestCase):
+    def test_tune_mode_enables_apr_shortlist_sort(self):
+        cfg = ScannerConfig(scan_tune_mode=True, sort_candidates_by_apr=False)
+        effective = effective_scan_config(cfg)
+        self.assertTrue(effective.sort_candidates_by_apr)
+        self.assertFalse(effective.sort_candidates_by_momentum)
+
+    def test_hyper_apr_mode_keeps_liquidity_sort_and_apr_rank(self):
+        cfg = ScannerConfig(scan_hyper_apr_mode=True, pool_sort_field="", min_apr=50)
+        effective = effective_scan_config(cfg)
+        self.assertEqual(effective.pool_sort_field, "liquidity")
+        self.assertTrue(effective.sort_candidates_by_apr)
+        self.assertFalse(effective.require_sell_route)
+
+    def test_hyper_apr_mode_clears_hard_exit_tvl(self):
+        cfg = ScannerConfig(scan_hyper_apr_mode=True, hard_exit_min_tvl_usd=163_000.0)
+        effective = effective_scan_config(cfg)
+        self.assertEqual(effective.hard_exit_min_tvl_usd, 0.0)
 
 
 if __name__ == "__main__":

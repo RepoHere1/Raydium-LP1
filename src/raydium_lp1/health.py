@@ -72,7 +72,17 @@ def load_history(path: Path = DEFAULT_HISTORY_PATH) -> dict:
     return data
 
 
+def normalize_history_path(path: Path | str) -> Path:
+    """Empty settings paths become ``.`` on Windows and break writes — use default."""
+
+    raw = str(path).strip()
+    if not raw or raw in {".", "./", ".\\"}:
+        return DEFAULT_HISTORY_PATH
+    return Path(raw)
+
+
 def save_history(history: dict, path: Path = DEFAULT_HISTORY_PATH) -> None:
+    path = normalize_history_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(history, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -184,6 +194,7 @@ def assess_pools(
 ) -> tuple[list[HealthAssessment], dict]:
     """Convenience: load history, record fresh snapshots, assess, save."""
 
+    history_path = normalize_history_path(history_path)
     history = load_history(history_path)
     assessments: list[HealthAssessment] = []
     for pool in pools:

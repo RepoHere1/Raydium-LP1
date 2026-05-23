@@ -92,10 +92,23 @@ cd C:\Users\Taylor\Raydium-LP1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_wizard.ps1
 ```
 
-Or avoid typing commands and double-click this file from File Explorer:
+### RPC-only wizard (fix `.env` / `solana_rpc_urls` without re-running full setup)
+
+If `SOLANA_RPC_URLS` had a typo like a trailing `,y` (which crashed older scans), run:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\scripts\rpc_wizard.ps1
+```
+
+It rewrites `.env` with validated `https://` URLs and, if `config\settings.json` exists, merges the same list into `solana_rpc_urls`. Use `-SkipSettingsJson` to touch only `.env`.
+
+**Correct `.env` shape** (each comma-separated fallback must be a full URL):
 
 ```text
-START_HERE_SETUP.bat
+RAYDIUM_API_BASE=https://api-v3.raydium.io
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY_HERE
+SOLANA_RPC_URLS=https://solana-rpc.publicnode.com,https://solana.drpc.org
 ```
 
 After setup, run the scanner with:
@@ -131,7 +144,7 @@ Unresolved Git merge conflict markers got saved inside a `.ps1` file (often `scr
 ```powershell
 cd C:\Users\Taylor\Raydium-LP1
 git fetch origin main
-git checkout origin/main -- scripts/run_scan.ps1
+git checkout origin/main -- scripts/run_scan.ps1 src/raydium_lp1/verdicts.py
 ```
 
 Or reset the whole tracked tree when many files broke (usual after merging the wrong branch):
@@ -307,6 +320,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\doctor.ps1
 It checks the repo folder, scanner files, local settings, `.env`, Python, and Git remote branches.
 
 ## Running scans
+
+The setup wizard can save **loop**, **verdict log watcher**, and **rejections CSV** choices into `config\settings.json` as **`scan_loop`**, **`scan_loop_interval_seconds`**, **`spawn_verdict_watcher`**, and **`write_rejections`**. A plain `.\run_scan.ps1` then applies those defaults; any flags you pass on the command line still win.
 
 Normal beginner output:
 
