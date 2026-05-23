@@ -390,7 +390,12 @@ def _page() -> bytes:
     shell = DASHBOARD_SHELL_HTML.read_text(encoding="utf-8")
     if "BOOT_JSON" not in shell:
         raise RuntimeError(f"{DASHBOARD_SHELL_HTML} must contain the BOOT_JSON placeholder")
-    boot_payload = {"form_sections": _FORM_SECTIONS, "table_page_size": 30, "mode_tabs": ["LIVE", "DEMO"]}
+    boot_payload = {
+        "form_sections": _FORM_SECTIONS,
+        "table_page_size": 30,
+        "mode_tabs": ["LIVE", "DEMO"],
+        "status_fields": ["last_scan_utc", "scan_sequence", "candidate_count", "position_count"],
+    }
     html = shell.replace("BOOT_JSON", json.dumps(boot_payload, separators=(",", ":")))
     raw = html.encode("utf-8")
     if b"<<<<<<<" in raw or b">>>>>>>" in raw:
@@ -512,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 
