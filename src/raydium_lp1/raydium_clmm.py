@@ -62,11 +62,37 @@ def _node_binary() -> str | None:
 
 def _run_script(script_name: str, payload: dict, timeout: float = 60.0) -> dict:
     """Spawn a Node script, send JSON on stdin, parse JSON on stdout."""
+    fee_estimate: dict | None = None
     if script_name in _ONCHAIN_SPEND_SCRIPTS:
+        from raydium_lp1.fee_guard import FeeGuardBlockedError, note_broadcast_result, sanitize_clmm_payload
         from raydium_lp1.live_guard import guard_onchain
 
+        dep = payload.get("input_amount_human") if script_name == "open_position.mjs" else None
         try:
-            guard_onchain(f"Raydium CLMM {script_name}")
+            guard_onchain(
+                f"Raydium CLMM {script_name}",
+                script_name=script_name,
+                deposit_sol=dep,
+                priority_micro=payload.get("priority_fee_micro_lamports"),
+            )
+            payload = sanitize_clmm_payload(script_name, payload)
+            if script_name == "open_position.mjs":
+                from raydium_lp1.fee_guard import estimate_clmm_open_cost_sol, fee_config_from_settings
+
+                fee_estimate = estimate_clmm_open_cost_sol(
+                    fee_config_from_settings(),
+                    deposit_sol=float(dep or 0),
+                    priority_micro=payload.get("priority_fee_micro_lamports"),
+                )
+            else:
+                from raydium_lp1.fee_guard import estimate_clmm_close_cost_sol, fee_config_from_settings
+
+                fee_estimate = estimate_clmm_close_cost_sol(
+                    fee_config_from_settings(),
+                    priority_micro=payload.get("priority_fee_micro_lamports"),
+                )
+        except FeeGuardBlockedError as exc:
+            return {"ok": False, "error": str(exc), "fee_guard": True}
         except Exception as exc:
             return {"ok": False, "error": str(exc), "mode_blocked": True}
 
@@ -121,6 +147,12 @@ def _run_script(script_name: str, payload: dict, timeout: float = 60.0) -> dict:
     # Surface stderr noise on failure for debugging
     if not result.get("ok") and err:
         result.setdefault("stderr", err[:400])
+    if script_name in _ONCHAIN_SPEND_SCRIPTS:
+        from raydium_lp1.fee_guard import note_broadcast_result
+
+        note_broadcast_result(script_name, result, fee_estimate)
+        if fee_estimate:
+            result.setdefault("fee_guard_estimate", fee_estimate)
     return result
 
 
@@ -133,12 +165,13 @@ def open_position(*,
                   tick_lower_pct_below: float = 10.0,
                   tick_upper_pct_above: float = 10.0,
                   slippage_bps: int = 100,
-                  priority_fee_micro_lamports: int = 50_000,
+                  priority_fee_micro_lamports: int | None = None,
                   single_side: str | None = None,         # v0.3 — "above" | "below" | None
                   single_side_start_pct: float = 0.5,     # band starts this % away from spot
                   single_side_width_pct: float = 15.0,     # band is this wide
                   band_tick_steps: int = 10,
                   min_tick_steps: int = 2,
+                  pay_mint_only: bool = False,
                   timeout: float = 90.0) -> dict:
     """Open a new CLMM position.
 
@@ -148,6 +181,10 @@ def open_position(*,
                          mintB side (USDC in a SOL/USDC pool). No SOL needed.
     single_side=None:    standard straddling band → both tokens needed.
     """
+    from raydium_lp1.fee_guard import cap_priority_micro, fee_config_from_settings
+
+    cfg = fee_config_from_settings()
+    pri = cap_priority_micro(priority_fee_micro_lamports, cfg)
     return _run_script("open_position.mjs", {
         "pool_id":                    pool_id,
         "input_mint":                 input_mint,
@@ -160,7 +197,8 @@ def open_position(*,
         "band_tick_steps":            int(band_tick_steps),
         "min_tick_steps":             int(min_tick_steps),
         "slippage_bps":               int(slippage_bps),
-        "priority_fee_micro_lamports":int(priority_fee_micro_lamports),
+        "priority_fee_micro_lamports":pri,
+        "pay_mint_only":              bool(pay_mint_only),
     }, timeout=timeout)
 
 
@@ -169,7 +207,7 @@ def close_position(*,
                    slippage_bps: int = 100,
                    keep_position: bool = False,
                    payout_as: str | None = None,   # v0.3 — None | "SOL" | "USDC"
-                   priority_fee_micro_lamports: int = 50_000,
+                   priority_fee_micro_lamports: int | None = None,
                    timeout: float = 120.0) -> dict:
     """Close (decrease to 0 + collect + burn NFT) a CLMM position.
 
@@ -178,12 +216,17 @@ def close_position(*,
                      never get stuck with dust tokens. Two on-chain txs total.
     payout_as=None:  return whatever the band held (default).
     """
+    from raydium_lp1.fee_guard import cap_priority_micro, fee_config_from_settings
+
+    cfg = fee_config_from_settings()
+    pri = cap_priority_micro(priority_fee_micro_lamports, cfg)
     return _run_script("close_position.mjs", {
         "position_nft_mint":          position_nft_mint,
         "slippage_bps":               int(slippage_bps),
         "keep_position":              bool(keep_position),
         "payout_as":                  payout_as,
-        "priority_fee_micro_lamports":int(priority_fee_micro_lamports),
+        "priority_fee_micro_lamports":pri,
+        "jupiter_priority_micro_lamports": cfg.jupiter_max_priority_micro_lamports,
     }, timeout=timeout)
 
 

@@ -26,6 +26,8 @@ def load_keypair(path: str) -> Keypair:
 
 
 def main() -> int:
+    from raydium_lp1.fee_guard import FeeGuardBlockedError, assert_transfer_allowed
+
     guard_onchain("SOL transfer (trade_submit.py)")
     keypair_path = os.environ.get("SOLANA_KEYPAIR_PATH", "").strip()
     if not keypair_path:
@@ -34,6 +36,10 @@ def main() -> int:
     rpc_url = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com").strip()
     recipient = os.environ.get("SOLANA_RECIPIENT", "").strip()
     lamports = int(os.environ.get("SOLANA_LAMPORTS", "1000"))
+    try:
+        assert_transfer_allowed(lamports)
+    except FeeGuardBlockedError as exc:
+        raise SystemExit(str(exc)) from exc
 
     if not recipient:
         raise SystemExit("SOLANA_RECIPIENT is not set")

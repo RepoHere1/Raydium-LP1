@@ -15,12 +15,31 @@
   function poolApr(p) {
     return Number(p.apr != null ? p.apr : p.apr_pct) || 0;
   }
-  function isMomentumHot(p) {
+  function isMomentumHot(p, settings) {
+    settings = settings || {};
     var mom = p.momentum || {};
     var tier = String(mom.tier || p.momentum_tier || '').toLowerCase();
-    if (tier === 'hot' || tier.indexOf('hot') >= 0) return true;
+    if (tier === 'hot' || tier === 'enter_bias') return true;
+    var minScore = Number(
+      settings.momentum_hot_min_combined_score != null ? settings.momentum_hot_min_combined_score : 72
+    );
+    var minApr = Number(settings.momentum_hot_min_apr != null ? settings.momentum_hot_min_apr : 200);
     var sc = mom.combined_score != null ? mom.combined_score : mom.score;
-    return sc != null && Number(sc) >= 90;
+    if (sc != null && Number(sc) >= minScore && poolApr(p) >= minApr) return true;
+    return false;
+  }
+  function sortPoolsForPick(pools, d) {
+    var mode = String(((d && d.settings) || {}).lp_selection_mode || 'apr').toLowerCase();
+    if (mode === 'momentum') {
+      return pools.slice().sort(function (a, b) {
+        var ma = a.momentum || {},
+          mb = b.momentum || {};
+        var sa = Number(ma.combined_score != null ? ma.combined_score : ma.score) || 0;
+        var sb = Number(mb.combined_score != null ? mb.combined_score : mb.score) || 0;
+        return sb - sa;
+      });
+    }
+    return sortByApr(pools);
   }
   function sortByApr(pools) {
     return pools.slice().sort(function (a, b) {
@@ -157,13 +176,14 @@
           })
           .join('')
       : '<tr><td colspan="4">No RPC rows.</td></tr>';
-    var cand = sortByApr((d.last_scan && d.last_scan.candidates) || d.open_positions || []);
+    var cand = sortPoolsForPick((d.last_scan && d.last_scan.candidates) || d.open_positions || [], d);
+    var settings = (d && d.settings) || {};
     $('tb-cand').innerHTML = cand.length
       ? cand
           .map(function (p) {
             var mom = p.momentum || {};
             var ms = mom.combined_score != null ? mom.combined_score : mom.score;
-            var hot = isMomentumHot(p);
+            var hot = isMomentumHot(p, settings);
             return (
               '<tr' +
               (hot ? ' class="row-mom-hot"' : '') +

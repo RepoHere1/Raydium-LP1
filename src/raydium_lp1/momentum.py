@@ -40,6 +40,8 @@ class MomentumConfig:
     sweet_max_pool_age_hours: float = 168.0
     min_tvl_usd: float = 0.0  # 0 = use scanner min_liquidity_usd only
     detective_enabled: bool = True
+    hot_min_combined_score: float = 72.0
+    hot_min_apr: float = 200.0
 
 
 @dataclass
@@ -268,7 +270,9 @@ def assess_momentum(
         if det.inflow_bias >= 55 and tier == TIER_WATCH and score >= 45:
             tier = TIER_ENTER
 
-    if rank_score >= 72 and vol_tvl >= cfg.min_volume_tvl_ratio and apr >= 200:
+    hot_floor = float(cfg.hot_min_combined_score)
+    hot_apr = float(cfg.hot_min_apr)
+    if rank_score >= hot_floor and vol_tvl >= cfg.min_volume_tvl_ratio and apr >= hot_apr:
         tier = TIER_HOT
     elif rank_score >= 55 and tier == TIER_WATCH:
         tier = TIER_ENTER
@@ -302,6 +306,8 @@ def momentum_config_from_scanner(config: Any) -> MomentumConfig:
         sweet_max_pool_age_hours=float(getattr(config, "momentum_sweet_max_pool_age_hours", 168.0)),
         min_tvl_usd=float(getattr(config, "momentum_min_tvl_usd", 0.0)),
         detective_enabled=bool(getattr(config, "momentum_detective_enabled", True)),
+        hot_min_combined_score=float(getattr(config, "momentum_hot_min_combined_score", 72.0)),
+        hot_min_apr=float(getattr(config, "momentum_hot_min_apr", 200.0)),
     )
 
 

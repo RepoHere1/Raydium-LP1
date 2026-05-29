@@ -32,9 +32,15 @@ def lamports_from_sol(sol: float) -> int:
 
 
 def main() -> int:
+    from raydium_lp1.fee_guard import FeeGuardBlockedError, assert_swap_allowed
+
     guard_onchain("Jupiter swap (swap_submit.py)")
     keypair_path = os.environ.get("SOLANA_KEYPAIR_PATH", "").strip()
     amount_sol = float(os.environ.get("SOLANA_AMOUNT_SOL", "0.001"))
+    try:
+        assert_swap_allowed(amount_sol)
+    except FeeGuardBlockedError as exc:
+        raise SystemExit(str(exc)) from exc
     slippage_bps = int(os.environ.get("SOLANA_SLIPPAGE_BPS", "50"))
     jup_api_key = os.environ.get("JUP_API_KEY", "").strip()
 

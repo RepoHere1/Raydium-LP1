@@ -120,14 +120,21 @@ if ($SingleWindow) {
 }
 
 $wtScript = Join-Path $RepoRoot "scripts\start_stack_wt.ps1"
-$wtArgs = @("-Port", $Port, "-ListenHost", $ListenHost)
-if ($NoBrowser) { $wtArgs += "-NoBrowser" }
-if ($UseLegacyWindows) { $wtArgs += "-UseLegacyWindows" }
-if ($NoDoctorHeal) { $wtArgs += "-NoDoctorHeal" }
+if (-not (Test-Path -LiteralPath $wtScript)) {
+    throw "Missing stack launcher: $wtScript"
+}
+
+$wtParams = @{
+    Port       = [int]$Port
+    ListenHost = [string]$ListenHost
+}
+if ($NoBrowser) { $wtParams.NoBrowser = $true }
+if ($UseLegacyWindows) { $wtParams.UseLegacyWindows = $true }
+if ($NoDoctorHeal) { $wtParams.NoDoctorHeal = $true }
 
 Write-Host "Mode: Windows Terminal — Monitor | Doctor | Scanner | Dashboard" -ForegroundColor Cyan
 Write-Host "Tip: -SingleWindow for one console; -FreshPort to kill stale :$Port" -ForegroundColor DarkGray
 Write-Host ""
 
-& $wtScript @wtArgs
+& $wtScript @wtParams
 exit $LASTEXITCODE

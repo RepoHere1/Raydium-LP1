@@ -54,11 +54,49 @@ def apply_candidate_order(candidates: list[dict[str, Any]], config: Any) -> list
     return sort_candidates_for_display(candidates, LP_SELECTION_APR)
 
 
+def fetch_pool_by_id(pool_id: str, *, config: Any) -> dict[str, Any]:
+    """Load one pool from Raydium ``/pools/info/ids`` when it is not in the scan shortlist."""
+
+    from raydium_lp1 import pool_verify
+    from raydium_lp1.scanner import normalize_pool
+
+    pid = str(pool_id).strip()
+    if not pid:
+        raise ValueError("pool_id is empty")
+    raw = pool_verify.fetch_raydium_pool_by_id(
+        pid,
+        api_base=str(getattr(config, "raydium_api_base", "https://api-v3.raydium.io")),
+        timeout=max(3, int(getattr(config, "http_timeout_seconds", 15) or 15)),
+    )
+    if not raw:
+        raise ValueError(
+            f"pool_id {pid!r} not found on Raydium API "
+            f"({pool_verify.raydium_verify_url(str(getattr(config, 'raydium_api_base', '')), pid)})"
+        )
+    pool = normalize_pool(raw, str(getattr(config, "apr_field", "apr24h")))
+    if getattr(config, "require_verified_raydium_pool", True):
+        pv = pool_verify.validate_pool(
+            pool,
+            api_base=str(getattr(config, "raydium_api_base", "https://api-v3.raydium.io")),
+            rpc_urls=list(getattr(config, "solana_rpc_urls", []) or []),
+            verify_on_chain=bool(getattr(config, "verify_pool_on_chain", True)),
+            verify_raydium_api=bool(getattr(config, "verify_pool_raydium_api", False)),
+        )
+        pool["pool_verification"] = pv.to_dict() if hasattr(pv, "to_dict") else {
+            "ok": pv.ok,
+            "reasons": list(pv.reasons),
+            "proof_tag": pv.proof_tag,
+        }
+    pool["fetched_for_live_open"] = True
+    return pool
+
+
 def pick_live_candidate(
     report: dict[str, Any],
     pool_id: str | None,
     *,
     config: Any | None = None,
+    fetch_if_missing: bool = True,
 ) -> dict[str, Any]:
     """Choose pool for ``open_clmm_candidate`` (explicit id or mode-based top)."""
 
@@ -68,7 +106,12 @@ def pick_live_candidate(
         for p in pools:
             if str(p.get("id") or "") == pid:
                 return p
-        raise ValueError(f"pool_id {pid!r} not in latest candidates — re-scan after tune")
+        if fetch_if_missing and config is not None:
+            return fetch_pool_by_id(pid, config=config)
+        raise ValueError(
+            f"pool_id {pid!r} not in latest candidates — re-scan after tune "
+            "or pass fetch_if_missing=True"
+        )
 
     if not pools:
         raise ValueError("no candidates in latest.json — run scan with tuned settings first")

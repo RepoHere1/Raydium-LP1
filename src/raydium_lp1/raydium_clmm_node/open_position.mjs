@@ -106,6 +106,7 @@ async function main() {
     return finish({ ok: false, error: `pool ${inp.pool_id} not found or not CLMM` });
   }
   const { poolInfo, poolKeys } = poolData;
+  const payMintOnly = Boolean(inp.pay_mint_only);
 
   const widthStepsList = [
     Number(inp.band_tick_steps ?? 10),
@@ -120,16 +121,25 @@ async function main() {
     if (band.error) continue;
     const { lo, hi, tickSpacing, decA, decB, tickCurrent } = band;
     const inputMintStr = String(inp.input_mint || '');
-    const baseIn =
-      inputMintStr === String(poolInfo.mintA.address) ||
+    const mintAStr = String(poolInfo.mintA.address ?? poolInfo.mintA.address?.toString?.() ?? '');
+    const mintBStr = String(poolInfo.mintB.address ?? poolInfo.mintB.address?.toString?.() ?? '');
+    let baseIn =
+      inputMintStr === mintAStr ||
       inputMintStr === String(poolInfo.mintA.address?.toString?.());
+    if (payMintOnly && inputMintStr && inputMintStr !== mintAStr && inputMintStr !== mintBStr) {
+      return finish({
+        ok: false,
+        error: `pay_mint_only: input_mint ${inputMintStr} is not mintA or mintB for this pool`,
+      });
+    }
+    const tryBaseInOrder = payMintOnly ? [baseIn] : [baseIn, !baseIn];
     const inputDecimals = baseIn ? decA : decB;
     const inputAmount = new BN(
       new Decimal(inp.input_amount_human).mul(10 ** inputDecimals).toFixed(0)
     );
     const slippage = Number(inp.slippage_bps ?? 100) / 10000;
     const epochInfo = await raydium.connection.getEpochInfo();
-    for (const tryBaseIn of [baseIn, !baseIn]) {
+    for (const tryBaseIn of tryBaseInOrder) {
       const probe = await PoolUtils.getLiquidityAmountOutFromAmountIn({
         poolInfo, inputA: tryBaseIn,
         tickLower: lo, tickUpper: hi,
@@ -193,8 +203,8 @@ async function main() {
     },
     txVersion:      TxVersion.V0,
     computeBudgetConfig: {
-      units:        300_000,
-      microLamports: Number(inp.priority_fee_micro_lamports ?? 50_000),
+      units:        Number(inp.compute_units ?? 200_000),
+      microLamports: Number(inp.priority_fee_micro_lamports ?? 2_000),
     },
   });
 
@@ -235,6 +245,8 @@ async function main() {
     band_tick_steps:       bandSteps,
     tick_spacing:          tickSpacing,
     single_side_mode:      inp.single_side ?? null,
+    pay_mint_only:         payMintOnly,
+    pay_symbol:            inp.pay_symbol ?? null,
     input_amount_lamports: inputAmount.toString(),
     other_amount_max:      (liq.amountSlippageB?.amount ?? liq.amountSlippageA?.amount ?? new BN(0)).toString(),
     pool_id:               inp.pool_id,

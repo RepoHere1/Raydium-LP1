@@ -11,6 +11,7 @@ Covers every failure mode we've seen in this repo:
   - Missing .env keys (SOLANA_RPC_URL, SOLANA_KEYPAIR_PATH)
   - Node bridge missing (raydium_clmm_node/node_modules)
   - Dashboard backend down
+  - Scanner ↔ dashboard.json ↔ /api/dashboard ↔ HTML/JS data flow (auto-heal when heal mode on)
 
 Usage:
   py -3 -m raydium_lp1.raydium_doctor              # one-shot scan
@@ -406,6 +407,34 @@ def run_checks(*, heal: bool = True) -> list[CheckResult]:
         results.append(check_dashboard())
     except Exception as e:
         results.append(CheckResult("dashboard", False, "warn", f"check crashed: {e}"))
+
+    try:
+        from raydium_lp1.doctor_data_flow_heal import heal_data_flow_integrity
+
+        port = resolve_dashboard_port()
+        # HTML/JSON/API sync is always auto-healed (unless explicitly disabled).
+        df_heal = __import__("os").environ.get("RAYDIUM_LP1_DOCTOR_NO_DATAFLOW_HEAL", "").strip().lower() not in (
+            "1",
+            "true",
+            "yes",
+        )
+        for df in heal_data_flow_integrity(heal=df_heal, dashboard_port=port):
+            healed = bool(df.detail.get("healed"))
+            msg = df.message
+            if healed and df.detail.get("heal_actions"):
+                msg = f"{msg} [healed: {', '.join(df.detail['heal_actions'][:3])}]"
+            results.append(
+                CheckResult(
+                    f"dataflow:{df.name}",
+                    df.ok,
+                    df.severity,
+                    msg,
+                    healed=healed,
+                    detail=df.detail,
+                )
+            )
+    except Exception as e:
+        results.append(CheckResult("dataflow", False, "warn", f"data flow checks crashed: {e}"))
 
     return results
 

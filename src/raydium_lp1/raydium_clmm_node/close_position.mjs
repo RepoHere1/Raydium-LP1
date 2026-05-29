@@ -60,7 +60,7 @@ async function jupiterSwap({ connection, owner, inputMint, outputMint, amountRaw
       userPublicKey: owner.publicKey.toBase58(),
       wrapAndUnwrapSol: true,
       asLegacyTransaction: false,
-      computeUnitPriceMicroLamports: 50_000,
+      computeUnitPriceMicroLamports: Number(inp.jupiter_priority_micro_lamports ?? inp.priority_fee_micro_lamports ?? 2_000),
     }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -120,7 +120,10 @@ async function main() {
         useSOLBalance: true,                  // auto-unwrap WSOL → SOL on close
       },
       txVersion: TxVersion.V0,
-      computeBudgetConfig: { units: 400_000, microLamports: Number(inp.priority_fee_micro_lamports ?? 50_000) },
+      computeBudgetConfig: {
+        units: Number(inp.compute_units ?? 280_000),
+        microLamports: Number(inp.priority_fee_micro_lamports ?? 2_000),
+      },
     });
     const { txId } = await execute({ sendAndConfirm: false });   // v0.4: HTTP polling
     await pollConfirm(raydium.connection, txId);

@@ -137,6 +137,16 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "How many top momentum names to keep in the hot shortlist for reporting.",
         "20 to 40 is a readable dashboard band; raise if you study more names per loop.",
     ),
+    "momentum_hot_min_combined_score": (
+        "Minimum combined momentum score for tier HOT (green rows + MoM LIVE pick). "
+        "Default 72; lower to 60–65 for more HOT labels in choppy markets.",
+        "Try 65 when you want more HOTs; 72–80 when you want only the strongest fee-rush names.",
+    ),
+    "momentum_hot_min_apr": (
+        "Minimum APR % required for tier HOT (in addition to combined score and vol/TVL). "
+        "Default 200; align with min_apr or lower slightly to tag more names HOT.",
+        "200 matches legacy behavior; 150–180 if min_apr is already 200+.",
+    ),
     "sort_candidates_by_momentum": (
         "Order dry-run candidates by momentum instead of only APR/TVL.",
         "Turn on when APR sorts lie (fee-sorted pages with inflated tiny pools).",
@@ -199,6 +209,34 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
     "rejections_csv_path": (
         "Filesystem path for the rejections CSV when write_rejections is on.",
         "Use a path under reports/ so git ignores stay predictable.",
+    ),
+    "fee_guard_enabled": (
+        "Master switch: block micro CLMM deposits, cap priority fees, limit retries and session spend.",
+        "Leave on. This is what stops 25¢ opens from burning ~0.04 SOL rent per attempt.",
+    ),
+    "min_clmm_deposit_sol": (
+        "Minimum SOL deposited in a CLMM open; below this fee guard rejects the tx.",
+        "0.008 SOL minimum; 0.02–0.05 SOL is safer once rent is included.",
+    ),
+    "max_priority_fee_micro_lamports": (
+        "Hard cap on Solana priority fee (micro-lamports per compute unit). Was 50_000 by default — now capped low.",
+        "2000 is conservative; raise only if txs never land.",
+    ),
+    "max_open_retries": (
+        "How many open attempts per dashboard/CLI click. Each attempt can cost rent + fees.",
+        "Keep at 1.",
+    ),
+    "max_session_spend_sol": (
+        "Estimated SOL budget per session (reports/fee_session_ledger.json); blocks further spends when exceeded.",
+        "0.12 SOL default; raise only for deliberate testing.",
+    ),
+    "max_fee_pct_of_deposit": (
+        "Reject opens when estimated rent+fees exceed this percent of deposit size.",
+        "35% default; micro deposits fail this check on purpose.",
+    ),
+    "clmm_open_rent_sol": (
+        "Estimated one-time rent for CLMM NFT + tick accounts (the main fee trap on small opens).",
+        "0.042 SOL is a realistic mainnet estimate.",
     ),
     "position_size_sol": (
         "SOL notional budget per position used for capacity and sizing hints.",
@@ -266,6 +304,15 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
     "lp_skew_use_momentum": (
         "Shift LP bands using momentum direction when enabled.",
         "Pairs with momentum enabled; off for symmetric testing.",
+    ),
+    "lp_open_pay_token_only": (
+        "When on (default), every LIVE CLMM open deposits only an allowed quote leg (SOL, USDC, or USDT) "
+        "and places the band on that side so you never fund the memecoin leg unless you turn this off.",
+        "Leave on for SOL/USDC/USDT-only inventory; pools without a quote leg are skipped for LIVE opens.",
+    ),
+    "lp_pay_prefer_symbol": (
+        "Which pay token to use when a pool has multiple quotes (rare). Empty uses emergency_base_symbol (usually SOL).",
+        "Set USDC if you size positions in stablecoin rather than SOL.",
     ),
     "lp_full_range_parallel": (
         "Also simulate a full-range style leg beside concentrated bands.",

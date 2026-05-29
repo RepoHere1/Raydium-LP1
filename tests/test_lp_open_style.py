@@ -27,17 +27,19 @@ class LpOpenStyleTests(unittest.TestCase):
             lp_active_strategy=STRATEGY_ASYMMETRIC,
             lp_default_range_width_pct=15.0,
             lp_skew_use_momentum=True,
+            lp_open_pay_token_only=False,
         )
         style = resolve_live_open_style(cfg, self._pool())
         self.assertIn(style.placement, ("single_above", "single_below"))
         self.assertIn(style.open_kwargs.get("single_side"), ("above", "below"))
         self.assertIn("CLMM", style.lp_style_label)
 
-    def test_centered_strategy_no_single_side(self) -> None:
+    def test_centered_strategy_no_single_side_when_pay_only_off(self) -> None:
         cfg = SimpleNamespace(
             lp_active_strategy=STRATEGY_CENTERED_TIGHT,
             lp_default_range_width_pct=12.0,
             lp_skew_use_momentum=False,
+            lp_open_pay_token_only=False,
         )
         style = resolve_live_open_style(cfg, self._pool())
         self.assertEqual(style.placement, "centered")

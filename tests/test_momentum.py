@@ -25,6 +25,28 @@ class MomentumScoreTests(unittest.TestCase):
         self.assertIn(m.tier, (TIER_HOT, "enter_bias"))
         self.assertGreater(m.volume_tvl_ratio, 2.0)
 
+    def test_hot_threshold_from_settings(self):
+        pool = self._hot_pool()
+        strict = MomentumConfig(
+            enabled=True,
+            min_volume_tvl_ratio=0.5,
+            hot_min_combined_score=72.0,
+            hot_min_apr=200.0,
+            detective_enabled=False,
+        )
+        loose = MomentumConfig(
+            enabled=True,
+            min_volume_tvl_ratio=0.5,
+            hot_min_combined_score=50.0,
+            hot_min_apr=100.0,
+            detective_enabled=False,
+        )
+        m_strict = momentum.assess_momentum(pool, strict)
+        m_loose = momentum.assess_momentum(pool, loose)
+        self.assertEqual(m_loose.tier, TIER_HOT)
+        if (m_strict.combined_score or m_strict.score) >= 72:
+            self.assertEqual(m_strict.tier, TIER_HOT)
+
     def test_dust_pool_exit_tier(self):
         cfg = MomentumConfig(enabled=True, min_tvl_usd=500.0)
         pool = {

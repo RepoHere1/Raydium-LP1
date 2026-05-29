@@ -331,6 +331,18 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "require_momentum_score", "label": "Require momentum score pass", "type": "checkbox"},
             {"key": "momentum_hold_hours", "label": "Hold window hrs", "type": "number", "step": "any"},
             {"key": "momentum_top_hot", "label": "TOP HOT size", "type": "number"},
+            {
+                "key": "momentum_hot_min_combined_score",
+                "label": "HOT min combined score",
+                "type": "number",
+                "step": "any",
+            },
+            {
+                "key": "momentum_hot_min_apr",
+                "label": "HOT min APR %",
+                "type": "number",
+                "step": "any",
+            },
             {"key": "sort_candidates_by_momentum", "label": "Sort candidates by momentum", "type": "checkbox"},
             {
                 "key": "lp_selection_mode",
@@ -378,6 +390,27 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
         ],
     },
     {
+        "title": "Fee guard (on-chain spend)",
+        "section_id": "fee_guard",
+        "section_help": (
+            "Mandatory caps so Raydium CLMM rent + priority fees cannot drain the wallet on micro-deposits "
+            "or retry loops. 25¢ LP opens are blocked by design."
+        ),
+        "section_rec": (
+            "Leave enabled. If you lost SOL to fees, check reports/fee_session_ledger.json. "
+            "Use min_clmm_deposit_sol ≥ 0.008 and max_open_retries = 1."
+        ),
+        "fields": [
+            {"key": "fee_guard_enabled", "label": "Fee guard enabled", "type": "checkbox"},
+            {"key": "min_clmm_deposit_sol", "label": "Min CLMM deposit (SOL)", "type": "number", "step": "any"},
+            {"key": "max_priority_fee_micro_lamports", "label": "Max priority fee (µ-lamports/CU)", "type": "number"},
+            {"key": "max_open_retries", "label": "Max open attempts per click", "type": "number"},
+            {"key": "max_session_spend_sol", "label": "Max session spend est. (SOL)", "type": "number", "step": "any"},
+            {"key": "max_fee_pct_of_deposit", "label": "Max fee+rent % of deposit", "type": "number", "step": "any"},
+            {"key": "clmm_open_rent_sol", "label": "Est. CLMM open rent (SOL)", "type": "number", "step": "any"},
+        ],
+    },
+    {
         "title": "LP order entry (CLMM)",
         "section_id": "lp_order_entry",
         "section_help": (
@@ -395,6 +428,16 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
                 "type": "strategy_picker",
             },
             {"key": "lp_skew_use_momentum", "label": "Skew bands via momentum (trailing / asymmetric)", "type": "checkbox"},
+            {
+                "key": "lp_open_pay_token_only",
+                "label": "Pay-token-only LP opens (SOL/USDC/USDT deposit)",
+                "type": "checkbox",
+            },
+            {
+                "key": "lp_pay_prefer_symbol",
+                "label": "Preferred pay symbol (blank = emergency_base_symbol)",
+                "type": "text",
+            },
             {"key": "lp_default_range_width_pct", "label": "Default band width %", "type": "number", "step": "any"},
             {"key": "lp_planning_enabled", "label": "LP planning in scan output", "type": "checkbox"},
             {"key": "lp_fee_bps", "label": "Pool fee tier (bps)", "type": "number", "step": "any"},

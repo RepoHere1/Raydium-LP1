@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from raydium_lp1.lp_pay_mint import (
+    apply_pay_token_only_open,
+    enrich_open_style_for_pay,
+    pay_token_only_enabled,
+    resolve_pay_mint,
+)
 from raydium_lp1.lp_order_strategies import (
     STRATEGY_ASYMMETRIC,
     STRATEGY_AUTO,
@@ -35,7 +41,7 @@ class LiveOpenStyle:
     lp_style_label: str
 
     def to_position_fields(self) -> dict[str, Any]:
-        return {
+        fields = {
             "lp_pool_type": self.pool_type,
             "lp_strategy_id": self.strategy_id,
             "lp_strategy_label": self.strategy_label,
@@ -45,6 +51,11 @@ class LiveOpenStyle:
             "lp_style_label": self.lp_style_label,
             "lp_open_params": dict(self.open_kwargs),
         }
+        if self.open_kwargs.get("pay_symbol"):
+            fields["lp_pay_symbol"] = self.open_kwargs.get("pay_symbol")
+            fields["lp_pay_mint"] = self.open_kwargs.get("input_mint")
+            fields["lp_pay_token_only"] = bool(self.open_kwargs.get("pay_mint_only"))
+        return fields
 
 
 def resolve_live_open_style(
@@ -135,6 +146,11 @@ def resolve_live_open_style(
                 "band_tick_steps": steps,
             }
 
+    pay_res = resolve_pay_mint(pool, config) if pay_token_only_enabled(config) else None
+    if pay_res is not None:
+        open_kwargs = apply_pay_token_only_open(pay_res, open_kwargs, width_pct=width)
+        placement = str(open_kwargs.pop("_lp_placement", placement))
+
     place_human = {
         "single_above": "single above",
         "single_below": "single below",
@@ -143,6 +159,8 @@ def resolve_live_open_style(
     }.get(placement, placement)
     label = f"CLMM · {place_human} · {width:.0f}% · {spec.short_label}"
     key = f"{sid}|{placement}|w{int(round(width))}"
+    if pay_res is not None:
+        label, key, placement = enrich_open_style_for_pay(label, key, placement, pay_res)
 
     return LiveOpenStyle(
         pool_type="CLMM",

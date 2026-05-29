@@ -128,6 +128,8 @@ class ScannerConfig:
     # LIVE / dashboard: ``apr`` = top by APR; ``momentum`` = top tier=hot by combined score.
     lp_selection_mode: str = "apr"
     momentum_top_hot: int = 25
+    momentum_hot_min_combined_score: float = 72.0
+    momentum_hot_min_apr: float = 200.0
     momentum_detective_enabled: bool = True
     momentum_probe_market_lists: bool = True
     # Paper-only CLMM / concentrated band hints (no signed txs in this build).
@@ -139,6 +141,9 @@ class ScannerConfig:
     lp_default_range_width_pct: float = 20.0
     lp_range_width_candidates: tuple[float, ...] = (12.0, 20.0, 30.0, 50.0)
     lp_skew_use_momentum: bool = True
+    # LIVE opens: deposit only SOL/USDC/USDT (allowed_quote_symbols), not the alt leg.
+    lp_open_pay_token_only: bool = True
+    lp_pay_prefer_symbol: str = ""
     lp_full_range_parallel: bool = False
     lp_full_range_budget_fraction: float = 0.25
     lp_main_budget_fraction: float = 0.75
@@ -242,6 +247,10 @@ class ScannerConfig:
                 str(raw_with_strategy.get("lp_selection_mode") or LP_SELECTION_APR)
             ),
             momentum_top_hot=max(1, int(raw_with_strategy.get("momentum_top_hot", 25))),
+            momentum_hot_min_combined_score=float(
+                raw_with_strategy.get("momentum_hot_min_combined_score", 72.0)
+            ),
+            momentum_hot_min_apr=float(raw_with_strategy.get("momentum_hot_min_apr", 200.0)),
             momentum_detective_enabled=bool(raw_with_strategy.get("momentum_detective_enabled", True)),
             momentum_probe_market_lists=bool(raw_with_strategy.get("momentum_probe_market_lists", True)),
             lp_planning_enabled=bool(raw_with_strategy.get("lp_planning_enabled", False)),
@@ -252,6 +261,8 @@ class ScannerConfig:
             lp_default_range_width_pct=float(raw_with_strategy.get("lp_default_range_width_pct", 20.0)),
             lp_range_width_candidates=_parse_lp_width_candidates(dict(raw_with_strategy)),
             lp_skew_use_momentum=bool(raw_with_strategy.get("lp_skew_use_momentum", True)),
+            lp_open_pay_token_only=bool(raw_with_strategy.get("lp_open_pay_token_only", True)),
+            lp_pay_prefer_symbol=str(raw_with_strategy.get("lp_pay_prefer_symbol") or "").strip().upper(),
             lp_full_range_parallel=bool(raw_with_strategy.get("lp_full_range_parallel", False)),
             lp_full_range_budget_fraction=float(raw_with_strategy.get("lp_full_range_budget_fraction", 0.25)),
             lp_main_budget_fraction=float(raw_with_strategy.get("lp_main_budget_fraction", 0.75)),
@@ -1133,6 +1144,17 @@ def scan(
                 default_width_pct=config.lp_default_range_width_pct,
                 skew_use_momentum=config.lp_skew_use_momentum,
             )
+            try:
+                from raydium_lp1.lp_open_style import resolve_live_open_style
+
+                live_style = resolve_live_open_style(config, pool, momentum=mom_blob)
+                pool["lp_live_open_preview"] = {
+                    "lp_style_label": live_style.lp_style_label,
+                    "lp_placement": live_style.placement,
+                    **live_style.to_position_fields(),
+                }
+            except Exception:
+                pass
         try:
             REPORTS_DIR.mkdir(parents=True, exist_ok=True)
             (REPORTS_DIR / "lp_placement_latest.json").write_text(
@@ -1162,12 +1184,12 @@ def scan(
 
     wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
     max_positions = int(wallet_capacity_info["capacity"]["max_positions"]) if wallet_config is not None else None
-    # In dry-run, always show the full filter-pass list; wallet/RPC capacity is informational only.
+    # UI always gets the full filter-pass list; wallet cap applies only to executable subset.
     if wallet_config is not None and max_positions is not None and not config.dry_run:
-        capped_candidates = candidates[:max_positions]
-        candidates_truncated = max(0, len(candidates) - len(capped_candidates))
+        candidates_executable = candidates[: max(0, max_positions)]
+        candidates_truncated = max(0, len(candidates) - len(candidates_executable))
     else:
-        capped_candidates = candidates
+        candidates_executable = list(candidates)
         candidates_truncated = 0
 
     do_write_rejections = (
@@ -1217,8 +1239,9 @@ def scan(
         "lp_planning_enabled": config.lp_planning_enabled,
         "risk_profile": config.risk_profile,
         "scanned_count": scanned,
-        "candidate_count": len(capped_candidates),
+        "candidate_count": len(candidates),
         "candidate_count_pre_capacity": len(candidates),
+        "candidate_count_executable": len(candidates_executable),
         "rejected_count": len(rejected),
         "max_position_usd": config.max_position_usd,
         "rpc_count": len(config.solana_rpc_urls),
@@ -1231,7 +1254,8 @@ def scan(
         "use_robust_routing": config.use_robust_routing,
         "route_cache_stats": robust_routes.get_global_cache().stats(),
         "wallet_capacity": wallet_capacity_info,
-        "candidates": capped_candidates,
+        "candidates": candidates,
+        "candidates_executable": candidates_executable,
         "candidates_truncated": candidates_truncated,
         "rejected_preview": rejected[:10],
         "rejection_breakdown": dict(rejection_counts),

@@ -224,6 +224,12 @@ def _live_readiness(settings: dict[str, Any]) -> dict[str, Any]:
     rpcs = settings.get("solana_rpc_urls") or []
     if not rpcs:
         blockers.append("no solana_rpc_urls in settings")
+    try:
+        from raydium_lp1.fee_guard import fee_guard_readiness_blockers
+
+        blockers.extend(fee_guard_readiness_blockers(settings))
+    except Exception:
+        pass
     return {
         "mode": mode,
         "dry_run": bool(settings.get("dry_run", mode == "demo")),

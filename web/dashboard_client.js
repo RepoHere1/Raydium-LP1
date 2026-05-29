@@ -644,14 +644,25 @@
 
   function poolApr(p){ return Number(p.apr!=null?p.apr:p.apr_pct)||0; }
 
-  function isMomentumHot(p){
+  function isMomentumHot(p, settings){
+    settings=settings||{};
     var mom=p.momentum||{};
     var tier=String(mom.tier||p.momentum_tier||'').toLowerCase();
-    if(tier==='hot') return true;
-    if(tier.indexOf('hot')>=0) return true;
+    if(tier==='hot'||tier==='enter_bias') return true;
+    var minScore=Number(settings.momentum_hot_min_combined_score!=null?settings.momentum_hot_min_combined_score:72);
+    var minApr=Number(settings.momentum_hot_min_apr!=null?settings.momentum_hot_min_apr:200);
     var sc=mom.combined_score!=null?mom.combined_score:mom.score;
-    if(sc!=null&&Number(sc)>=90) return true;
+    if(sc!=null&&Number(sc)>=minScore&&poolApr(p)>=minApr) return true;
     return false;
+  }
+
+  function sortPoolsByMomentumDesc(pools){
+    return pools.slice().sort(function(a,b){
+      var ma=a.momentum||{}, mb=b.momentum||{};
+      var sa=Number(ma.combined_score!=null?ma.combined_score:ma.score)||0;
+      var sb=Number(mb.combined_score!=null?mb.combined_score:mb.score)||0;
+      return sb-sa;
+    });
   }
 
   function sortPoolsByAprDesc(pools){
@@ -683,20 +694,31 @@
 
   function renderCandidateTable(el, d){
     var pools=sortPoolsForPick(candidateRows(d), d);
+    var ls=d.last_scan||{};
+    var settings=(d&&d.settings)||{};
     if(!pools.length){ el.innerHTML='<p class="muted">No candidates in this snapshot.</p>'; return; }
     var n=pools.length;
+    var pre=ls.candidate_count_pre_capacity!=null?ls.candidate_count_pre_capacity:n;
+    var trunc=Number(ls.candidates_truncated||0);
+    var exec=ls.candidate_count_executable;
     var sortLbl=getLpSelectionMode(d)==='momentum'?'momentum score (LIVE picks tier=HOT)':'APR high→low';
-    el.innerHTML='<p class="muted">'+n+' row(s) — sorted by '+esc(sortLbl)+'. Green rows = momentum HOT. Row #1 = default LIVE open target.</p>'+
+    var capNote=trunc>0
+      ?(' Wallet LIVE cap hides '+trunc+' from execution (max_positions); table shows all '+n+' filter-pass pools.')
+      :'';
+    el.innerHTML='<p class="muted">'+n+' row(s) — sorted by '+esc(sortLbl)+'. Green = HOT (score≥'+
+      esc(String(settings.momentum_hot_min_combined_score!=null?settings.momentum_hot_min_combined_score:72))+
+      ', APR≥'+esc(String(settings.momentum_hot_min_apr!=null?settings.momentum_hot_min_apr:200))+
+      '). Row #1 = default LIVE target.'+esc(capNote)+' Scroll inside table if needed.</p>'+
       '<div class="tbl-scroll"><table class="tb2"><thead><tr><th>#</th><th>Pair</th><th>APR %</th><th>TVL USD</th><th>Vol 24h</th><th>Momentum</th><th>Pool id</th></tr></thead><tbody>'+
       pools.map(function(p,i){
         var mom=p.momentum||{};
-        var hot=isMomentumHot(p);
+        var hot=isMomentumHot(p, settings);
         return '<tr'+(hot?' class="row-mom-hot"':'')+'><td>'+(i+1)+'</td><td>'+esc(pairFromPool(p))+'</td><td>'+esc(fmtAprPct(p.apr))+'</td><td>'+esc(fmtUsd(p.liquidity_usd))+'</td><td>'+esc(fmtUsd(p.volume_24h_usd))+'</td><td>'+momScoreCell(mom)+'</td><td>'+poolIdCellFromPool(p)+'</td></tr>';
       }).join('')+'</tbody></table></div>';
   }
 
   function renderMomentumTable(el, rows){
-    rows=sortPoolsByAprDesc(rows||[]);
+    rows=sortPoolsByMomentumDesc(rows||[]);
     if(!rows.length){ el.innerHTML='<p class="muted">No momentum leaderboard rows (enable momentum in settings).</p>'; return; }
     el.innerHTML='<p class="muted">'+rows.length+' row(s) — <code>momentum_hot_top</code> (columns match candidate pools: APR, TVL, vol, score, pool).</p>'+
       '<div class="tbl-scroll"><table class="tb2"><thead><tr><th>#</th><th>Pair</th><th>APR %</th><th>TVL $</th><th>Vol24 $</th><th>Score (CMB)</th><th>Tier</th><th>Tags</th><th>Pool</th></tr></thead><tbody>'+

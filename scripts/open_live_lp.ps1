@@ -8,16 +8,28 @@
 .PARAMETER SolAmount
   SOL to deposit (human). Default 0.005 (~75c at ~$150/SOL; CLMM min often needs >=0.005).
 
+.PARAMETER UsdAmount
+  If set (>0), overrides SolAmount using SolPriceUsd or env SOL_USD_PRICE.
+
+.PARAMETER SolPriceUsd
+  SOL/USD for UsdAmount sizing (0 = use env or 180).
+
 .EXAMPLE
   .\scripts\export_keypair.ps1
   .\scripts\open_live_lp.ps1
 
 .EXAMPLE
   .\scripts\open_live_lp.ps1 -PoolId "BSPFA8d9qeZdsTubmS6FvriYadx2mzoi6jesauD6hi4e" -SolAmount 0.005
+
+.EXAMPLE
+  ~25 cents at $180/SOL:
+  .\scripts\open_live_lp.ps1 -PoolId "BSPFA8d9qeZdsTubmS6FvriYadx2mzoi6jesauD6hi4e" -UsdAmount 0.25
 #>
 param(
     [string]$PoolId = "",
-    [double]$SolAmount = 0.005
+    [double]$SolAmount = 0.005,
+    [double]$UsdAmount = 0,
+    [double]$SolPriceUsd = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,9 +49,19 @@ if (-not $PoolId) {
     if ($ans.Trim()) { $PoolId = $ans.Trim() }
 }
 
+if ($UsdAmount -gt 0) {
+    if ($SolPriceUsd -le 0) {
+        $ep = $env:SOL_USD_PRICE
+        if ($ep -and [double]::TryParse($ep, [ref]$null)) { $SolPriceUsd = [double]$ep }
+        else { $SolPriceUsd = 180.0 }
+    }
+    $SolAmount = [math]::Round($UsdAmount / $SolPriceUsd, 6)
+    Write-Host "UsdAmount `$$UsdAmount @ `$$SolPriceUsd/SOL -> $SolAmount SOL (pay-token-only rules)" -ForegroundColor DarkGray
+}
+
 Write-Host ""
 Write-Host "Opening LIVE CLMM with ${SolAmount} SOL ..." -ForegroundColor Yellow
-& $pyExe @pyArgs (Join-Path $RepoRoot "scripts\open_live_lp_cli.py") $PoolId "$SolAmount"
+& $pyExe @pyArgs (Join-Path $RepoRoot "scripts\open_live_lp_cli.py") $PoolId --sol "$SolAmount"
 $exit = $LASTEXITCODE
 if ($exit -ne 0) { exit $exit }
 
