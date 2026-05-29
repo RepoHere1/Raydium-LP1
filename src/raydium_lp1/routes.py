@@ -27,6 +27,7 @@ RAYDIUM_COMPUTE_URL = "https://transaction-v1.raydium.io/compute/swap-base-in"
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KConky11McCe8BenwNYB"
+USD1_MINT = "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB"
 
 # Default sell amount we probe with: 0.1 token (10**6 base units for tokens with
 # 6 decimals; this is just a smoke test, the API accepts any positive amount).
@@ -37,6 +38,7 @@ BASE_TOKENS: dict[str, str] = {
     "WSOL": WSOL_MINT,
     "USDC": USDC_MINT,
     "USDT": USDT_MINT,
+    "USD1": USD1_MINT,
 }
 
 

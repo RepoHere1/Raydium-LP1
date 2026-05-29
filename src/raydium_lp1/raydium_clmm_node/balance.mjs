@@ -22,6 +22,8 @@ import { Connection, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 const USDC = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+const USDT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KConky11McCe8BenwNYB');
+const USD1 = new PublicKey('USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB');
 const WSOL = new PublicKey('So11111111111111111111111111111111111111112');
 
 async function main() {
@@ -48,7 +50,12 @@ async function main() {
       throw e;
     }
   }
-  const [usdc, wsol] = await Promise.all([tokenBal(USDC, 6), tokenBal(WSOL, 9)]);
+  const [usdc, usdt, usd1, wsol] = await Promise.all([
+    tokenBal(USDC, 6),
+    tokenBal(USDT, 6),
+    tokenBal(USD1, 6),
+    tokenBal(WSOL, 9),
+  ]);
 
   const block_height = await conn.getBlockHeight();
 
@@ -61,6 +68,8 @@ async function main() {
     sol_balance:  lamports / LAMPORTS_PER_SOL,
     lamports,
     usdc_balance: usdc,
+    usdt_balance: usdt,
+    usd1_balance: usd1,
     wsol_balance: wsol,
     rpc_url:      rpc_masked,
     block_height,

@@ -34,7 +34,7 @@ from pathlib import Path
 
 REPO  = Path(__file__).parent.parent.parent.resolve()        # src/raydium_lp1/ → repo root
 NODE_DIR = REPO / "src" / "raydium_lp1" / "raydium_clmm_node"
-_ONCHAIN_SPEND_SCRIPTS = frozenset({"open_position.mjs", "close_position.mjs"})
+_ONCHAIN_SPEND_SCRIPTS = frozenset({"open_position.mjs", "close_position.mjs", "swap_sol_to_pay.mjs"})
 
 
 def _load_env() -> dict:
@@ -67,7 +67,12 @@ def _run_script(script_name: str, payload: dict, timeout: float = 60.0) -> dict:
         from raydium_lp1.fee_guard import FeeGuardBlockedError, note_broadcast_result, sanitize_clmm_payload
         from raydium_lp1.live_guard import guard_onchain
 
-        dep = payload.get("input_amount_human") if script_name == "open_position.mjs" else None
+        if script_name == "open_position.mjs":
+            dep = payload.get("input_amount_human")
+        elif script_name == "swap_sol_to_pay.mjs":
+            dep = int(payload.get("amount_lamports") or 0) / 1_000_000_000
+        else:
+            dep = None
         try:
             guard_onchain(
                 f"Raydium CLMM {script_name}",
@@ -84,6 +89,15 @@ def _run_script(script_name: str, payload: dict, timeout: float = 60.0) -> dict:
                     deposit_sol=float(dep or 0),
                     priority_micro=payload.get("priority_fee_micro_lamports"),
                 )
+            elif script_name == "swap_sol_to_pay.mjs":
+                from raydium_lp1.fee_guard import fee_config_from_settings
+
+                lamports = int(payload.get("amount_lamports") or 0)
+                fee_estimate = {
+                    "operation": "jupiter_swap",
+                    "deposit_sol": lamports / 1_000_000_000,
+                    "estimated_total_sol": fee_config_from_settings().clmm_base_fee_sol * 2,
+                }
             else:
                 from raydium_lp1.fee_guard import estimate_clmm_close_cost_sol, fee_config_from_settings
 
@@ -248,13 +262,40 @@ def quote_sell(*,
     }, timeout=timeout)
 
 
+def swap_sol_for_pay_token(
+    *,
+    output_mint: str,
+    amount_lamports: int,
+    slippage_bps: int = 150,
+    priority_fee_micro_lamports: int | None = None,
+    timeout: float = 90.0,
+) -> dict:
+    """Swap native SOL → pay stable (USDC/USDT/USD1) via Jupiter before CLMM open."""
+
+    from raydium_lp1.fee_guard import cap_priority_micro, fee_config_from_settings
+
+    cfg = fee_config_from_settings()
+    pri = cap_priority_micro(priority_fee_micro_lamports, cfg)
+    return _run_script(
+        "swap_sol_to_pay.mjs",
+        {
+            "output_mint": output_mint,
+            "amount_lamports": int(amount_lamports),
+            "slippage_bps": int(slippage_bps),
+            "priority_fee_micro_lamports": pri,
+            "jupiter_priority_micro_lamports": cfg.jupiter_max_priority_micro_lamports,
+        },
+        timeout=timeout,
+    )
+
+
 def wallet_balance(timeout: float = 20.0) -> dict:
-    """Read-only snapshot of the bot wallet's SOL + USDC + WSOL balance,
+    """Read-only snapshot of the bot wallet's SOL + USDC + USDT + USD1 + WSOL balance,
     plus current Solana block height. Spends nothing. Use this before any
     open_position() to verify funds are present.
 
     Returns:
-      {ok: true, address, sol_balance, usdc_balance, wsol_balance,
+      {ok: true, address, sol_balance, usdc_balance, usdt_balance, usd1_balance, wsol_balance,
        lamports, rpc_url (masked), block_height}
       OR {ok: false, error: "..."}
     """

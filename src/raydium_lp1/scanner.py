@@ -21,7 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from raydium_lp1 import dashboard as dashboard_mod
+from raydium_lp1 import cash_anomalies, dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
 from raydium_lp1 import emergency, health, lp_range_planner, mode_toggle, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
@@ -78,7 +78,7 @@ class ScannerConfig:
     min_liquidity_usd: float = 1_000.0
     min_volume_24h_usd: float = 100.0
     max_position_usd: float = 25.0
-    allowed_quote_symbols: set[str] = field(default_factory=lambda: {"SOL", "USDC", "USDT"})
+    allowed_quote_symbols: set[str] = field(default_factory=lambda: {"SOL", "USDC", "USDT", "USD1"})
     blocked_token_symbols: set[str] = field(default_factory=set)
     blocked_mints: set[str] = field(default_factory=set)
     require_pool_id: bool = True
@@ -141,14 +141,26 @@ class ScannerConfig:
     lp_default_range_width_pct: float = 20.0
     lp_range_width_candidates: tuple[float, ...] = (12.0, 20.0, 30.0, 50.0)
     lp_skew_use_momentum: bool = True
-    # LIVE opens: deposit only SOL/USDC/USDT (allowed_quote_symbols), not the alt leg.
+    # LIVE opens: deposit only SOL/USDC/USDT/USD1 (allowed_quote_symbols), not the alt leg.
     lp_open_pay_token_only: bool = True
     lp_pay_prefer_symbol: str = ""
+    # Before stablecoin pay opens: Jupiter swap SOL → pay leg if wallet balance is short.
+    lp_pay_funding_enabled: bool = True
+    lp_pay_funding_buffer_pct: float = 0.03
+    lp_pay_funding_dust_usd: float = 0.02
+    lp_pay_funding_slippage_bps: int = 150
+    lp_pay_funding_sol_price_usd: float = 0.0
     lp_full_range_parallel: bool = False
     lp_full_range_budget_fraction: float = 0.25
     lp_main_budget_fraction: float = 0.75
     lp_max_positions_per_mint: int = 2
     risk_profile: str = "balanced"  # balanced | degen
+    # Exit-safe pools with real USD fees but low reported APR (dashboard ANOMALIES / CASH).
+    cash_anomaly_enabled: bool = True
+    cash_anomaly_min_fee_usd: float = 25.0
+    cash_anomaly_max_apr: float = 150.0
+    cash_anomaly_top_n: int = 30
+    cash_anomaly_implied_gap_min: float = 10.0
 
     def __post_init__(self) -> None:
         """Drop invalid RPC URLs from any construction path (not only ``from_file``)."""
@@ -185,7 +197,9 @@ class ScannerConfig:
             min_liquidity_usd=float(raw_with_strategy.get("min_liquidity_usd", cls.min_liquidity_usd)),
             min_volume_24h_usd=float(raw_with_strategy.get("min_volume_24h_usd", cls.min_volume_24h_usd)),
             max_position_usd=float(raw_with_strategy.get("max_position_usd", cls.max_position_usd)),
-            allowed_quote_symbols=set(map(str.upper, raw_with_strategy.get("allowed_quote_symbols", ["SOL", "USDC", "USDT"]))),
+            allowed_quote_symbols=set(
+                map(str.upper, raw_with_strategy.get("allowed_quote_symbols", ["SOL", "USDC", "USDT", "USD1"]))
+            ),
             blocked_token_symbols=set(map(str.upper, raw_with_strategy.get("blocked_token_symbols", []))),
             blocked_mints=set(raw_with_strategy.get("blocked_mints", [])),
             require_pool_id=bool(raw_with_strategy.get("require_pool_id", True)),
@@ -263,11 +277,23 @@ class ScannerConfig:
             lp_skew_use_momentum=bool(raw_with_strategy.get("lp_skew_use_momentum", True)),
             lp_open_pay_token_only=bool(raw_with_strategy.get("lp_open_pay_token_only", True)),
             lp_pay_prefer_symbol=str(raw_with_strategy.get("lp_pay_prefer_symbol") or "").strip().upper(),
+            lp_pay_funding_enabled=bool(raw_with_strategy.get("lp_pay_funding_enabled", True)),
+            lp_pay_funding_buffer_pct=float(raw_with_strategy.get("lp_pay_funding_buffer_pct", 0.03)),
+            lp_pay_funding_dust_usd=float(raw_with_strategy.get("lp_pay_funding_dust_usd", 0.02)),
+            lp_pay_funding_slippage_bps=int(raw_with_strategy.get("lp_pay_funding_slippage_bps", 150)),
+            lp_pay_funding_sol_price_usd=float(raw_with_strategy.get("lp_pay_funding_sol_price_usd", 0.0)),
             lp_full_range_parallel=bool(raw_with_strategy.get("lp_full_range_parallel", False)),
             lp_full_range_budget_fraction=float(raw_with_strategy.get("lp_full_range_budget_fraction", 0.25)),
             lp_main_budget_fraction=float(raw_with_strategy.get("lp_main_budget_fraction", 0.75)),
             lp_max_positions_per_mint=max(1, int(raw_with_strategy.get("lp_max_positions_per_mint", 2))),
             risk_profile=str(raw_with_strategy.get("risk_profile") or "balanced"),
+            cash_anomaly_enabled=bool(raw_with_strategy.get("cash_anomaly_enabled", True)),
+            cash_anomaly_min_fee_usd=float(raw_with_strategy.get("cash_anomaly_min_fee_usd", 25.0)),
+            cash_anomaly_max_apr=float(raw_with_strategy.get("cash_anomaly_max_apr", 150.0)),
+            cash_anomaly_top_n=max(1, int(raw_with_strategy.get("cash_anomaly_top_n", 30))),
+            cash_anomaly_implied_gap_min=float(
+                raw_with_strategy.get("cash_anomaly_implied_gap_min", 10.0)
+            ),
         )
 
 
@@ -882,6 +908,8 @@ def scan(
     on_chain_owner_cache: dict[str, str | None] = {}
     market_pulse: dict[str, set[str]] = {}
     momentum_hot_top: list[dict[str, Any]] = []
+    exit_probe_pools: list[dict[str, Any]] = []
+    exit_probe_floor = cash_anomalies.exit_liquidity_floor_usd(config)
     stream_cfg = verdict_stream if verdict_stream is not None else verdicts.make_stream_config(enabled=False)
     if verdict_stream is not None and verdict_stream.enabled:
         verdict_stream.row_emit_count = 0
@@ -925,6 +953,7 @@ def scan(
             "rejection_breakdown": {},
             "rejection_reason_histogram": {},
             "rejections_csv": None,
+            "cash_anomalies": cash_anomalies.build_cash_anomaly_report([], config),
             "notice": (
                 f"Network {adapter.display_name!r} is scaffolded but not live yet. "
                 "Switch back to network=solana to scan Raydium pools."
@@ -983,6 +1012,10 @@ def scan(
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
             if config.lp_planning_enabled and pool.get("raw") is not None:
                 public_pool["raw"] = pool["raw"]
+            if config.cash_anomaly_enabled and cash_anomalies.pool_exit_eligible(
+                public_pool, exit_probe_floor
+            ):
+                exit_probe_pools.append(public_pool)
             if True:
                 verification = pool_verify.validate_pool(
                     public_pool,
@@ -1172,6 +1205,19 @@ def scan(
         except OSError:
             pass
 
+    cash_anomaly_report = cash_anomalies.build_cash_anomaly_report(
+        exit_probe_pools,
+        config,
+        candidate_ids={str(c.get("id") or "") for c in candidates if c.get("id")},
+    )
+    if cash_anomaly_report.get("anomaly_count"):
+        print(
+            f"[scan] ANOMALIES CASH: {cash_anomaly_report['anomaly_count']} pool(s) "
+            f"(probed {cash_anomaly_report.get('probed_count', 0)} exit-safe) — dashboard",
+            file=sys.stderr,
+            flush=True,
+        )
+
     if config.track_liquidity_health and candidates and config.emergency_close_enabled:
         alerts = emergency.run_emergency_pass(
             zip(candidates, assessments),
@@ -1266,6 +1312,7 @@ def scan(
         "momentum_hold_hours": config.momentum_hold_hours,
         "momentum_hot_top": momentum_hot_top,
         "momentum_market_pulse_sizes": {k: len(v) for k, v in market_pulse.items()},
+        "cash_anomalies": cash_anomaly_report,
     }
 
 
@@ -1339,6 +1386,11 @@ def print_report(report: dict[str, Any]) -> None:
     if not report["candidates"]:
         print("No pools passed all filters. No action taken.")
         print_reject_dial_in_hints(report)
+        cash_block = report.get("cash_anomalies") or {}
+        if isinstance(cash_block, dict) and cash_block.get("enabled"):
+            print("")
+            for line in cash_anomalies.format_terminal_block(cash_block):
+                print(line)
         return
 
     print("\nCandidates (dry-run watch list; sorted by momentum when enabled)")
@@ -1369,6 +1421,12 @@ def print_report(report: dict[str, Any]) -> None:
             sig = ", ".join((mom.get("signals") or [])[:4])
             print(f"         -> {tier}{exit_w} {sig}")
     print("\nDry-run only: no buy, no wallet signing, no LP position opened.")
+
+    cash_block = report.get("cash_anomalies") or {}
+    if isinstance(cash_block, dict):
+        print("")
+        for line in cash_anomalies.format_terminal_block(cash_block):
+            print(line)
 
 
 def write_reports(report: dict[str, Any], reports_dir: Path = REPORTS_DIR) -> None:

@@ -22,7 +22,8 @@
 
 import { readFileSync } from 'node:fs';
 import { Connection, Keypair, PublicKey, ComputeBudgetProgram, sendAndConfirmTransaction } from '@solana/web3.js';
-import { Raydium, TxVersion } from '@raydium-io/raydium-sdk-v2';
+import { Raydium, TxVersion, parseTokenAccountResp } from '@raydium-io/raydium-sdk-v2';
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import BN from 'bn.js';
 import bs58 from 'bs58';
 
@@ -48,23 +49,44 @@ export function loadKeypairFromFile(path) {
   return Keypair.fromSecretKey(Uint8Array.from(arr));
 }
 
+export async function fetchTokenAccountData(connection, owner) {
+  const solAccountResp = await connection.getAccountInfo(owner.publicKey);
+  const tokenAccountResp = await connection.getTokenAccountsByOwner(owner.publicKey, {
+    programId: TOKEN_PROGRAM_ID,
+  });
+  let merged = tokenAccountResp.value;
+  try {
+    const token2022Req = await connection.getTokenAccountsByOwner(owner.publicKey, {
+      programId: TOKEN_2022_PROGRAM_ID,
+    });
+    merged = [...tokenAccountResp.value, ...token2022Req.value];
+  } catch { /* TOKEN_2022 optional */ }
+  return parseTokenAccountResp({
+    owner: owner.publicKey,
+    solAccountResp,
+    tokenAccountResp: { context: tokenAccountResp.context, value: merged },
+  });
+}
+
 export async function bootRaydium({ rpc_url, keypair_path }) {
   if (!rpc_url)      throw new Error('rpc_url is required');
   if (!keypair_path) throw new Error('keypair_path is required');
 
   const connection = new Connection(rpc_url, { commitment: 'confirmed' });
   const owner      = loadKeypairFromFile(keypair_path);
+  const tokenAccountData = await fetchTokenAccountData(connection, owner);
   const raydium    = await Raydium.load({
     connection,
     owner,
     cluster: 'mainnet',
     disableFeatureCheck: true,
     blockhashCommitment: 'confirmed',
+    tokenAccounts: tokenAccountData.tokenAccounts,
+    tokenAccountRawInfos: tokenAccountData.tokenAccountRawInfos,
   });
-  return { raydium, connection, owner };
+  return { raydium, connection, owner, tokenAccountData };
 }
 
-/** Standard finished-result printer. */
 export function finish(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
   process.exit(obj.ok ? 0 : 1);

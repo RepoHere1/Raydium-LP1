@@ -306,13 +306,26 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "Pairs with momentum enabled; off for symmetric testing.",
     ),
     "lp_open_pay_token_only": (
-        "When on (default), every LIVE CLMM open deposits only an allowed quote leg (SOL, USDC, or USDT) "
+        "When on (default), every LIVE CLMM open deposits only an allowed quote leg (SOL, USDC, USDT, or USD1) "
         "and places the band on that side so you never fund the memecoin leg unless you turn this off.",
-        "Leave on for SOL/USDC/USDT-only inventory; pools without a quote leg are skipped for LIVE opens.",
+        "Leave on for quote-only inventory; pools without a quote leg are skipped for LIVE opens.",
     ),
     "lp_pay_prefer_symbol": (
         "Which pay token to use when a pool has multiple quotes (rare). Empty uses emergency_base_symbol (usually SOL).",
         "Set USDC if you size positions in stablecoin rather than SOL.",
+    ),
+    "lp_pay_funding_enabled": (
+        "When on (default), LIVE opens that pay in USDC/USDT/USD1 auto-swap SOL via Jupiter if the wallet "
+        "stable balance is below deposit size (+ buffer). SOL pay legs skip swapping.",
+        "Turn off only if you pre-fund stables manually. Does not apply to dashboard ANOMALIES (CASH) rows.",
+    ),
+    "lp_pay_funding_buffer_pct": (
+        "Extra fraction added on top of the LP deposit when checking stable balance (default 0.03 = 3%).",
+        "Covers rounding and tiny slippage so the CLMM open does not fail for being $0.01 short.",
+    ),
+    "lp_pay_funding_sol_price_usd": (
+        "Fallback SOL/USD for sizing the funding swap when Jupiter quote probes are unavailable. 0 = use 180.",
+        "CLI --sol-price also feeds live opens when set.",
     ),
     "lp_full_range_parallel": (
         "Also simulate a full-range style leg beside concentrated bands.",

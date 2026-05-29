@@ -111,14 +111,33 @@ def live_readiness_check() -> dict[str, Any]:
     return _live_readiness(settings)
 
 
+def _resolve_deposit_human(
+    pos_sol: float,
+    pay_res: Any | None,
+    *,
+    usd_notional: float | None = None,
+) -> float:
+    """Map CLI sizing to the pay-token human amount the Raydium SDK expects."""
+
+    sym = str(getattr(pay_res, "pay_symbol", "") or "").upper()
+    if sym in ("USDC", "USDT", "USD1") and usd_notional is not None:
+        return float(usd_notional)
+    return float(pos_sol)
+
+
 def open_clmm_candidate(
     *,
     pool_id: str | None = None,
     latest_path: Path = DEFAULT_LATEST,
     input_amount_sol: float | None = None,
+    input_amount_usd: float | None = None,
     tick_lower_pct_below: float = 12.0,
     tick_upper_pct_above: float = 12.0,
     force_pay_token_only: bool | None = None,
+    strategy_id: str | None = None,
+    fee_guard_settings: dict[str, Any] | None = None,
+    skip_pay_token_funding: bool = False,
+    sol_price_usd: float | None = None,
 ) -> dict[str, Any]:
 
     try:
@@ -146,6 +165,13 @@ def open_clmm_candidate(
     config = ScannerConfig.from_file(settings_path)
     if force_pay_token_only is not None:
         config = replace(config, lp_open_pay_token_only=bool(force_pay_token_only))
+    if strategy_id:
+        config = replace(
+            config,
+            lp_active_strategy=strategy_id,
+            lp_skew_use_momentum=True,
+            lp_planning_enabled=True,
+        )
     report = _read_latest(latest_path)
     pool = _pick_candidate(report, pool_id, config=config)
     pv = pool.get("pool_verification") or {}
@@ -156,15 +182,6 @@ def open_clmm_candidate(
     bal_sol = float((cap.get("balance") or {}).get("sol") or 0.0)
     pos_sol = float(input_amount_sol if input_amount_sol is not None else config.position_size_sol)
     reserve = float(config.reserve_sol)
-    if bal_sol < reserve + pos_sol + 0.002:
-        return {
-            "ok": False,
-            "error": (
-                f"insufficient SOL: balance={bal_sol:.4f} need ~{reserve + pos_sol + 0.002:.4f} "
-                "(lower reserve_sol/position_size_sol or fund wallet)"
-            ),
-            "balance_sol": bal_sol,
-        }
 
     from raydium_lp1.lp_open_style import resolve_live_open_style
     from raydium_lp1.lp_pay_mint import pay_mint_open_error, pay_token_only_enabled, resolve_pay_mint
@@ -180,9 +197,14 @@ def open_clmm_candidate(
         pay_res = resolve_pay_mint(pool, config)
 
     input_mint = str(style_open.get("input_mint") or (pay_res.pay_mint if pay_res else _sol_mint_for_pool(pool)))
+    deposit_human = _resolve_deposit_human(pos_sol, pay_res, usd_notional=input_amount_usd)
 
     try:
-        fee_est = assert_clmm_open_allowed(pos_sol, settings=config)
+        from raydium_lp1.settings_io import load_settings_json
+
+        fee_settings: Any = fee_guard_settings if fee_guard_settings is not None else load_settings_json(settings_path)
+        fee_est = assert_clmm_open_allowed(pos_sol, settings=fee_settings)
+        open_cost_sol = float(fee_est.get("estimated_total_sol") or 0.042)
     except FeeGuardBlockedError as exc:
         return {
             "ok": False,
@@ -195,12 +217,55 @@ def open_clmm_candidate(
             ),
         }
 
-    fee_cfg = fee_config_from_settings(config)
+    pay_sym = str(getattr(pay_res, "pay_symbol", "") or "").upper() if pay_res else "SOL"
+    funding_result: dict[str, Any] | None = None
+    if pay_res is not None and pay_sym not in ("SOL", "WSOL"):
+        from raydium_lp1.pay_token_funding import ensure_pay_token_for_open
+
+        funding_result = ensure_pay_token_for_open(
+            pay_res,
+            deposit_human,
+            config=config,
+            fee_settings=fee_settings,
+            reserve_sol=reserve,
+            open_cost_sol=open_cost_sol,
+            skip=skip_pay_token_funding,
+            sol_price_usd=sol_price_usd,
+        )
+        if not funding_result.get("ok"):
+            out = {
+                "ok": False,
+                "error": funding_result.get("error") or "pay-token funding failed",
+                "pay_funding": funding_result,
+                "fee_guard_estimate": fee_est,
+            }
+            return out
+        cap = assess_capacity(config, w)
+        bal_sol = float((cap.get("balance") or {}).get("sol") or 0.0)
+
+    sol_need = reserve + open_cost_sol + 0.003
+    if pay_sym in ("SOL", "WSOL"):
+        sol_need += pos_sol
+    elif funding_result and funding_result.get("funded"):
+        plan = funding_result.get("funding_plan") or {}
+        sol_need += float(plan.get("estimated_sol_swap") or 0.0)
+    if bal_sol < sol_need:
+        return {
+            "ok": False,
+            "error": (
+                f"insufficient SOL: balance={bal_sol:.4f} need ~{sol_need:.4f} "
+                "(reserve + CLMM rent/fees + optional pay-token swap)"
+            ),
+            "balance_sol": bal_sol,
+            "pay_funding": funding_result,
+        }
+
+    fee_cfg = fee_config_from_settings(fee_settings)
     open_kwargs = _build_clmm_open_kwargs(
         style_open,
         pool_id=str(pool["id"]),
         input_mint=input_mint,
-        input_amount_human=pos_sol,
+        input_amount_human=deposit_human,
         tick_lower_pct_below=tick_lower_pct_below,
         tick_upper_pct_above=tick_upper_pct_above,
     )
@@ -250,6 +315,8 @@ def open_clmm_candidate(
         "apr": pool.get("apr"),
         "liquidity_usd": pool.get("liquidity_usd"),
         "input_amount_sol": pos_sol,
+        "input_amount_human": deposit_human,
+        "input_pay_symbol": getattr(pay_res, "pay_symbol", None) if pay_res else None,
         "position_nft_mint": result.get("position_nft_mint") or result.get("nftMint"),
         "tx": result.get("tx") or result.get("signature"),
         "clmm_result": result,
@@ -258,7 +325,10 @@ def open_clmm_candidate(
         **lp_style.to_position_fields(),
     }
     _append_active_position(row)
-    return {"ok": True, "position": row, "clmm": result, "fee_guard_estimate": fee_est}
+    out_ok: dict[str, Any] = {"ok": True, "position": row, "clmm": result, "fee_guard_estimate": fee_est}
+    if funding_result is not None:
+        out_ok["pay_funding"] = funding_result
+    return out_ok
 
 
 def _append_active_position(row: dict[str, Any]) -> None:

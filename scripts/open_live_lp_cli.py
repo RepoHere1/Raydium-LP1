@@ -11,7 +11,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
-def _config(*, force_pay_only: bool):
+def _config(*, force_pay_only: bool, strategy: str | None = None):
     from dataclasses import replace
 
     from raydium_lp1.scanner import ScannerConfig
@@ -19,10 +19,33 @@ def _config(*, force_pay_only: bool):
     config = ScannerConfig.from_file(REPO / "config" / "settings.json")
     if force_pay_only:
         config = replace(config, lp_open_pay_token_only=True)
+    if strategy:
+        config = replace(
+            config,
+            lp_active_strategy=strategy,
+            lp_skew_use_momentum=True,
+            lp_planning_enabled=True,
+        )
     return config
 
 
-def _preview(pool_id: str | None, amount_sol: float, *, force_pay_only: bool = False) -> dict:
+def _fee_settings(*, force_fee_guard: bool):
+    from raydium_lp1.settings_io import load_settings_json
+
+    settings = load_settings_json(REPO / "config" / "settings.json")
+    if force_fee_guard:
+        settings = dict(settings)
+        settings["fee_guard_enabled"] = True
+    return settings
+
+
+def _preview(
+    pool_id: str | None,
+    amount_sol: float,
+    *,
+    force_pay_only: bool = False,
+    strategy: str | None = None,
+) -> dict:
     from raydium_lp1.live_executor import DEFAULT_LATEST, _pick_candidate, _read_latest
     from raydium_lp1.lp_open_style import resolve_live_open_style
     from raydium_lp1.lp_pay_mint import (
@@ -30,7 +53,7 @@ def _preview(pool_id: str | None, amount_sol: float, *, force_pay_only: bool = F
         pay_token_only_enabled,
         resolve_pay_mint,
     )
-    config = _config(force_pay_only=force_pay_only)
+    config = _config(force_pay_only=force_pay_only, strategy=strategy)
     report = _read_latest(DEFAULT_LATEST)
     pool = _pick_candidate(report, pool_id, config=config)
     pay_res = resolve_pay_mint(pool, config) if pay_token_only_enabled(config) else None
@@ -45,6 +68,7 @@ def _preview(pool_id: str | None, amount_sol: float, *, force_pay_only: bool = F
         "pay_symbol": pay_res.pay_symbol if pay_res else None,
         "pay_mint": pay_res.pay_mint if pay_res else None,
         "lp_style_label": style.lp_style_label,
+        "lp_strategy_id": getattr(config, "lp_active_strategy", None),
         "lp_placement": style.placement,
         "open_kwargs": {
             k: style.open_kwargs.get(k)
@@ -117,6 +141,16 @@ def main() -> int:
         action="store_true",
         help="Use min_clmm_deposit_sol from settings (fee guard minimum; 25¢ opens are blocked)",
     )
+    parser.add_argument(
+        "--force-fee-guard",
+        action="store_true",
+        help="Apply fee_guard_enabled=true for this open (blocks micro-deposits)",
+    )
+    parser.add_argument(
+        "--strategy",
+        default="",
+        help="LP strategy id for this open (e.g. trailing_dynamic_skew = Dynamic Skew Order)",
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -140,19 +174,26 @@ def main() -> int:
 
     pool_id = args.pool_id.strip() or None
     amount_sol = _resolve_amount_sol(args)
+    strategy = args.strategy.strip() or None
+    fee_settings = _fee_settings(force_fee_guard=bool(args.force_fee_guard))
 
     try:
-        plan = _preview(pool_id, amount_sol, force_pay_only=bool(args.force_pay_only))
-        fee_cfg = fee_config_from_settings()
+        plan = _preview(
+            pool_id,
+            amount_sol,
+            force_pay_only=bool(args.force_pay_only),
+            strategy=strategy,
+        )
+        fee_cfg = fee_config_from_settings(fee_settings)
         plan["fee_guard"] = estimate_clmm_open_cost_sol(fee_cfg, deposit_sol=amount_sol)
         plan["fee_guard_session"] = __import__(
             "raydium_lp1.fee_guard", fromlist=["session_summary"]
         ).session_summary(fee_cfg)
         if not args.preview_only:
-            assert_clmm_open_allowed(amount_sol, settings=fee_cfg)
+            assert_clmm_open_allowed(amount_sol, settings=fee_settings)
         else:
             try:
-                assert_clmm_open_allowed(amount_sol, settings=fee_cfg)
+                assert_clmm_open_allowed(amount_sol, settings=fee_settings)
                 plan["fee_guard_ok"] = True
             except FeeGuardBlockedError as exc:
                 plan["fee_guard_ok"] = False
@@ -171,7 +212,11 @@ def main() -> int:
     result = open_clmm_candidate(
         pool_id=pool_id,
         input_amount_sol=amount_sol,
+        input_amount_usd=(None if args.usd is None else float(args.usd)),
         force_pay_token_only=True if args.force_pay_only else None,
+        strategy_id=strategy,
+        fee_guard_settings=fee_settings if args.force_fee_guard else None,
+        sol_price_usd=float(args.sol_price),
     )
     print(json.dumps(result, indent=2, default=str))
     return 0 if result.get("ok") else 1

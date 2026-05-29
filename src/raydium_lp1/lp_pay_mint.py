@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 WSOL_MINT = "So11111111111111111111111111111111111111112"
-DEFAULT_PAY_SYMBOLS = frozenset({"SOL", "WSOL", "USDC", "USDT"})
-PAY_PREFERENCE = ("SOL", "USDC", "USDT")
+DEFAULT_PAY_SYMBOLS = frozenset({"SOL", "WSOL", "USDC", "USDT", "USD1"})
+PAY_PREFERENCE = ("SOL", "USDC", "USDT", "USD1")
 
 
 def _norm_symbol(sym: str) -> str:
@@ -42,7 +42,7 @@ class PayMintResolution:
 
 
 def resolve_pay_mint(pool: Mapping[str, Any], config: Any | None = None) -> PayMintResolution | None:
-    """Pick the pool's pay leg (SOL/USDC/USDT). Returns None if neither side qualifies."""
+    """Pick the pool's pay leg (SOL/USDC/USDT/USD1). Returns None if neither side qualifies."""
 
     allowed = allowed_pay_symbols(config)
     prefer = _norm_symbol(

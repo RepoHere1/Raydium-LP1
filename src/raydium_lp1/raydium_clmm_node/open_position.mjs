@@ -15,11 +15,19 @@
  */
 
 import {
-  readStdinJson, bootRaydium, finish, failFromError,
+  readStdinJson, bootRaydium, finish, failFromError, fetchTokenAccountData,
   BN, PublicKey, TxVersion,
 } from './_shared.mjs';
 import { PoolUtils, TickUtil } from '@raydium-io/raydium-sdk-v2';
 import Decimal from 'decimal.js';
+
+async function refreshOwnerTokenAccounts(raydium, connection, owner) {
+  const tokenAccountData = await fetchTokenAccountData(connection, owner);
+  if (typeof raydium.account.updateTokenAccount === 'function') {
+    raydium.account.updateTokenAccount(tokenAccountData);
+  }
+  return tokenAccountData;
+}
 
 function priceToValidTick(priceDecimal, decA, decB, tickSpacing) {
   const sqrtX = TickUtil.priceToSqrtPriceX64(priceDecimal, decA, decB);
@@ -97,7 +105,7 @@ function computeTickBand(poolInfo, inp) {
 
 async function main() {
   const inp = await readStdinJson();
-  const { raydium, owner } = await bootRaydium(inp);
+  const { raydium, owner, connection } = await bootRaydium(inp);
 
   // 1. Fetch pool
   const poolPk = new PublicKey(inp.pool_id);
@@ -191,22 +199,55 @@ async function main() {
   }
 
   const { lo, hi, spot, priceLower, priceUpper, tickSpacing, _liq: liq, _finalBaseIn: finalBaseIn, _inputAmount: inputAmount, tickCurrent, _band_tick_steps: bandSteps } = band;
-  const { execute, extInfo } = await raydium.clmm.openPositionFromBase({
-    poolInfo, poolKeys,
-    tickLower:      lo,
-    tickUpper:      hi,
-    base:           finalBaseIn ? 'MintA' : 'MintB',
-    baseAmount:     inputAmount,
-    otherAmountMax: liq.amountSlippageB?.amount ?? liq.amountSlippageA?.amount ?? new BN(0),
-    ownerInfo: {
-      useSOLBalance: true,   // auto-wrap native SOL → WSOL as needed
-    },
-    txVersion:      TxVersion.V0,
-    computeBudgetConfig: {
-      units:        Number(inp.compute_units ?? 200_000),
-      microLamports: Number(inp.priority_fee_micro_lamports ?? 2_000),
-    },
-  });
+
+  // Refresh wallet ATAs so USDC/SPL pays work after a new token account is funded.
+  await refreshOwnerTokenAccounts(raydium, connection, owner);
+
+  const inputMintStr = String(inp.input_mint || '');
+  const wsolMint = 'So11111111111111111111111111111111111111112';
+  const useSolBalance = inputMintStr === wsolMint;
+
+  // Map probe slippage to the non-base leg; SDK uses it as amountA when base=MintB.
+  let otherAmountMax = finalBaseIn
+    ? (liq.amountSlippageB?.amount ?? new BN(0))
+    : (liq.amountSlippageA?.amount ?? new BN(0));
+  if (payMintOnly) {
+    otherAmountMax = new BN(0);
+  }
+
+  // SDK getOrCreateTokenAccount always re-fetches and can drop freshly funded ATAs.
+  const origFetch = raydium.account.fetchWalletTokenAccounts?.bind(raydium.account);
+  if (origFetch) {
+    raydium.account.fetchWalletTokenAccounts = async () => ({
+      tokenAccounts: raydium.account.tokenAccounts,
+      tokenAccountRawInfos: raydium.account.tokenAccountRawInfos,
+    });
+  }
+
+  let execute, extInfo;
+  try {
+    ({ execute, extInfo } = await raydium.clmm.openPositionFromBase({
+      poolInfo, poolKeys,
+      tickLower:      lo,
+      tickUpper:      hi,
+      base:           finalBaseIn ? 'MintA' : 'MintB',
+      baseAmount:     inputAmount,
+      otherAmountMax,
+      associatedOnly: true,
+      ownerInfo: {
+        useSOLBalance: useSolBalance,
+      },
+      txVersion:      TxVersion.V0,
+      computeBudgetConfig: {
+        units:        Number(inp.compute_units ?? 200_000),
+        microLamports: Number(inp.priority_fee_micro_lamports ?? 2_000),
+      },
+    }));
+  } finally {
+    if (origFetch) {
+      raydium.account.fetchWalletTokenAccounts = origFetch;
+    }
+  }
 
   // 7. Broadcast — sendAndConfirm uses signatureSubscribe which Alchemy/Helius
   // free tier doesn't support on HTTP. Send manually, poll via HTTP statuses.
@@ -248,7 +289,7 @@ async function main() {
     pay_mint_only:         payMintOnly,
     pay_symbol:            inp.pay_symbol ?? null,
     input_amount_lamports: inputAmount.toString(),
-    other_amount_max:      (liq.amountSlippageB?.amount ?? liq.amountSlippageA?.amount ?? new BN(0)).toString(),
+    other_amount_max:      otherAmountMax.toString(),
     pool_id:               inp.pool_id,
     owner:                 owner.publicKey.toBase58(),
     final_baseIn:          finalBaseIn,

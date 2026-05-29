@@ -300,6 +300,13 @@ def sanitize_clmm_payload(script_name: str, payload: dict[str, Any], *, settings
             cfg.jupiter_max_priority_micro_lamports,
             int(out.get("jupiter_priority_micro_lamports") or cfg.jupiter_max_priority_micro_lamports),
         )
+    elif script_name == "swap_sol_to_pay.mjs":
+        lamports = int(out.get("amount_lamports") or 0)
+        assert_swap_allowed(lamports / 1_000_000_000, settings=settings)
+        out["jupiter_priority_micro_lamports"] = min(
+            cfg.jupiter_max_priority_micro_lamports,
+            int(out.get("jupiter_priority_micro_lamports") or cfg.jupiter_max_priority_micro_lamports),
+        )
 
     return out
 
@@ -315,6 +322,10 @@ def guard_onchain_fee(operation: str, **context: Any) -> dict[str, Any] | None:
     dep = context.get("deposit_sol")
     if dep is not None and ("open" in operation.lower() or script == "open_position.mjs"):
         return assert_clmm_open_allowed(float(dep), priority_micro=context.get("priority_micro"))
+    if dep is not None and (script == "swap_sol_to_pay.mjs" or "swap" in operation.lower()):
+        assert_swap_allowed(float(dep))
+        _check_session_budget(cfg, cfg.clmm_base_fee_sol * 2)
+        return None
     if "close" in operation.lower() or script == "close_position.mjs":
         return assert_clmm_close_allowed(priority_micro=context.get("priority_micro"))
     _check_session_budget(cfg, cfg.clmm_base_fee_sol)
