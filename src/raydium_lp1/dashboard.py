@@ -34,6 +34,7 @@ class DashboardData:
     live_open_positions: list[dict]
     demo_simulated_trades: list[dict]
     momentum_hot_top: list[dict]
+    cash_anomalies: dict
     recent_alerts: list[dict]
     rpc_health: list[dict]
     last_scan: dict
@@ -49,6 +50,7 @@ class DashboardData:
             "live_open_positions": list(self.live_open_positions),
             "demo_simulated_trades": list(self.demo_simulated_trades),
             "momentum_hot_top": list(self.momentum_hot_top),
+            "cash_anomalies": dict(self.cash_anomalies),
             "recent_alerts": list(self.recent_alerts),
             "rpc_health": list(self.rpc_health),
             "last_scan": dict(self.last_scan),
@@ -198,6 +200,10 @@ def build_dashboard(
         "demo_paper_sol": getattr(config, "demo_paper_sol", 10.0),
         "risk_profile": getattr(config, "risk_profile", "balanced"),
         "lp_full_range_parallel": getattr(config, "lp_full_range_parallel", False),
+        "cash_anomaly_enabled": getattr(config, "cash_anomaly_enabled", True),
+        "cash_anomaly_min_fee_usd": getattr(config, "cash_anomaly_min_fee_usd", 25.0),
+        "cash_anomaly_max_apr": getattr(config, "cash_anomaly_max_apr", 150.0),
+        "cash_anomaly_top_n": getattr(config, "cash_anomaly_top_n", 30),
     }
 
     wallet_capacity = dict(report.get("wallet_capacity") or {})
@@ -301,6 +307,7 @@ def build_dashboard(
         live_open_positions=live_open_positions,
         demo_simulated_trades=demo_simulated_trades,
         momentum_hot_top=list(report.get("momentum_hot_top") or []),
+        cash_anomalies=dict(report.get("cash_anomalies") or {}),
         recent_alerts=recent_alerts,
         rpc_health=list(rpc_health or []),
         last_scan=last_scan,
@@ -407,6 +414,13 @@ def render_dashboard_text(data: DashboardData) -> str:
             lines.append(f"       sniff: {tags}")
         if row.get("exit_watch"):
             lines.append("       !! exit_watch")
+
+    cash = data.cash_anomalies or {}
+    if cash.get("enabled"):
+        from raydium_lp1.cash_anomalies import format_terminal_block
+
+        lines.append("")
+        lines.extend(format_terminal_block(cash))
 
     lines.append("")
     lines.append(f"Open positions (dry-run): {len(data.open_positions)}")

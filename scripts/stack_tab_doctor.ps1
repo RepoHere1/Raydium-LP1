@@ -22,7 +22,8 @@ if ($py) { $pyExe = "py"; $pyArgs = @("-3") } else {
 
 Write-Host "=== Raydium-LP1 Doctor ===" -ForegroundColor Cyan
 Write-Host "Repo: $RepoRoot"
-Write-Host "Mode: watch every ${Interval}s | advise=on | heal=default-on (use -NoHeal or RAYDIUM_LP1_AI_EDIT=1 to pause)" -ForegroundColor DarkGray
+Write-Host "Mode: watch every ${Interval}s | advise=on | file-heal=default-on | :8844 auto-restart=ON" -ForegroundColor DarkGray
+Write-Host "  (pause file-heal: RAYDIUM_LP1_AI_EDIT=1 or -NoHeal; pause :8844 heal: RAYDIUM_LP1_DOCTOR_NO_DASHBOARD_HEAL=1)" -ForegroundColor DarkGray
 Write-Host ""
 
 $doctorArgs = @("-m", "raydium_lp1.raydium_doctor", "--advise")

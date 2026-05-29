@@ -178,6 +178,29 @@ def heal_html_cand_panel() -> bool:
     return True
 
 
+def heal_html_anom_panel() -> bool:
+    """Ensure dashboard_shell.html exposes #anom ANOMALIES / CASH table mount."""
+
+    path = WEB / "dashboard_shell.html"
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if 'id="anom"' in text:
+        return False
+    snippet = (
+        '<section class="panel"><h2>ANOMALIES '
+        '<span class="pill pill-demo">CASH</span>'
+        '<span class="sub"><code>cash_anomalies</code> — exit-safe pools with real USD fees vs low reported APR</span>'
+        '</h2><div id="anom" class="bd"><p class="anom-pause-banner">Auto-refresh paused while your cursor is here — safe to click DEX / Copy / Sol.</p><div id="anom-body"></div></div></section>\n'
+    )
+    if 'id="clop"' in text:
+        text = text.replace('<section class="panel"><h2>Closed positions', snippet + '<section class="panel"><h2>Closed positions', 1)
+    else:
+        text = text + "\n" + snippet
+    _write_text(path, text)
+    return True
+
+
 def heal_latest_candidate_count(latest_path: Path = DEFAULT_LATEST) -> bool:
     """Fix candidate_count when it disagrees with len(candidates)."""
 
@@ -231,6 +254,8 @@ def run_data_flow_heal_pass(*, dashboard_port: int) -> list[str]:
     actions.extend(f"patched {x}" for x in js)
     if heal_html_cand_panel():
         actions.append("inserted #cand panel in dashboard_shell.html")
+    if heal_html_anom_panel():
+        actions.append("inserted #anom ANOMALIES panel in dashboard_shell.html")
     return actions
 
 

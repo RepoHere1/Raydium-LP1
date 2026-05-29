@@ -729,6 +729,67 @@
       }).join('')+'</tbody></table></div>';
   }
 
+  var ANOM_DISPLAY_ROWS = 30;
+  var autoRefreshPaused = 0;
+
+  function setAutoRefreshPaused(on){
+    if(on){
+      autoRefreshPaused++;
+      clearInterval(timer);
+    }else{
+      autoRefreshPaused = Math.max(0, autoRefreshPaused - 1);
+      if(!autoRefreshPaused) arm();
+    }
+  }
+
+  function wireAnomaliesFeedPause(){
+    var root=document.getElementById('anom');
+    if(!root||root._anomPauseWired) return;
+    root._anomPauseWired=true;
+    root.addEventListener('mouseenter', function(){
+      setAutoRefreshPaused(true);
+      root.classList.add('anom-hover-pause');
+    });
+    root.addEventListener('mouseleave', function(){
+      root.classList.remove('anom-hover-pause');
+      setAutoRefreshPaused(false);
+    });
+  }
+
+  function renderCashAnomaliesTable(el, block, settings){
+    block=block||{};
+    settings=settings||{};
+    if(block.enabled===false){
+      el.innerHTML='<p class="muted">ANOMALIES (CASH) disabled — set <code>cash_anomaly_enabled</code> true in settings.</p>';
+      return;
+    }
+    var rows=(block.rows||[]).slice(0, ANOM_DISPLAY_ROWS);
+    if(!rows.length){
+      var floor=block.exit_floor_usd!=null?block.exit_floor_usd:'?';
+      var minFee=block.min_fee_24h_usd!=null?block.min_fee_24h_usd:'?';
+      el.innerHTML='<p class="muted">No exit-safe low-APR / high-cash rows this scan (probed '+
+        esc(String(block.probed_count||0))+' pools with TVL≥'+esc(String(floor))+' USD, fee24≥'+
+        esc(String(minFee))+' USD). Widen <code>pages</code> or lower <code>cash_anomaly_min_fee_usd</code>.</p>';
+      return;
+    }
+    var maxApr=block.max_reported_apr!=null?block.max_reported_apr:150;
+    var capNote=(block.rows||[]).length>ANOM_DISPLAY_ROWS?' (showing top '+ANOM_DISPLAY_ROWS+')':'';
+    el.innerHTML='<p class="muted">'+rows.length+' anomaly row(s)'+capNote+' — exit TVL floor '+esc(String(block.exit_floor_usd||'?'))+
+      ' USD · fee24≥'+esc(String(block.min_fee_24h_usd||'?'))+' · low-APR ceiling '+esc(String(maxApr))+
+      '%. Hover this panel to pause auto-refresh while clicking links.</p>'+
+      '<div class="tbl-scroll anom-tbl-scroll"><table class="tb2"><thead><tr><th>#</th><th>Pair</th><th>APR %</th><th>TVL $</th><th>Vol24 $</th><th>CASH 24h</th><th>Impl APR</th><th>Gap</th><th>Tags</th><th>Exit</th><th>Pool</th></tr></thead><tbody>'+
+      rows.map(function(r,i){
+        var tags=(r.anomaly_tags||[]).slice(0,4).join(', ');
+        var exitTxt=r.sell_route_ok===true?'route ok':(r.sell_route_ok===false?'route?':'—');
+        var cand=r.in_candidates?' cand':'';
+        return '<tr class="row-cash-anom"><td>'+(i+1)+'</td><td>'+esc(r.pair||'')+'</td><td>'+
+          esc(fmtAprPct(r.apr))+'</td><td>'+esc(fmtUsd(r.tvl_usd))+'</td><td>'+esc(fmtUsd(r.volume_24h_usd))+'</td><td><b>'+
+          esc(fmtFeesUsd(r.cash_24h_usd))+'</b></td><td>'+esc(fmtAprPct(r.implied_apr_pct))+'</td><td>'+
+          esc(r.apr_gap_pct!=null?((Number(r.apr_gap_pct)>=0?'+':'')+Number(r.apr_gap_pct).toFixed(1)+'%'):'—')+'</td><td>'+
+          esc(tags+cand)+'</td><td>'+esc(exitTxt)+'</td><td>'+poolIdCell(r.pool_id)+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+  }
+
   function renderOpenTable(el, rows, demo){
     rows=rows||[];
     var tag=demo?'demo watchlist (not on-chain)':'from dashboard open_positions';
@@ -804,6 +865,7 @@
     var ls=d.last_scan||{};
     renderCandidateTable($('#cand'), d);
     renderMomentumTable($('#mom'), d.momentum_hot_top||[]);
+    renderCashAnomaliesTable($('#anom-body')||$('#anom'), d.cash_anomalies||{}, d.settings||{});
     renderClosedTable($('#clop'), ls.closed_positions||[]);
     renderAlerts($('#alerts'), d);
     renderRpcHealth($('#rpc'), d);
@@ -1168,9 +1230,11 @@
   var timer=null;
   function arm(){
     clearInterval(timer);
+    if(autoRefreshPaused>0) return;
     if(document.getElementById('auto').checked) timer=setInterval(function(){refresh().catch(function(){});},4000);
   }
   document.getElementById('auto').onchange=arm;
+  wireAnomaliesFeedPause();
 
   document.getElementById('tabbtn-pos').onclick=function(){activateTab('tab-pos');};
   document.getElementById('tabbtn-funnel').onclick=function(){activateTab('tab-funnel');};

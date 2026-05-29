@@ -15,13 +15,13 @@ function Get-ListenerPids {
 }
 
 function Show-Listener {
-    param([int]$pid)
+    param([int]$ProcessId)
     try {
-        $p = Get-Process -Id $pid -ErrorAction Stop
+        $p = Get-Process -Id $ProcessId -ErrorAction Stop
         $sess = $p.SessionId
-        Write-Host "  PID $pid  $($p.ProcessName)  session=$sess  started=$($p.StartTime)"
+        Write-Host "  PID $ProcessId  $($p.ProcessName)  session=$sess  started=$($p.StartTime)"
     } catch {
-        Write-Host "  PID $pid  (cannot read process — likely another user or protected)"
+        Write-Host "  PID $ProcessId  (cannot read process - likely another user or protected)"
     }
 }
 
@@ -32,7 +32,7 @@ if (-not $pids.Count) {
 }
 
 Write-Host "Port $Port listeners:" -ForegroundColor Cyan
-foreach ($procId in $pids) { Show-Listener -pid $procId }
+foreach ($procId in $pids) { Show-Listener -ProcessId $procId }
 
 if ($Elevate) {
     $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$repoRoot\scripts\stop_dashboard_port.ps1`" -Port $Port"
@@ -60,7 +60,7 @@ foreach ($procId in $pids) {
     if ($tk.ExitCode -eq 0) {
         Write-Host "  taskkill OK" -ForegroundColor Green
     } else {
-        Write-Host "  taskkill failed (exit $($tk.ExitCode)) — try -Elevate or close the PowerShell tab that started the dashboard." -ForegroundColor Red
+        Write-Host "  taskkill failed (exit $($tk.ExitCode)) - try -Elevate or close the PowerShell tab that started the dashboard." -ForegroundColor Red
     }
 }
 

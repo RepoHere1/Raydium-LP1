@@ -40,3 +40,20 @@ def should_auto_heal(*, cli_heal: bool = False, cli_no_heal: bool = False) -> bo
     if os.environ.get("STACK_DOCTOR_HEAL", "").strip() in ("0", "false", "no"):
         return False
     return True
+
+
+def should_heal_dashboard(*, cli_no_heal: bool = False, watch: bool = False) -> bool:
+    """Restart :8844 HTTP when down — independent of file-heal / AI-edit pause."""
+
+    if cli_no_heal:
+        return False
+    if os.environ.get("RAYDIUM_LP1_DOCTOR_NO_DASHBOARD_HEAL", "").strip() in ("1", "true", "yes"):
+        return False
+    if os.environ.get("RAYDIUM_LP1_DOCTOR_NO_HEAL", "").strip() in ("1", "true", "yes"):
+        return False
+    # Watch mode always tries to bring dashboard back unless explicitly disabled above.
+    if watch:
+        return True
+    if os.environ.get("RAYDIUM_LP1_DOCTOR_DASHBOARD_HEAL", "").strip() in ("1", "true", "yes"):
+        return True
+    return True

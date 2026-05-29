@@ -10,7 +10,7 @@ Covers every failure mode we've seen in this repo:
   - JSON state file truncation / wrong type
   - Missing .env keys (SOLANA_RPC_URL, SOLANA_KEYPAIR_PATH)
   - Node bridge missing (raydium_clmm_node/node_modules)
-  - Dashboard backend down
+  - Dashboard backend down (auto-restart :8844 in watch mode; see doctor_dashboard_heal.py)
   - Scanner ↔ dashboard.json ↔ /api/dashboard ↔ HTML/JS data flow (auto-heal when heal mode on)
 
 Usage:
@@ -349,36 +349,42 @@ def resolve_dashboard_port() -> int:
     return 8844
 
 
-def check_dashboard(port: int | None = None, timeout: float = 2.5) -> CheckResult:
+def check_dashboard(*, port: int | None = None, heal: bool = False) -> CheckResult:
+    from raydium_lp1.doctor_dashboard_heal import heal_dashboard_server, resolve_dashboard_host
+
     port = port or resolve_dashboard_port()
-    last_err = "no response"
-    for path in ("/health", "/api/runtime"):
-        url = f"http://127.0.0.1:{port}{path}"
-        try:
-            with urllib.request.urlopen(url, timeout=timeout) as resp:
-                if resp.status == 200:
-                    return CheckResult(
-                        "dashboard",
-                        True,
-                        "info",
-                        f"dashboard reachable on :{port} ({path})",
-                    )
-        except urllib.error.URLError as e:
-            last_err = str(e.reason or e)
-        except Exception as e:
-            last_err = str(e)
-    msg = (
-        f"dashboard not reachable on :{port} ({last_err}). "
-        f"Start: .\\scripts\\run_dashboard_web.ps1  (http://127.0.0.1:{port}/)"
+    host = resolve_dashboard_host()
+    ok, actions, msg = heal_dashboard_server(port=port, host=host, heal=heal)
+    if ok:
+        healed = bool(actions)
+        if healed:
+            append_alert("warn", "dashboard", msg, healed=True)
+            return CheckResult(
+                "dashboard",
+                True,
+                "warn",
+                msg,
+                healed=True,
+                detail={"port": port, "host": host, "heal_actions": actions},
+            )
+        return CheckResult("dashboard", True, "info", msg, detail={"port": port, "host": host})
+
+    append_alert("warn", "dashboard", msg, healed=bool(actions))
+    return CheckResult(
+        "dashboard",
+        False,
+        "warn",
+        msg,
+        healed=bool(actions),
+        detail={"port": port, "host": host, "heal_actions": actions},
     )
-    append_alert("warn", "dashboard", msg)
-    return CheckResult("dashboard", False, "warn", msg)
 
 
 # ---- driver -------------------------------------------------------------
 
-def run_checks(*, heal: bool = True) -> list[CheckResult]:
+def run_checks(*, heal: bool = True, heal_dashboard: bool | None = None) -> list[CheckResult]:
     results: list[CheckResult] = []
+    dash_heal = heal if heal_dashboard is None else heal_dashboard
 
     for rel, (min_lines, sentinel) in CRITICAL_PY_FILES.items():
         try:
@@ -404,7 +410,7 @@ def run_checks(*, heal: bool = True) -> list[CheckResult]:
         results.append(CheckResult("node_bridge", False, "error", f"check crashed: {e}"))
 
     try:
-        results.append(check_dashboard())
+        results.append(check_dashboard(heal=dash_heal))
     except Exception as e:
         results.append(CheckResult("dashboard", False, "warn", f"check crashed: {e}"))
 
@@ -473,14 +479,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--advise", action="store_true", help="Write reports/doctor_report.json profitability recommendations")
     args = ap.parse_args(argv)
 
-    from raydium_lp1.doctor_heal_policy import ai_edit_in_progress, should_auto_heal
+    from raydium_lp1.doctor_heal_policy import (
+        ai_edit_in_progress,
+        should_auto_heal,
+        should_heal_dashboard,
+    )
 
     heal_enabled = should_auto_heal(cli_heal=args.heal, cli_no_heal=args.no_heal)
+    dashboard_heal_enabled = should_heal_dashboard(cli_no_heal=args.no_heal, watch=args.watch)
 
     LOGS.mkdir(exist_ok=True)
 
     def one_pass() -> int:
-        results = run_checks(heal=heal_enabled)
+        results = run_checks(heal=heal_enabled, heal_dashboard=dashboard_heal_enabled)
         summary = summarize(results)
         atomic_write_json(SNAPSHOT, summary)
         if args.advise:
@@ -491,12 +502,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             payload = dict(summary)
             payload["heal_enabled"] = heal_enabled
+            payload["dashboard_heal_enabled"] = dashboard_heal_enabled
             payload["ai_edit_paused_heal"] = ai_edit_in_progress() and not heal_enabled
             print(json.dumps(payload, indent=2))
         else:
-            heal_note = "heal=ON" if heal_enabled else "heal=OFF (AI edit or --no-heal)"
+            file_heal = "heal=ON" if heal_enabled else "heal=OFF (AI edit or --no-heal)"
+            dash_heal = "dashboard_heal=ON" if dashboard_heal_enabled else "dashboard_heal=OFF"
             log(f"scan: overall={summary['overall']}  "
-                f"counts={summary['counts']}  healed={summary['healed']}  {heal_note}",
+                f"counts={summary['counts']}  healed={summary['healed']}  {file_heal}  {dash_heal}",
                 summary["overall"] if summary["overall"] != "green" else "info")
             for r in results:
                 if r.severity in ("warn", "error", "critical"):

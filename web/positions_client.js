@@ -130,6 +130,87 @@
       .join('');
   }
 
+  function fmtFees(n) {
+    var x = Number(n);
+    if (!isFinite(x)) return '—';
+    return '$' + x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  var ANOM_DISPLAY_ROWS = 30;
+  var autoRefreshPaused = 0;
+
+  function setAutoRefreshPaused(on) {
+    if (on) {
+      autoRefreshPaused++;
+      clearInterval(iv);
+    } else {
+      autoRefreshPaused = Math.max(0, autoRefreshPaused - 1);
+      if (!autoRefreshPaused) arm();
+    }
+  }
+
+  function wireAnomaliesFeedPause() {
+    var root = document.getElementById('anom-panel');
+    if (!root || root._anomPauseWired) return;
+    root._anomPauseWired = true;
+    root.addEventListener('mouseenter', function () {
+      setAutoRefreshPaused(true);
+      root.classList.add('anom-hover-pause');
+    });
+    root.addEventListener('mouseleave', function () {
+      root.classList.remove('anom-hover-pause');
+      setAutoRefreshPaused(false);
+    });
+  }
+
+  function renderCashAnomalies(tbody, block) {
+    block = block || {};
+    var rows = (block.rows || []).slice(0, ANOM_DISPLAY_ROWS);
+    if (block.enabled === false) {
+      tbody.innerHTML = '<tr><td colspan="10">ANOMALIES (CASH) disabled in settings.</td></tr>';
+      return;
+    }
+    if (!rows.length) {
+      tbody.innerHTML =
+        '<tr><td colspan="10">No anomaly rows (probed ' +
+        esc(String(block.probed_count || 0)) +
+        ' exit-safe pools).</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows
+      .map(function (r, i) {
+        var tags = (r.anomaly_tags || []).slice(0, 4).join(', ');
+        var gap =
+          r.apr_gap_pct != null
+            ? (Number(r.apr_gap_pct) >= 0 ? '+' : '') + Number(r.apr_gap_pct).toFixed(1) + '%'
+            : '—';
+        return (
+          '<tr class="row-cash-anom"><td>' +
+          (i + 1) +
+          '</td><td>' +
+          esc(r.pair || '') +
+          '</td><td>' +
+          num(r.apr) +
+          '</td><td>' +
+          num(r.tvl_usd) +
+          '</td><td>' +
+          num(r.volume_24h_usd) +
+          '</td><td><b>' +
+          esc(fmtFees(r.cash_24h_usd)) +
+          '</b></td><td>' +
+          num(r.implied_apr_pct) +
+          '</td><td>' +
+          esc(gap) +
+          '</td><td>' +
+          esc(tags + (r.in_candidates ? ' cand' : '')) +
+          '</td><td>' +
+          poolIdCellFromPool(r) +
+          '</td></tr>'
+        );
+      })
+      .join('');
+  }
+
   async function load() {
     $('err').textContent = '';
     if (window.RaydiumMode) await window.RaydiumMode.syncRuntime();
@@ -208,6 +289,7 @@
           })
           .join('')
       : '<tr><td colspan="6">No candidates.</td></tr>';
+    renderCashAnomalies($('tb-anom'), d.cash_anomalies || {});
   }
 
   function onModeChange(r) {
@@ -229,6 +311,7 @@
   var iv = null;
   function arm() {
     clearInterval(iv);
+    if (autoRefreshPaused > 0) return;
     if ($('auto').checked) {
       iv = setInterval(function () {
         load().catch(function (e) {
@@ -240,6 +323,7 @@
 
   function boot() {
     wireMode();
+    wireAnomaliesFeedPause();
     $('auto').onchange = arm;
     load().catch(function (e) {
       $('err').textContent = String(e);
