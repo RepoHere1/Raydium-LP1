@@ -150,6 +150,9 @@ class ScannerConfig:
     lp_pay_funding_dust_usd: float = 0.02
     lp_pay_funding_slippage_bps: int = 150
     lp_pay_funding_sol_price_usd: float = 0.0
+    lp_close_sweep_trash_to_sol: bool = True
+    lp_close_trash_swap_attempts: int = 2
+    blocked_pool_ids: set[str] = field(default_factory=set)
     lp_full_range_parallel: bool = False
     lp_full_range_budget_fraction: float = 0.25
     lp_main_budget_fraction: float = 0.75
@@ -282,6 +285,9 @@ class ScannerConfig:
             lp_pay_funding_dust_usd=float(raw_with_strategy.get("lp_pay_funding_dust_usd", 0.02)),
             lp_pay_funding_slippage_bps=int(raw_with_strategy.get("lp_pay_funding_slippage_bps", 150)),
             lp_pay_funding_sol_price_usd=float(raw_with_strategy.get("lp_pay_funding_sol_price_usd", 0.0)),
+            lp_close_sweep_trash_to_sol=bool(raw_with_strategy.get("lp_close_sweep_trash_to_sol", True)),
+            lp_close_trash_swap_attempts=int(raw_with_strategy.get("lp_close_trash_swap_attempts", 2)),
+            blocked_pool_ids=set(raw_with_strategy.get("blocked_pool_ids", [])),
             lp_full_range_parallel=bool(raw_with_strategy.get("lp_full_range_parallel", False)),
             lp_full_range_budget_fraction=float(raw_with_strategy.get("lp_full_range_budget_fraction", 0.25)),
             lp_main_budget_fraction=float(raw_with_strategy.get("lp_main_budget_fraction", 0.75)),

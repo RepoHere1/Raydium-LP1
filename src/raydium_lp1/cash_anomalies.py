@@ -1,7 +1,7 @@
 """Find exit-safe pools printing real USD fees despite low reported APR.
 
 Visual / research signal for dashboard HTML — not wired into LIVE auto-trade yet.
-Does not use lp pay-token funding (SOL→USDC/USDT/USD1); that protocol applies to filtered LIVE opens only.
+Manual LIVE opens from this table use the same ONE PAY rules as every other LP open.
 """
 
 from __future__ import annotations

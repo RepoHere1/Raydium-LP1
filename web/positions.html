@@ -57,6 +57,12 @@
     .mode-pill.live.active { background:#ecfdf5; border-color:#059669; color:#065f46; box-shadow:0 0 0 2px #6ee7b7; }
     tr.row-mom-hot td { background:#d1fae5!important; }
     tr.row-mom-hot:hover td { background:#a7f3d0!important; }
+    tr.row-cash-anom td { background:#fef3c7!important; }
+    tr.row-cash-anom:hover td { background:#fde68a!important; }
+    #anom-panel.anom-hover-pause .tbl-wrap { box-shadow:0 0 0 2px #f59e0b; border-radius:10px; }
+    .anom-pause-banner { display:none; margin:.35rem 0 .5rem; padding:.35rem .55rem; border-radius:8px; background:#fffbeb; border:1px solid #fcd34d; color:#92400e; font-size:.82rem; }
+    #anom-panel.anom-hover-pause .anom-pause-banner { display:block; }
+    .anom-tbl-scroll { max-height:min(70vh,920px); overflow:auto; }
     .mode-status { font-size:.78rem; color:var(--m); flex:1; min-width:12rem; }
     .pill { font-size:.65rem; text-transform:uppercase; letter-spacing:.06em; color:var(--m); border:1px solid var(--line); border-radius:999px; padding:.12rem .45rem; background:#fff; }
     #stamp { font-size:.75rem; color:var(--m); }
@@ -124,6 +130,14 @@
     <div class="tbl-wrap"><h3>Table</h3><table><thead><tr>
       <th>Pair</th><th>APR %</th><th>TVL $</th><th>Vol24 $</th><th>Momentum</th><th>Pool</th>
     </tr></thead><tbody id="tb-cand"></tbody></table></div>
+    <section id="anom-panel" title="Not auto-LIVE; manual opens use ONE PAY and close trash→SOL rules">
+    <h2 style="margin-top:1.25rem">ANOMALIES <span class="pill">CASH</span></h2>
+    <p class="muted">Exit-safe pools with real 24h USD fees vs low reported APR — hover table to pause auto-refresh.</p>
+    <p class="anom-pause-banner">Auto-refresh paused while your cursor is here — safe to click DEX / Copy / Sol.</p>
+    <div class="tbl-wrap anom-tbl-scroll"><h3>Cash vs APR (top 30)</h3><table><thead><tr>
+      <th>#</th><th>Pair</th><th>APR %</th><th>TVL $</th><th>Vol24 $</th><th>CASH 24h</th><th>Impl APR</th><th>Gap</th><th>Tags</th><th>Pool</th>
+    </tr></thead><tbody id="tb-anom"></tbody></table></div>
+    </section>
     <h2 style="margin-top:1.25rem">RPC health</h2>
     <div class="tbl-wrap"><h3>Endpoints</h3><table><thead><tr>
       <th>#</th><th>RPC URL</th><th>OK</th><th>Detail</th>
@@ -131,6 +145,6 @@
   </main>
   <script src="/mode_shared.js?v=20260601"></script>
   <script src="/lp1_copy.js?v=20260607"></script>
-  <script src="/positions_client.js?v=20260607"></script>
+  <script src="/positions_client.js?v=20260610"></script>
 </body>
 </html>

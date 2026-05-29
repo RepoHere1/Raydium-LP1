@@ -210,13 +210,12 @@ def ensure_pay_token_for_open(
     fee_settings: dict[str, Any] | None = None,
     reserve_sol: float = 0.02,
     open_cost_sol: float = 0.042,
-    skip: bool = False,
     sol_price_usd: float | None = None,
 ) -> dict[str, Any]:
     """Swap SOL → pay stable when balance is below LP deposit need. No-op for SOL pay leg."""
 
-    if skip or not pay_funding_enabled(config):
-        return {"ok": True, "skipped": True, "reason": "funding_disabled_or_skipped"}
+    if not pay_funding_enabled(config):
+        return {"ok": True, "skipped": True, "reason": "funding_disabled"}
 
     sym = str(getattr(pay_res, "pay_symbol", "") or "").upper()
     if sym in ("SOL", "WSOL") or sym not in STABLE_PAY_SYMBOLS:

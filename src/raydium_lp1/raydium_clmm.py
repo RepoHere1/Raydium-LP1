@@ -220,15 +220,16 @@ def close_position(*,
                    position_nft_mint: str,
                    slippage_bps: int = 100,
                    keep_position: bool = False,
-                   payout_as: str | None = None,   # v0.3 — None | "SOL" | "USDC"
+                   payout_as: str | None = "SOL",
+                   sweep_trash_to_sol: bool = True,
+                   trash_swap_max_attempts: int = 2,
                    priority_fee_micro_lamports: int | None = None,
                    timeout: float = 120.0) -> dict:
     """Close (decrease to 0 + collect + burn NFT) a CLMM position.
 
-    payout_as="SOL": after the close confirms, auto-swap any received
-                     non-SOL token (e.g. USDC) back to SOL via Jupiter so you
-                     never get stuck with dust tokens. Two on-chain txs total.
-    payout_as=None:  return whatever the band held (default).
+    Default: sweep non-stable trash tokens received on close → SOL via Jupiter
+    (up to ``trash_swap_max_attempts``, then mark abandoned if unsellable).
+    USDC/USDT/USD1 legs are left on-wallet.
     """
     from raydium_lp1.fee_guard import cap_priority_micro, fee_config_from_settings
 
@@ -239,6 +240,8 @@ def close_position(*,
         "slippage_bps":               int(slippage_bps),
         "keep_position":              bool(keep_position),
         "payout_as":                  payout_as,
+        "sweep_trash_to_sol":         bool(sweep_trash_to_sol),
+        "trash_swap_max_attempts":    max(1, int(trash_swap_max_attempts)),
         "priority_fee_micro_lamports":pri,
         "jupiter_priority_micro_lamports": cfg.jupiter_max_priority_micro_lamports,
     }, timeout=timeout)

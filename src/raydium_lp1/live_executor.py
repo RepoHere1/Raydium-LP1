@@ -136,7 +136,6 @@ def open_clmm_candidate(
     force_pay_token_only: bool | None = None,
     strategy_id: str | None = None,
     fee_guard_settings: dict[str, Any] | None = None,
-    skip_pay_token_funding: bool = False,
     sol_price_usd: float | None = None,
 ) -> dict[str, Any]:
 
@@ -174,6 +173,11 @@ def open_clmm_candidate(
         )
     report = _read_latest(latest_path)
     pool = _pick_candidate(report, pool_id, config=config)
+    from raydium_lp1.lp_order_rules import pool_open_blocked
+
+    block_msg = pool_open_blocked(str(pool.get("id") or ""), config)
+    if block_msg:
+        return {"ok": False, "error": block_msg, "pool_id": pool.get("id")}
     pv = pool.get("pool_verification") or {}
     if pv and not pv.get("ok", True):
         return {"ok": False, "error": "pool failed verification", "pool": pool.get("id"), "verification": pv}
@@ -229,7 +233,6 @@ def open_clmm_candidate(
             fee_settings=fee_settings,
             reserve_sol=reserve,
             open_cost_sol=open_cost_sol,
-            skip=skip_pay_token_funding,
             sol_price_usd=sol_price_usd,
         )
         if not funding_result.get("ok"):

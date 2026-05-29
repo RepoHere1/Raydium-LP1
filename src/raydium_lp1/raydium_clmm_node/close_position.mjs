@@ -1,9 +1,9 @@
 /**
- * close_position.mjs v0.4 — close + collect + optional Jupiter-swap to SOL.
+ * close_position.mjs v0.5 — close + collect + sweep trash tokens → SOL.
  *
- * v0.3: payout_as="SOL" — after the SDK close confirms, swap any received
- * non-SOL token (e.g. USDC) back to SOL via Jupiter so you never get stuck
- * with dust tokens.
+ * Universal rule: after close, swap any non-SOL / non-stable (USDC, USDT, USD1)
+ * received on the pool legs to SOL via Jupiter, up to trash_swap_max_attempts (default 2).
+ * If still unsellable, record abandoned and stop (no further fee burns).
  */
 
 import {
@@ -12,8 +12,6 @@ import {
 } from './_shared.mjs';
 import { VersionedTransaction } from '@solana/web3.js';
 
-// v0.4 — HTTP-only confirmation, replaces sendAndConfirm:true which needs
-// signatureSubscribe (WebSocket-only, missing on Alchemy/Helius free HTTP).
 async function pollConfirm(connection, signature, timeoutMs = 60_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -21,34 +19,39 @@ async function pollConfirm(connection, signature, timeoutMs = 60_000) {
     try {
       const s = (await connection.getSignatureStatuses([signature]))?.value?.[0];
       if (s) {
-        if (s.err) throw new Error("tx " + signature + " reverted: " + JSON.stringify(s.err));
-        if (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized") return;
+        if (s.err) throw new Error('tx ' + signature + ' reverted: ' + JSON.stringify(s.err));
+        if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') return;
       }
-    } catch (e) { if (String(e).includes("reverted")) throw e; }
+    } catch (e) { if (String(e).includes('reverted')) throw e; }
   }
-  throw new Error("tx " + signature + " not confirmed within " + timeoutMs + "ms");
+  throw new Error('tx ' + signature + ' not confirmed within ' + timeoutMs + 'ms');
 }
 
-const WSOL_MINT     = "So11111111111111111111111111111111111111112";
-const USDC_DUST_RAW = 10_000;  // $0.01 — don't swap less
+const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KConky11McCe8BenwNYB';
+const USD1_MINT = 'USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB';
+const KEEP_MINTS = new Set([WSOL_MINT, USDC_MINT, USDT_MINT, USD1_MINT]);
+const TRASH_DUST_RAW = 10_000;
 
-const JUP_QUOTE = "https://lite-api.jup.ag/swap/v1/quote";
-const JUP_SWAP  = "https://lite-api.jup.ag/swap/v1/swap";
-
+const JUP_QUOTE = 'https://lite-api.jup.ag/swap/v1/quote';
+const JUP_SWAP = 'https://lite-api.jup.ag/swap/v1/swap';
 const HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0",
-  "Accept":     "application/json",
-  "Origin":     "https://jup.ag",
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  Accept: 'application/json',
+  Origin: 'https://jup.ag',
 };
 
-async function jupiterSwap({ connection, owner, inputMint, outputMint, amountRaw, slippageBps }) {
+async function jupiterSwap({
+  connection, owner, inputMint, outputMint, amountRaw, slippageBps, priorityMicro,
+}) {
   const qs = new URLSearchParams({
     inputMint, outputMint,
     amount: String(amountRaw),
     slippageBps: String(slippageBps),
     swapMode: 'ExactIn',
   });
-  let r = await fetch(`${JUP_QUOTE}?${qs}`, { headers: HEADERS, signal: AbortSignal.timeout(10_000) });
+  let r = await fetch(`${JUP_QUOTE}?${qs}`, { headers: HEADERS, signal: AbortSignal.timeout(12_000) });
   const quote = await r.json();
   if (!r.ok || quote.error) throw new Error(`jupiter quote: ${quote.error || r.status}`);
 
@@ -60,19 +63,76 @@ async function jupiterSwap({ connection, owner, inputMint, outputMint, amountRaw
       userPublicKey: owner.publicKey.toBase58(),
       wrapAndUnwrapSol: true,
       asLegacyTransaction: false,
-      computeUnitPriceMicroLamports: Number(inp.jupiter_priority_micro_lamports ?? inp.priority_fee_micro_lamports ?? 2_000),
+      computeUnitPriceMicroLamports: Number(priorityMicro ?? 2_000),
     }),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(12_000),
   });
   const swap = await r.json();
   if (!r.ok || swap.error) throw new Error(`jupiter swap: ${swap.error || r.status}`);
 
-  const raw = Buffer.from(swap.swapTransaction, 'base64');
-  const tx  = VersionedTransaction.deserialize(raw);
+  const tx = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
   tx.sign([owner]);
   const sig = await connection.sendTransaction(tx, { skipPreflight: false, maxRetries: 3 });
-  await pollConfirm(connection, sig);   // v0.4: HTTP-only confirm
+  await pollConfirm(connection, sig);
   return { signature: sig, in_amount: quote.inAmount, out_amount: quote.outAmount };
+}
+
+function isTrashMint(mint) {
+  return mint && mint !== WSOL_MINT && !KEEP_MINTS.has(mint);
+}
+
+async function sweepTrashLegs({
+  connection, owner, legs, slippageBps, priorityMicro, maxAttempts,
+}) {
+  const results = [];
+  for (const { mint, amountRaw, label } of legs) {
+    if (!isTrashMint(mint) || Number(amountRaw) <= TRASH_DUST_RAW) {
+      results.push({
+        mint, label, performed: false, reason: 'not_trash_or_below_dust', amount_raw: String(amountRaw),
+      });
+      continue;
+    }
+    let lastErr = null;
+    let success = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const r = await jupiterSwap({
+          connection, owner,
+          inputMint: mint,
+          outputMint: WSOL_MINT,
+          amountRaw,
+          slippageBps,
+          priorityMicro,
+        });
+        success = {
+          performed: true,
+          mint,
+          label,
+          attempt,
+          signature: r.signature,
+          swapped_in_amount: r.in_amount,
+          swapped_out_amount: r.out_amount,
+        };
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (success) {
+      results.push(success);
+    } else {
+      results.push({
+        performed: false,
+        abandoned_unsellable: true,
+        mint,
+        label,
+        attempts: maxAttempts,
+        amount_raw: String(amountRaw),
+        reason: lastErr?.message || 'swap failed',
+      });
+    }
+  }
+  return results;
 }
 
 async function main() {
@@ -87,28 +147,36 @@ async function main() {
   const allPositions = await raydium.clmm.getOwnerPositionInfo({});
   const me = allPositions.find((p) => p?.nftMint?.toBase58?.() === nftMint.toBase58());
   if (!me) {
-    return finish({ ok: false, error: `position ${inp.position_nft_mint} not found in owner ${owner.publicKey.toBase58()}` });
+    return finish({
+      ok: false,
+      error: `position ${inp.position_nft_mint} not found in owner ${owner.publicKey.toBase58()}`,
+    });
   }
 
   const poolData = await raydium.clmm.getPoolInfoFromRpc(me.poolId.toBase58());
   if (!poolData) return finish({ ok: false, error: `pool ${me.poolId.toBase58()} fetch failed` });
   const { poolInfo, poolKeys } = poolData;
 
-  const liquidity   = new BN(me.liquidity.toString());
+  const liquidity = new BN(me.liquidity.toString());
   const slippageBps = Number(inp.slippage_bps ?? 100);
-  const slippage    = slippageBps / 10000;
+  const slippage = slippageBps / 10000;
+  const priorityMicro = Number(
+    inp.jupiter_priority_micro_lamports ?? inp.priority_fee_micro_lamports ?? 2_000,
+  );
+  const sweepTrash = inp.sweep_trash_to_sol !== false;
+  const maxAttempts = Math.max(1, Number(inp.trash_swap_max_attempts ?? 2));
 
   let closeResult;
   if (liquidity.isZero() && !inp.keep_position) {
     const { execute } = await raydium.clmm.closePosition({
       poolInfo, poolKeys, ownerPosition: me, txVersion: TxVersion.V0,
     });
-    const { txId } = await execute({ sendAndConfirm: false });   // v0.4: HTTP polling
+    const { txId } = await execute({ sendAndConfirm: false });
     await pollConfirm(raydium.connection, txId);
     closeResult = {
       signature: txId, position_closed: true,
       amount_a_received: '0', amount_b_received: '0',
-      fees_a_claimed: '0',    fees_b_claimed: '0',
+      fees_a_claimed: '0', fees_b_claimed: '0',
       note: 'liquidity was already 0; closed empty NFT',
     };
   } else {
@@ -116,72 +184,62 @@ async function main() {
       poolInfo, poolKeys, ownerPosition: me,
       liquidity, amountMinA: new BN(0), amountMinB: new BN(0),
       slippage, closePosition: !inp.keep_position,
-      ownerInfo: {                            // v0.4: SDK requires this
-        useSOLBalance: true,                  // auto-unwrap WSOL → SOL on close
-      },
+      ownerInfo: { useSOLBalance: true },
       txVersion: TxVersion.V0,
       computeBudgetConfig: {
         units: Number(inp.compute_units ?? 280_000),
         microLamports: Number(inp.priority_fee_micro_lamports ?? 2_000),
       },
     });
-    const { txId } = await execute({ sendAndConfirm: false });   // v0.4: HTTP polling
+    const { txId } = await execute({ sendAndConfirm: false });
     await pollConfirm(raydium.connection, txId);
     closeResult = {
-      signature:         txId,
-      position_closed:   !inp.keep_position,
-      amount_a_received: extInfo?.amountA?.toString?.() ?? '?',
-      amount_b_received: extInfo?.amountB?.toString?.() ?? '?',
-      fees_a_claimed:    extInfo?.feeA?.toString?.()    ?? '?',
-      fees_b_claimed:    extInfo?.feeB?.toString?.()    ?? '?',
+      signature: txId,
+      position_closed: !inp.keep_position,
+      amount_a_received: extInfo?.amountA?.toString?.() ?? '0',
+      amount_b_received: extInfo?.amountB?.toString?.() ?? '0',
+      fees_a_claimed: extInfo?.feeA?.toString?.() ?? '0',
+      fees_b_claimed: extInfo?.feeB?.toString?.() ?? '0',
     };
   }
 
-  const payoutAs = (inp.payout_as || '').toUpperCase();
-  let payoutSwap = { performed: false, reason: 'payout_as not requested' };
-
-  if (payoutAs === 'SOL') {
-    const mintA = String(poolInfo.mintA.address);
-    const mintB = String(poolInfo.mintB.address);
-    let convertMint = null, convertAmount = null;
-    if (mintA !== WSOL_MINT && Number(closeResult.amount_a_received) > USDC_DUST_RAW) {
-      convertMint = mintA; convertAmount = closeResult.amount_a_received;
-    } else if (mintB !== WSOL_MINT && Number(closeResult.amount_b_received) > USDC_DUST_RAW) {
-      convertMint = mintB; convertAmount = closeResult.amount_b_received;
-    }
-    if (!convertMint) {
-      payoutSwap = { performed: false, reason: 'nothing to convert (already SOL or below dust)' };
-    } else {
-      try {
-        const r = await jupiterSwap({
-          connection, owner,
-          inputMint: convertMint, outputMint: WSOL_MINT,
-          amountRaw: convertAmount, slippageBps,
-        });
-        payoutSwap = {
-          performed:           true,
-          signature:           r.signature,
-          swapped_in_mint:     convertMint,
-          swapped_in_amount:   r.in_amount,
-          swapped_out_mint:    WSOL_MINT,
-          swapped_out_amount:  r.out_amount,
-        };
-      } catch (e) {
-        payoutSwap = { performed: false, reason: `swap failed: ${e.message}` };
-      }
-    }
+  const mintA = String(poolInfo.mintA.address);
+  const mintB = String(poolInfo.mintB.address);
+  let trashSwaps = [];
+  if (sweepTrash) {
+    trashSwaps = await sweepTrashLegs({
+      connection,
+      owner,
+      slippageBps,
+      priorityMicro,
+      maxAttempts,
+      legs: [
+        { mint: mintA, amountRaw: closeResult.amount_a_received, label: 'mintA' },
+        { mint: mintB, amountRaw: closeResult.amount_b_received, label: 'mintB' },
+      ],
+    });
   }
 
+  const anyAbandoned = trashSwaps.some((s) => s.abandoned_unsellable);
+  const anyPerformed = trashSwaps.some((s) => s.performed);
+
   return finish({
-    ok:                true,
-    close_signature:   closeResult.signature,
+    ok: true,
+    close_signature: closeResult.signature,
     amount_a_received: closeResult.amount_a_received,
     amount_b_received: closeResult.amount_b_received,
-    fees_a_claimed:    closeResult.fees_a_claimed,
-    fees_b_claimed:    closeResult.fees_b_claimed,
-    position_closed:   closeResult.position_closed,
-    note:              closeResult.note,
-    payout_swap:       payoutSwap,
+    fees_a_claimed: closeResult.fees_a_claimed,
+    fees_b_claimed: closeResult.fees_b_claimed,
+    position_closed: closeResult.position_closed,
+    note: closeResult.note,
+    sweep_trash_to_sol: sweepTrash,
+    trash_swap_max_attempts: maxAttempts,
+    trash_swaps: trashSwaps,
+    payout_swap: {
+      performed: anyPerformed,
+      abandoned_unsellable: anyAbandoned,
+      trash_swaps: trashSwaps,
+    },
   });
 }
 

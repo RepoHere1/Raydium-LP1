@@ -317,7 +317,16 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
     "lp_pay_funding_enabled": (
         "When on (default), LIVE opens that pay in USDC/USDT/USD1 auto-swap SOL via Jupiter if the wallet "
         "stable balance is below deposit size (+ buffer). SOL pay legs skip swapping.",
-        "Turn off only if you pre-fund stables manually. Does not apply to dashboard ANOMALIES (CASH) rows.",
+        "Turn off only if you pre-fund stables manually. Applies to all LIVE opens including manual trades from ANOMALIES.",
+    ),
+    "lp_close_sweep_trash_to_sol": (
+        "When on (default), after every CLMM close, non-stable tokens received (memecoin / trash legs) "
+        "are swapped to SOL via Jupiter immediately.",
+        "USDC/USDT/USD1 are kept; unsellable trash stops after 2 attempts to limit fee waste.",
+    ),
+    "lp_close_trash_swap_attempts": (
+        "How many Jupiter swap attempts per trash mint after a close (default 2). "
+        "After that the token is marked abandoned_unsellable and no further swap txs are sent.",
     ),
     "lp_pay_funding_buffer_pct": (
         "Extra fraction added on top of the LP deposit when checking stable balance (default 0.03 = 3%).",
