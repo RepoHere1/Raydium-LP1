@@ -25,12 +25,33 @@ from typing import Any
 
 from raydium_lp1.dashboard import DEFAULT_DASHBOARD_PATH
 from raydium_lp1.dashboard_field_help import attach_field_help, attach_section_help
+from raydium_lp1.doctor_advisor import build_doctor_report, write_doctor_report
+from raydium_lp1.tune_advisor import apply_tune_items, build_tune_plan
+from raydium_lp1.live_executor import live_readiness_check, open_clmm_candidate
+from raydium_lp1.dashboard_scan_runner import scan_status, start_dashboard_scan
+from raydium_lp1.live_guard import ModeBlockedError
+from raydium_lp1 import mode_toggle
+from raydium_lp1.mode_toggle import ModeChangeError
 from raydium_lp1.settings_io import load_settings_json, merge_known_settings_patch
+from raydium_lp1.lp_strategy_guide import experiment_loop_steps, strategy_cards_for_ui
 from raydium_lp1.strategies import ALLOWED_STRATEGIES
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.json")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_STATIC_DIR = REPO_ROOT / "web"
+# Bump when adding HTTP routes so /health can flag stale servers.
+API_VERSION = 2
+API_FEATURES = (
+    "scan_status",
+    "scan_run",
+    "scan_console",
+    "tune",
+    "tune_apply",
+    "live_readiness",
+    "live_open",
+    "doctor",
+    "mode",
+)
 WEB_SCAN_CONSOLE_LOG = REPO_ROOT / "reports" / "web_scan_console.log"
 DASHBOARD_SHELL_HTML = WEB_STATIC_DIR / "dashboard_shell.html"
 DASHBOARD_CLIENT_JS = WEB_STATIC_DIR / "dashboard_client.js"
@@ -254,6 +275,9 @@ def _serve_repo_static(url_path: str) -> tuple[bytes, str] | None:
         "/index.html": WEB_STATIC_DIR / "index.html",
         "/styles.css": REPO_ROOT / "styles.css",
         "/dashboard_client.js": DASHBOARD_CLIENT_JS,
+        "/mode_shared.js": WEB_STATIC_DIR / "mode_shared.js",
+        "/positions_client.js": WEB_STATIC_DIR / "positions_client.js",
+        "/lp1_copy.js": WEB_STATIC_DIR / "lp1_copy.js",
     }
     if url_path not in files:
         return None
@@ -270,7 +294,7 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "min_apr", "label": "Min APR %", "type": "number", "step": "any"},
             {"key": "min_liquidity_usd", "label": "Min TVL (USD)", "type": "number", "step": "any"},
             {"key": "min_volume_24h_usd", "label": "Min Vol 24h (USD)", "type": "number", "step": "any"},
-            {"key": "hard_exit_min_tvl_usd", "label": "Hard reject if TVL < (USD)", "type": "number", "step": "any"},
+            {"key": "hard_exit_min_tvl_usd", "label": "hard_exit_min_tvl_usd (USD)", "type": "number", "step": "any"},
             {"key": "max_position_usd", "label": "Max position USD", "type": "number", "step": "any"},
         ],
     },
@@ -308,6 +332,12 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "momentum_hold_hours", "label": "Hold window hrs", "type": "number", "step": "any"},
             {"key": "momentum_top_hot", "label": "TOP HOT size", "type": "number"},
             {"key": "sort_candidates_by_momentum", "label": "Sort candidates by momentum", "type": "checkbox"},
+            {
+                "key": "lp_selection_mode",
+                "label": "LIVE LP pick mode (apr | momentum)",
+                "type": "select",
+                "options": ["apr", "momentum"],
+            },
             {"key": "momentum_min_volume_tvl_ratio", "label": "Min Vol/TVL ratio", "type": "number", "step": "any"},
             {"key": "momentum_sweet_min_pool_age_hours", "label": "Sweet min pool age hrs", "type": "number", "step": "any"},
             {"key": "momentum_sweet_max_pool_age_hours", "label": "Sweet max pool age hrs", "type": "number", "step": "any"},
@@ -322,7 +352,7 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "require_sell_route", "label": "Require sell route", "type": "checkbox"},
             {"key": "use_robust_routing", "label": "Robust routing", "type": "checkbox"},
             {"key": "max_route_price_impact_pct", "label": "Max quote price impact %", "type": "number", "step": "any"},
-            {"key": "route_sources_json", "label": "route_sources (JSON array)", "type": "json_text"},
+            {"key": "route_sources_json", "label": "Rejection reasons / route sources (JSON array)", "type": "json_text"},
             {"key": "write_rejections", "label": "Write rejections CSV", "type": "checkbox"},
             {"key": "rejections_csv_path", "label": "Rejections CSV path", "type": "text"},
         ],
@@ -332,6 +362,13 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
         "fields": [
             {"key": "position_size_sol", "label": "Position SOL", "type": "number", "step": "any"},
             {"key": "reserve_sol", "label": "Reserve SOL", "type": "number", "step": "any"},
+            {
+                "key": "wallet_address",
+                "label": "Wallet Address",
+                "type": "text",
+                "help": "Public key for RPC balance reads. Prefer scripts/import_wallet.ps1 to sync .env and this file.",
+                "live_hint": "Must match WALLET_ADDRESS in .env for live mode.",
+            },
             {"key": "emergency_close_enabled", "label": "Emergency close", "type": "checkbox"},
             {"key": "emergency_max_slippage_pct", "label": "Emergency max slip (0-1 frac)", "type": "number", "step": "any"},
             {"key": "emergency_base_symbol", "label": "Emergency base symbol", "type": "text"},
@@ -341,17 +378,33 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
         ],
     },
     {
-        "title": "LP paper planning",
+        "title": "LP order entry (CLMM)",
+        "section_id": "lp_order_entry",
+        "section_help": (
+            "How Raydium concentrated liquidity positions are opened on the next LIVE deposit "
+            "(and how DRY_RUN plans bands). Each card maps to lp_active_strategy in settings.json."
+        ),
+        "section_rec": (
+            "Experiment loop: pick style → save → small LIVE → compare LP style stats → repeat. "
+            "Default volatility_atr_width or auto_volatility_pick for meme scans."
+        ),
         "fields": [
-            {"key": "lp_planning_enabled", "label": "LP planning", "type": "checkbox"},
-            {"key": "lp_range_mode", "label": "Range mode", "type": "text"},
-            {"key": "lp_default_range_width_pct", "label": "Default band %", "type": "number", "step": "any"},
+            {
+                "key": "lp_active_strategy",
+                "label": "LP order entry style",
+                "type": "strategy_picker",
+            },
+            {"key": "lp_skew_use_momentum", "label": "Skew bands via momentum (trailing / asymmetric)", "type": "checkbox"},
+            {"key": "lp_default_range_width_pct", "label": "Default band width %", "type": "number", "step": "any"},
+            {"key": "lp_planning_enabled", "label": "LP planning in scan output", "type": "checkbox"},
+            {"key": "lp_fee_bps", "label": "Pool fee tier (bps)", "type": "number", "step": "any"},
+            {"key": "demo_paper_sol", "label": "DRY_RUN paper SOL balance", "type": "number", "step": "any"},
+            {"key": "lp_range_mode", "label": "Range width mode (legacy)", "type": "text"},
             {"key": "lp_range_width_candidates_json", "label": "Band width candidates JSON", "type": "json_text"},
-            {"key": "lp_skew_use_momentum", "label": "Skew bands via momentum", "type": "checkbox"},
             {"key": "lp_full_range_parallel", "label": "Parallel full-range paper leg", "type": "checkbox"},
-            {"key": "lp_full_range_budget_fraction", "label": "Full-range budget frac", "type": "number", "step": "any"},
-            {"key": "lp_main_budget_fraction", "label": "Main budget frac", "type": "number", "step": "any"},
-            {"key": "lp_max_positions_per_mint", "label": "Max LP positions/mint", "type": "number"},
+            {"key": "lp_full_range_budget_fraction", "label": "Full-range budget fraction", "type": "number", "step": "any"},
+            {"key": "lp_main_budget_fraction", "label": "Main band budget fraction", "type": "number", "step": "any"},
+            {"key": "lp_max_positions_per_mint", "label": "Max LP positions per mint", "type": "number"},
         ],
     },
     {
@@ -360,7 +413,8 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "strategy", "label": "strategy", "type": "select", "options": list(ALLOWED_STRATEGIES)},
             {"key": "network", "label": "network", "type": "text"},
             {"key": "risk_profile", "label": "risk_profile", "type": "text"},
-            {"key": "dry_run", "label": "Dry run only", "type": "checkbox"},
+            {"key": "mode", "label": "Trading mode (dry_run|live)", "type": "text"},
+            {"key": "dry_run", "label": "Dry Run (synced with mode)", "type": "checkbox"},
             {"key": "raydium_api_base", "label": "Raydium API base", "type": "text"},
             {"key": "solana_rpc_urls_lines", "label": "RPC URLs (one per line)", "type": "lines"},
             {"key": "allowed_quote_symbols_csv", "label": "Allowed quotes CSV", "type": "csv"},
@@ -384,6 +438,45 @@ class WebPaths:
     settings_path: Path
 
 
+def _normalize_settings_mode_patch(patch: dict[str, Any]) -> dict[str, Any]:
+    """Align ``mode`` and ``dry_run`` in a settings POST body."""
+
+    pk = dict(patch)
+    if "mode" in pk and "dry_run" not in pk:
+        pk["dry_run"] = str(pk["mode"]).lower().strip() == "demo"
+    elif "dry_run" in pk and "mode" not in pk:
+        pk["mode"] = "demo" if bool(pk.get("dry_run")) else "live"
+    return pk
+
+
+def _apply_settings_mode_change(
+    settings_path: Path,
+    patch: dict[str, Any],
+    *,
+    source: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Use ``mode_toggle.set_mode`` when POST would change trading mode; strip mode keys from merge."""
+
+    if "mode" not in patch and "dry_run" not in patch:
+        return patch, None
+
+    pk = mode_toggle.sync_mode_fields(dict(patch))
+    target = str(pk.get("mode", mode_toggle.get_mode())).lower()
+    current = mode_toggle.get_mode()
+    result: dict[str, Any] | None = None
+
+    if target != current:
+        if target == "live":
+            confirm = pk.pop("confirm", patch.get("confirm"))
+            result = mode_toggle.set_mode("live", confirm=confirm, source=source)
+        else:
+            result = mode_toggle.set_mode("demo", source=source)
+
+    for key in ("mode", "dry_run", "confirm"):
+        pk.pop(key, None)
+    return pk, result
+
+
 def _page() -> bytes:
     if not DASHBOARD_SHELL_HTML.is_file():
         raise RuntimeError(f"Dashboard UI shell missing: {DASHBOARD_SHELL_HTML}.")
@@ -392,8 +485,10 @@ def _page() -> bytes:
         raise RuntimeError(f"{DASHBOARD_SHELL_HTML} must contain the BOOT_JSON placeholder")
     boot_payload = {
         "form_sections": _FORM_SECTIONS,
+        "lp_strategy_cards": strategy_cards_for_ui(),
+        "lp_experiment_loop": experiment_loop_steps(),
         "table_page_size": 30,
-        "mode_tabs": ["LIVE", "DEMO"],
+        "mode_tabs": ["LIVE", "DRY_RUN"],
         "status_fields": ["last_scan_utc", "scan_sequence", "candidate_count", "position_count"],
     }
     html = shell.replace("BOOT_JSON", json.dumps(boot_payload, separators=(",", ":")))
@@ -428,6 +523,8 @@ def main(argv: list[str] | None = None) -> int:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            if "html" in ctype or "javascript" in ctype:
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
             self.end_headers()
             self.wfile.write(body)
 
@@ -455,6 +552,12 @@ def main(argv: list[str] | None = None) -> int:
                 except (OSError, json.JSONDecodeError) as exc:
                     self._send_json(500, {"error": str(exc)})
                     return
+                try:
+                    from raydium_lp1.dashboard_enrich import enrich_dashboard_payload
+
+                    data = enrich_dashboard_payload(data, paths.settings_path)
+                except Exception as exc:
+                    data["feed_enrich_error"] = str(exc)
                 self._send_json(200, data)
                 return
             if path == "/api/settings":
@@ -464,6 +567,45 @@ def main(argv: list[str] | None = None) -> int:
                     self._send_json(500, {"error": str(exc)})
                     return
                 self._send_json(200, data)
+                return
+            if path == "/api/runtime":
+                from raydium_lp1.doctor_advisor import _wallet_runtime
+
+                payload = {**mode_toggle.status(), "wallet": _wallet_runtime()}
+                self._send_json(200, payload)
+                return
+            if path == "/api/doctor":
+                try:
+                    report = build_doctor_report(
+                        settings_path=paths.settings_path,
+                        latest_path=paths.dashboard_path.parent / "latest.json",
+                        include_structural=True,
+                    )
+                    write_doctor_report()
+                except Exception as exc:
+                    self._send_json(500, {"error": str(exc)})
+                    return
+                self._send_json(200, report)
+                return
+            if path == "/api/tune":
+                try:
+                    plan = build_tune_plan(
+                        latest_path=paths.dashboard_path.parent / "latest.json",
+                        settings_path=paths.settings_path,
+                    )
+                except Exception as exc:
+                    self._send_json(500, {"error": str(exc)})
+                    return
+                self._send_json(200, plan)
+                return
+            if path == "/api/live/readiness":
+                try:
+                    self._send_json(200, live_readiness_check())
+                except Exception as exc:
+                    self._send_json(500, {"error": str(exc)})
+                return
+            if path == "/api/scan/status":
+                self._send_json(200, scan_status())
                 return
             if path == "/api/scan_console":
                 if WEB_SCAN_CONSOLE_LOG.is_file():
@@ -477,28 +619,138 @@ def main(argv: list[str] | None = None) -> int:
                 self._send(200, b"(scan console log not found)\n", "text/plain; charset=utf-8")
                 return
             if path == "/health":
-                self._send_json(200, {"ok": True, "service": "raydium-lp1-dashboard", "port": self.server.server_address[1]})
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "service": "raydium-lp1-dashboard",
+                        "port": self.server.server_address[1],
+                        "api_version": API_VERSION,
+                        "api_features": list(API_FEATURES),
+                    },
+                )
                 return
             self._send_json(404, {"error": "not found"})
 
         def do_POST(self) -> None:
             path = up.urlparse(self.path).path.rstrip("/") or "/"
-            if path != "/api/settings":
-                self._send_json(404, {"error": "not found"})
-                return
             length = int(self.headers.get("Content-Length", "0") or "0")
             raw_body = self.rfile.read(length) if length > 0 else b"{}"
+            if path == "/api/scan/run":
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except json.JSONDecodeError:
+                    body = {}
+                wr = bool(body.get("write_rejections", True))
+                result = start_dashboard_scan(write_rejections=wr)
+                code = 200 if result.get("ok") else 409
+                self._send_json(code, result)
+                return
+            if path == "/api/tune/apply":
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except json.JSONDecodeError as exc:
+                    self._send_json(400, {"error": f"invalid JSON: {exc}"})
+                    return
+                ids = body.get("ids") or body.get("item_ids") or []
+                if body.get("apply_all"):
+                    plan = build_tune_plan(
+                        latest_path=paths.dashboard_path.parent / "latest.json",
+                        settings_path=paths.settings_path,
+                    )
+                    ids = [
+                        str(it["id"])
+                        for it in (plan.get("items") or [])
+                        if isinstance(it, dict) and it.get("settings_patch")
+                    ]
+                if not isinstance(ids, list):
+                    self._send_json(400, {"error": "ids must be a list"})
+                    return
+                try:
+                    result = apply_tune_items(
+                        paths.settings_path,
+                        [str(x) for x in ids],
+                        latest_path=paths.dashboard_path.parent / "latest.json",
+                    )
+                except (OSError, ValueError) as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                self._send_json(200, result)
+                return
+            if path == "/api/live/open":
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except json.JSONDecodeError as exc:
+                    self._send_json(400, {"error": f"invalid JSON: {exc}"})
+                    return
+                if str(body.get("confirm", "")).upper() != "LIVE":
+                    self._send_json(400, {"error": "POST confirm=LIVE required"})
+                    return
+                try:
+                    result = open_clmm_candidate(
+                        pool_id=str(body.get("pool_id") or "") or None,
+                        input_amount_sol=body.get("input_amount_sol"),
+                    )
+                except (FileNotFoundError, ValueError) as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                except ModeBlockedError as exc:
+                    self._send_json(403, {"error": str(exc)})
+                    return
+                self._send_json(200 if result.get("ok") else 502, result)
+                return
+            if path == "/api/mode":
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except json.JSONDecodeError as exc:
+                    self._send_json(400, {"error": f"invalid JSON: {exc}"})
+                    return
+                try:
+                    result = mode_toggle.set_mode(
+                        str(body.get("mode", "")),
+                        confirm=body.get("confirm"),
+                        source="dashboard",
+                    )
+                except ModeChangeError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                    return
+                from raydium_lp1.doctor_advisor import _wallet_runtime
+
+                self._send_json(200, {**result, "wallet": _wallet_runtime()})
+                return
+            if path not in ("/api/settings",):
+                self._send_json(404, {"error": "not found"})
+                return
             try:
                 patch = json.loads(raw_body.decode("utf-8"))
             except json.JSONDecodeError as exc:
                 self._send_json(400, {"error": f"invalid JSON: {exc}"})
                 return
             try:
-                merge_known_settings_patch(paths.settings_path, patch)
+                patch = _normalize_settings_mode_patch(patch)
+                patch, mode_result = _apply_settings_mode_change(
+                    paths.settings_path, patch, source="dashboard_settings"
+                )
+                if patch:
+                    merge_known_settings_patch(paths.settings_path, patch)
+            except ModeChangeError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             except (OSError, ValueError) as exc:
                 self._send_json(400, {"error": str(exc)})
                 return
-            self._send_json(200, {"ok": True, "path": str(paths.settings_path.resolve())})
+            from raydium_lp1 import mode_toggle
+            from raydium_lp1.doctor_advisor import _wallet_runtime
+
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "path": str(paths.settings_path.resolve()),
+                    **mode_toggle.status(),
+                    "wallet": _wallet_runtime(),
+                },
+            )
 
     httpd = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     base = f"http://{args.host}:{args.port}"
@@ -507,6 +759,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  project page:   {base}/index.html", flush=True)
     print(f"  dashboard JS:   {DASHBOARD_CLIENT_JS.resolve()}", flush=True)
     print(f"  settings file:  {paths.settings_path.resolve()}", flush=True)
+    print(f"  API v{API_VERSION}: GET /api/scan/status  POST /api/scan/run", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -517,6 +770,10 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
+
 
 
 

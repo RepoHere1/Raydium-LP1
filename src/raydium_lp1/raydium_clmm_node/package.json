@@ -1,0 +1,23 @@
+{
+  "name": "raydium-clmm-node-bridge",
+  "version": "0.1.0",
+  "description": "Tiny Node ESM scripts that the Raydium-LP1 Python code spawns to open/close/quote CLMM positions via the official Raydium SDK v2. Each script reads JSON from stdin and prints one JSON line to stdout.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "open":  "node open_position.mjs",
+    "close": "node close_position.mjs",
+    "quote": "node quote_sell.mjs"
+  },
+  "dependencies": {
+    "@raydium-io/raydium-sdk-v2": "0.2.49-alpha",
+    "@solana/web3.js":            "^1.98.4",
+    "@solana/spl-token":          "^0.4.14",
+    "bn.js":                      "^5.2.3",
+    "bs58":                       "^6.0.0",
+    "decimal.js":                 "^10.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

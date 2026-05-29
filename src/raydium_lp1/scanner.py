@@ -24,11 +24,13 @@ from urllib.request import Request, urlopen
 from raydium_lp1 import dashboard as dashboard_mod
 from raydium_lp1 import data_provenance
 from raydium_lp1 import dial_in_analyst
-from raydium_lp1 import emergency, health, lp_range_planner, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1 import emergency, health, lp_range_planner, mode_toggle, momentum, momentum_detective, networks, pool_verify, robust_routes, routes, strategies, verdicts, wallet as wallet_mod
+from raydium_lp1.lp_selection import LP_SELECTION_APR, apply_candidate_order, normalize_lp_selection_mode
 from raydium_lp1.http_json import load_json_from_urlopen_response
 
 RAYDIUM_API_BASE = "https://api-v3.raydium.io"
 POOL_LIST_PATH = "/pools/info/list"
+RAYDIUM_CLMM_PROGRAM_ID = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"
 DEFAULT_CONFIG_PATH = Path("config/settings.json")
 FALLBACK_CONFIG_PATH = Path("config/filters.example.json")
 DEFAULT_ENV_PATH = Path(".env")
@@ -71,7 +73,7 @@ class ScannerConfig:
     pages: int = 1
     http_timeout_seconds: int = DEFAULT_HTTP_TIMEOUT_SECONDS
     page_delay_seconds: float = DEFAULT_PAGE_DELAY_SECONDS
-    pool_type: str = "all"
+    pool_type: str = "concentrated"
     sort_type: str = "desc"
     min_liquidity_usd: float = 1_000.0
     min_volume_24h_usd: float = 100.0
@@ -123,11 +125,16 @@ class ScannerConfig:
     momentum_sweet_max_pool_age_hours: float = 168.0
     momentum_min_tvl_usd: float = 0.0
     sort_candidates_by_momentum: bool = True
+    # LIVE / dashboard: ``apr`` = top by APR; ``momentum`` = top tier=hot by combined score.
+    lp_selection_mode: str = "apr"
     momentum_top_hot: int = 25
     momentum_detective_enabled: bool = True
     momentum_probe_market_lists: bool = True
     # Paper-only CLMM / concentrated band hints (no signed txs in this build).
     lp_planning_enabled: bool = False
+    lp_active_strategy: str = "auto_volatility_pick"
+    lp_fee_bps: float = 25.0
+    demo_paper_sol: float = 10.0
     lp_range_mode: str = "auto"  # auto | symmetric | fixed | popular_20 | manual_default
     lp_default_range_width_pct: float = 20.0
     lp_range_width_candidates: tuple[float, ...] = (12.0, 20.0, 30.0, 50.0)
@@ -214,8 +221,8 @@ class ScannerConfig:
             require_verified_raydium_pool=bool(
                 raw_with_strategy.get("require_verified_raydium_pool", True)
             ),
-            verify_pool_on_chain=bool(raw_with_strategy.get("verify_pool_on_chain", True)),
-            verify_pool_raydium_api=bool(raw_with_strategy.get("verify_pool_raydium_api", False)),
+            verify_pool_on_chain=True,
+            verify_pool_raydium_api=True,
             momentum_enabled=bool(raw_with_strategy.get("momentum_enabled", False)),
             min_momentum_score=float(raw_with_strategy.get("min_momentum_score", 0.0)),
             require_momentum_score=bool(raw_with_strategy.get("require_momentum_score", False)),
@@ -231,10 +238,16 @@ class ScannerConfig:
             ),
             momentum_min_tvl_usd=float(raw_with_strategy.get("momentum_min_tvl_usd", 0.0)),
             sort_candidates_by_momentum=bool(raw_with_strategy.get("sort_candidates_by_momentum", True)),
+            lp_selection_mode=normalize_lp_selection_mode(
+                str(raw_with_strategy.get("lp_selection_mode") or LP_SELECTION_APR)
+            ),
             momentum_top_hot=max(1, int(raw_with_strategy.get("momentum_top_hot", 25))),
             momentum_detective_enabled=bool(raw_with_strategy.get("momentum_detective_enabled", True)),
             momentum_probe_market_lists=bool(raw_with_strategy.get("momentum_probe_market_lists", True)),
             lp_planning_enabled=bool(raw_with_strategy.get("lp_planning_enabled", False)),
+            lp_active_strategy=str(raw_with_strategy.get("lp_active_strategy", "auto_volatility_pick")),
+            lp_fee_bps=float(raw_with_strategy.get("lp_fee_bps", 25.0)),
+            demo_paper_sol=float(raw_with_strategy.get("demo_paper_sol", 10.0)),
             lp_range_mode=str(raw_with_strategy.get("lp_range_mode", "auto")),
             lp_default_range_width_pct=float(raw_with_strategy.get("lp_default_range_width_pct", 20.0)),
             lp_range_width_candidates=_parse_lp_width_candidates(dict(raw_with_strategy)),
@@ -512,8 +525,8 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
     volume and fees, and surfaces ``openTime``, ``burnPercent`` and pool
     type so feature filters can match what raydium.io's UI exposes.
 
-    **Identifiers:** Raydium's API uses ``poolId`` / ``ammId`` / ``id`` (in that
-    preference order here) for the pool's **on-chain state account**. Solana
+    **Identifiers:** Raydium's canonical pool-state key is ``id``; some payloads
+    also include ``poolId`` / ``ammId`` aliases. Solana
     pubkeys all look like "wallets" — compare token mints (``mint_a`` /
     ``mint_b``) vs ``id`` vs ``lp_mint_address`` (LP receipt SPL mint when
     present).
@@ -539,7 +552,9 @@ def normalize_pool(pool: dict[str, Any], apr_field: str) -> dict[str, Any]:
     lp_mint_address = str(lp_mint_obj.get("address") or "")
     cfg_obj = pool.get("config") if isinstance(pool.get("config"), dict) else {}
     config_account_id = str(cfg_obj.get("id") or "")
-    pool_state_id = str(nested_get(pool, "poolId", "ammId", "id", default=""))
+    # Canonical Raydium v3 identifier is `id` (pool state account). Some payloads
+    # also include `poolId`/`ammId`; keep those only as fallbacks.
+    pool_state_id = str(nested_get(pool, "id", "poolId", "ammId", default=""))
 
     return {
         "id": pool_state_id,
@@ -587,7 +602,21 @@ def extract_pool_items(response: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+_RAYDIUM_RETRY_CODES = frozenset({429, 500, 502, 503, 504})
+
+
 def fetch_json(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS) -> dict[str, Any]:
+    return fetch_json_with_retries(url, timeout=timeout)
+
+
+def fetch_json_with_retries(
+    url: str,
+    *,
+    timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS,
+    max_attempts: int = 5,
+) -> dict[str, Any]:
+    """Fetch Raydium/public JSON with backoff on rate-limit and gateway errors."""
+
     request = Request(
         url,
         headers={
@@ -596,18 +625,40 @@ def fetch_json(url: str, timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS) -> dict[st
             "user-agent": "Raydium-LP1/0.6",
         },
     )
-    try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - intentional public API read
-            return load_json_from_urlopen_response(response)
-    except HTTPError as exc:
-        raise RuntimeError(f"API returned HTTP {exc.code} for {url}") from exc
-    except URLError as exc:
-        reason = getattr(exc, "reason", exc)
-        raise RuntimeError(f"API request failed for {url}: {reason}") from exc
-    except TimeoutError as exc:
-        raise RuntimeError(f"API request timed out after {timeout}s for {url}") from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"API returned invalid JSON for {url}: {exc}") from exc
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urlopen(request, timeout=timeout) as response:  # noqa: S310
+                return load_json_from_urlopen_response(response)
+        except HTTPError as exc:
+            last_exc = exc
+            if exc.code in _RAYDIUM_RETRY_CODES and attempt < max_attempts:
+                wait = min(30.0, 1.5 * (2 ** (attempt - 1)))
+                print(
+                    f"[scan] Raydium HTTP {exc.code} page retry {attempt}/{max_attempts} "
+                    f"in {wait:.0f}s...",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(wait)
+                continue
+            raise RuntimeError(f"API returned HTTP {exc.code} for {url}") from exc
+        except URLError as exc:
+            last_exc = exc
+            if attempt < max_attempts:
+                time.sleep(min(15.0, 1.0 * attempt))
+                continue
+            reason = getattr(exc, "reason", exc)
+            raise RuntimeError(f"API request failed for {url}: {reason}") from exc
+        except TimeoutError as exc:
+            last_exc = exc
+            if attempt < max_attempts:
+                time.sleep(min(10.0, 1.0 * attempt))
+                continue
+            raise RuntimeError(f"API request timed out after {timeout}s for {url}") from exc
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"API returned invalid JSON for {url}: {exc}") from exc
+    raise RuntimeError(f"API request failed for {url}: {last_exc}")
 
 
 def post_json(url: str, payload: dict[str, Any], timeout: int = 12) -> dict[str, Any]:
@@ -680,6 +731,8 @@ def pool_list_url(config: ScannerConfig, page: int = 1) -> str:
 
 def filter_pool(pool: dict[str, Any], config: ScannerConfig) -> tuple[bool, list[str]]:
     reasons: list[str] = []
+    if str(pool.get("program_id") or "") != RAYDIUM_CLMM_PROGRAM_ID:
+        reasons.append("not concentrated CLMM pool (non-CLMM program id)")
     if config.require_pool_id and not pool["id"]:
         reasons.append("missing pool id")
 
@@ -890,7 +943,17 @@ def scan(
             file=sys.stderr,
             flush=True,
         )
-        response = fetch_json(url, timeout=config.http_timeout_seconds)
+        try:
+            response = fetch_json_with_retries(url, timeout=config.http_timeout_seconds)
+        except RuntimeError as exc:
+            print(
+                f"[scan] page {page}/{config.pages} skipped: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+            if scanned == 0:
+                raise
+            break
         items = extract_pool_items(response)
         if stream_cfg.enabled:
             verdicts.print_verdict_column_headers(stream_cfg, page=page)
@@ -909,22 +972,18 @@ def scan(
             public_pool = {key: value for key, value in pool.items() if key != "raw"}
             if config.lp_planning_enabled and pool.get("raw") is not None:
                 public_pool["raw"] = pool["raw"]
-            if (
-                config.require_verified_raydium_pool
-                or config.verify_pool_on_chain
-                or config.verify_pool_raydium_api
-            ):
+            if True:
                 verification = pool_verify.validate_pool(
                     public_pool,
                     api_base=config.raydium_api_base,
                     rpc_urls=config.solana_rpc_urls,
-                    verify_on_chain=config.verify_pool_on_chain,
-                    verify_raydium_api=config.verify_pool_raydium_api,
+                    verify_on_chain=True,
+                    verify_raydium_api=True,
                     rpc_post=rpc_post,
                     owner_cache=on_chain_owner_cache,
                 )
                 public_pool["pool_verification"] = verification.to_dict()
-                if config.require_verified_raydium_pool and not verification.ok:
+                if not verification.ok:
                     verify_reasons = list(verification.reasons) or [
                         "not a verified Raydium pool state account (failed program/chain/API check)"
                     ]
@@ -1020,12 +1079,7 @@ def scan(
                 history=liq_history,
                 market_pulse=market_pulse,
             ).to_dict()
-        if config.sort_candidates_by_momentum:
-            candidates.sort(
-                key=lambda p: float((p.get("momentum") or {}).get("combined_score")
-                                    or (p.get("momentum") or {}).get("score") or 0),
-                reverse=True,
-            )
+        candidates = apply_candidate_order(candidates, config)
         momentum_hot_top = momentum_detective.build_hot_leaderboard(
             candidates, top_n=config.momentum_top_hot
         )
@@ -1066,10 +1120,19 @@ def scan(
             pass
 
     if config.lp_planning_enabled and candidates:
+        from raydium_lp1.lp_order_strategies import build_open_order
+
         lp_plan_cfg = lp_range_planner.planner_config_from_scanner(config)
         for pool in candidates:
             mom_blob = pool.get("momentum") if isinstance(pool.get("momentum"), dict) else None
             pool["lp_placement_plan"] = lp_range_planner.plan_for_pool(pool, mom_blob, lp_plan_cfg)
+            pool["lp_open_order"] = build_open_order(
+                pool,
+                mom_blob,
+                strategy_id=config.lp_active_strategy,
+                default_width_pct=config.lp_default_range_width_pct,
+                skew_use_momentum=config.lp_skew_use_momentum,
+            )
         try:
             REPORTS_DIR.mkdir(parents=True, exist_ok=True)
             (REPORTS_DIR / "lp_placement_latest.json").write_text(
@@ -1137,7 +1200,8 @@ def scan(
 
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
-        "mode": "dry_run" if config.dry_run else "trade_disabled_in_this_build",
+        "mode": "demo" if (config.dry_run or mode_toggle.is_demo()) else "live",
+        "trading_mode": mode_toggle.get_mode(),
         "data_provenance": provenance,
         "strategy": config.strategy,
         "network": config.network,
@@ -1544,9 +1608,21 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    if not config.dry_run:
-        print("Refusing to run: this build is dry-run only. Set dry_run=true.", file=sys.stderr)
-        return 2
+    trading_mode = mode_toggle.get_mode()
+    if trading_mode == "demo" and not config.dry_run:
+        print(
+            "[mode] settings had dry_run=false but mode=demo — scanner runs in DRY_RUN "
+            "(live Raydium/RPC data, no on-chain spends).",
+            file=sys.stderr,
+        )
+    elif trading_mode == "live":
+        print(mode_toggle.banner(), file=sys.stderr)
+        if config.dry_run:
+            print(
+                "[mode] mode=live but dry_run=true in file — sync with dashboard LIVE toggle "
+                "or set dry_run false after typing LIVE.",
+                file=sys.stderr,
+            )
 
     try:
         active_wallet = wallet_mod.load_wallet()
@@ -1684,5 +1760,12 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
+
+
+
+
 
 

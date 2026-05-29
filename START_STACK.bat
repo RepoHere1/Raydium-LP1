@@ -1,5 +1,5 @@
 @echo off
-REM Double-click or run from CMD: one window = scan loop + http://127.0.0.1:8844/
+REM One console: scanner + dashboard on :8844 (no WT tabs). For full stack use LAUNCH_LP1.bat
 cd /d "%~dp0"
 set PYTHONPATH=src
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start_stack.ps1" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\launch_lp1.ps1" -SingleWindow %*

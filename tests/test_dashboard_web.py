@@ -34,9 +34,15 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn("mode-bar", html)
         self.assertIn("/dashboard_client.js", html)
         self.assertIn("tab-panel", html)
-        self.assertIn("Positions · dry-run data", html)
+        self.assertIn("wall-live", html)
+        self.assertIn("wall-demo", html)
+        self.assertIn("lp-order-entry", html)
+        self.assertIn("panel-lp-order", html)
+        self.assertIn("jump-lp-entry", html)
+        self.assertIn("fo-lp", html)
+        self.assertIn("btn-mode-demo", html)
         self.assertIn("Funnel &amp; settings", html)
-        self.assertIn("Project raw JSON", html)
+        self.assertIn("Raw JSON", html)
         self.assertIn("json-pre", html)
         self.assertNotIn("<<<<<<<", html)
         self.assertNotIn(">>>>>>>", html)
@@ -50,6 +56,23 @@ class DashboardWebPageTests(unittest.TestCase):
         self.assertIn('id="rpc"', html)
         js = (REPO_ROOT / "web" / "dashboard_client.js").read_text(encoding="utf-8")
         self.assertIn("renderRpcHealth", js)
+
+    def test_dashboard_client_has_run_scan_button(self):
+        js = (REPO_ROOT / "web" / "dashboard_client.js").read_text(encoding="utf-8")
+        self.assertIn("scan-run-now", js)
+        self.assertIn("/api/scan/run", js)
+        web_py = (REPO_ROOT / "src" / "raydium_lp1" / "dashboard_web.py").read_text(encoding="utf-8")
+        self.assertIn("/api/scan/run", web_py)
+        self.assertIn("/api/scan/status", web_py)
+
+    def test_normalize_settings_mode_patch(self):
+        from raydium_lp1.dashboard_web import _normalize_settings_mode_patch
+
+        p = _normalize_settings_mode_patch({"dry_run": False})
+        self.assertEqual(p["mode"], "live")
+        self.assertFalse(p["dry_run"])
+        p2 = _normalize_settings_mode_patch({"mode": "demo"})
+        self.assertTrue(p2["dry_run"])
 
 
 if __name__ == "__main__":

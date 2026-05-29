@@ -94,6 +94,16 @@ def load_wallet(env: dict[str, str] | None = None, *, required: bool = False) ->
     address = (env.get(ENV_WALLET_ADDRESS) or "").strip()
     private_key = (env.get(ENV_WALLET_PRIVATE_KEY) or "").strip()
     if not address:
+        try:
+            from raydium_lp1.wallet_secrets import DEFAULT_SETTINGS_PATH
+            from raydium_lp1.settings_io import load_settings_json
+
+            if DEFAULT_SETTINGS_PATH.is_file():
+                settings = load_settings_json(DEFAULT_SETTINGS_PATH)
+                address = str(settings.get("wallet_address") or "").strip()
+        except Exception:
+            pass
+    if not address:
         if required:
             raise WalletError(
                 f"missing {ENV_WALLET_ADDRESS} in environment; set it in .env"

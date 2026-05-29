@@ -3,7 +3,7 @@
   "dry_run": true,
   "network": "solana",
   "strategy": "custom",
-  "min_apr": 999.99,
+  "min_apr": 300.00,
   "apr_field": "apr24h",
   "pool_sort_field": "",
   "raydium_api_base": "https://api-v3.raydium.io",

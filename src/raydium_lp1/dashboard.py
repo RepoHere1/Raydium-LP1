@@ -28,7 +28,11 @@ class DashboardData:
     generated_at: str
     settings: dict
     wallet_capacity: dict
+    live_wallet_capacity: dict
+    demo_wallet_capacity: dict
     open_positions: list[dict]
+    live_open_positions: list[dict]
+    demo_simulated_trades: list[dict]
     momentum_hot_top: list[dict]
     recent_alerts: list[dict]
     rpc_health: list[dict]
@@ -39,12 +43,87 @@ class DashboardData:
             "generated_at": self.generated_at,
             "settings": dict(self.settings),
             "wallet_capacity": dict(self.wallet_capacity),
+            "live_wallet_capacity": dict(self.live_wallet_capacity),
+            "demo_wallet_capacity": dict(self.demo_wallet_capacity),
             "open_positions": list(self.open_positions),
+            "live_open_positions": list(self.live_open_positions),
+            "demo_simulated_trades": list(self.demo_simulated_trades),
             "momentum_hot_top": list(self.momentum_hot_top),
             "recent_alerts": list(self.recent_alerts),
             "rpc_health": list(self.rpc_health),
             "last_scan": dict(self.last_scan),
         }
+
+
+def _load_live_positions_file(path: Path | None = None) -> list[dict]:
+    path = path or Path("active_positions.json")
+    if not path.is_file():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(raw, list):
+        return [dict(x) for x in raw if isinstance(x, dict)]
+    if isinstance(raw, dict):
+        rows = raw.get("positions") or raw.get("open") or []
+        if isinstance(rows, list):
+            return [dict(x) for x in rows if isinstance(x, dict)]
+    return []
+
+
+def _candidate_to_simulated_trade(candidate: dict, index: int) -> dict:
+    mom = candidate.get("momentum") or {}
+    h = candidate.get("health") or {}
+    a = candidate.get("mint_a_symbol") or ""
+    b = candidate.get("mint_b_symbol") or ""
+    return {
+        "index": index,
+        "pool_id": candidate.get("id"),
+        "pair": f"{a}/{b}".strip("/"),
+        "apr": candidate.get("apr"),
+        "liquidity_usd": candidate.get("liquidity_usd"),
+        "volume_24h_usd": candidate.get("volume_24h_usd"),
+        "health": h.get("score", ""),
+        "momentum_score": mom.get("score") or mom.get("combined_score"),
+        "momentum_tier": mom.get("tier"),
+        "simulated": True,
+        "would_execute_in_live": True,
+        "action": "would_open_lp",
+        "status": "demo_sim",
+    }
+
+
+def _build_demo_wallet_capacity(wallet_capacity: dict, report: dict) -> dict:
+    base = dict(wallet_capacity or {})
+    cap = dict(base.get("capacity") or {})
+    bal = dict(base.get("balance") or {})
+    n_pass = int(report.get("candidate_count_pre_capacity") or len(report.get("candidates") or []))
+    sim_cap = dict(cap)
+    sim_cap["max_positions"] = n_pass
+    sim_cap["simulated_slots"] = n_pass
+    sim_cap["note"] = (
+        "Demo sizing: every pool that passed filters this scan counts as a simulated slot "
+        "(not wallet-capped). Same RPC balance read as live."
+    )
+    return {
+        "wallet": base.get("wallet"),
+        "balance": bal,
+        "capacity": sim_cap,
+        "simulated": True,
+    }
+
+
+def _build_live_wallet_capacity(wallet_capacity: dict) -> dict:
+    base = dict(wallet_capacity or {})
+    cap = dict(base.get("capacity") or {})
+    cap = {**cap, "note": "Live wallet: real RPC balance and position slots from funded SOL."}
+    return {
+        "wallet": base.get("wallet"),
+        "balance": dict(base.get("balance") or {}),
+        "capacity": cap,
+        "simulated": False,
+    }
 
 
 def _now_iso() -> str:
@@ -66,9 +145,17 @@ def build_dashboard(
     list so the dashboard still has something to show.
     """
 
+    try:
+        from raydium_lp1 import mode_toggle
+
+        trading_mode = mode_toggle.get_mode()
+    except Exception:
+        trading_mode = "demo"
+
     settings = {
         "strategy": getattr(config, "strategy", "custom"),
-        "dry_run": getattr(config, "dry_run", True),
+        "mode": trading_mode,
+        "dry_run": trading_mode == "demo",
         "network": getattr(config, "network", "solana"),
         "min_apr": getattr(config, "min_apr", 0),
         "apr_field": getattr(config, "apr_field", "apr24h"),
@@ -103,30 +190,60 @@ def build_dashboard(
         "momentum_top_hot": getattr(config, "momentum_top_hot", 25),
         "sort_candidates_by_momentum": getattr(config, "sort_candidates_by_momentum", True),
         "lp_planning_enabled": getattr(config, "lp_planning_enabled", False),
+        "lp_active_strategy": getattr(config, "lp_active_strategy", "auto_volatility_pick"),
+        "lp_fee_bps": getattr(config, "lp_fee_bps", 25.0),
+        "demo_paper_sol": getattr(config, "demo_paper_sol", 10.0),
         "risk_profile": getattr(config, "risk_profile", "balanced"),
         "lp_full_range_parallel": getattr(config, "lp_full_range_parallel", False),
     }
 
     wallet_capacity = dict(report.get("wallet_capacity") or {})
+    live_wallet_capacity = _build_live_wallet_capacity(wallet_capacity)
+    settings_for_demo = settings
+    try:
+        from raydium_lp1.dashboard_enrich import (
+            _attach_wallet,
+            _build_demo_paper_wallet,
+            advance_demo_simulation,
+        )
+        from raydium_lp1.doctor_advisor import _wallet_runtime
+
+        live_wallet_capacity = _attach_wallet(live_wallet_capacity, _wallet_runtime())
+        demo_open, demo_closed, demo_feed = advance_demo_simulation(
+            list(report.get("candidates") or []),
+            settings=settings_for_demo,
+        )
+        demo_wallet_capacity = _build_demo_paper_wallet(
+            report, settings_for_demo, wallet_capacity, open_positions=demo_open
+        )
+        demo_simulated_trades = demo_feed
+    except Exception:
+        demo_wallet_capacity = _build_demo_wallet_capacity(wallet_capacity, report)
+        demo_simulated_trades = [
+            _candidate_to_simulated_trade(c, i + 1)
+            for i, c in enumerate(report.get("candidates") or [])
+            if isinstance(c, dict)
+        ]
+        demo_open, demo_closed = [], []
+
+    live_open_positions = _load_live_positions_file()
+    for row in live_open_positions:
+        row.setdefault("status", "live")
+        row.setdefault("simulated", False)
 
     positions = list(open_positions) if open_positions is not None else []
-    if not positions:
-        # In dry-run we treat candidates as the would-be open positions.
-        for candidate in report.get("candidates", []) or []:
-            h = candidate.get("health") or {}
-            mom = candidate.get("momentum") or {}
+    if not positions and not live_open_positions:
+        for trade in demo_simulated_trades:
             positions.append(
                 {
-                    "pool_id": candidate.get("id"),
-                    "pair": f"{candidate.get('mint_a_symbol', '')}/{candidate.get('mint_b_symbol', '')}",
-                    "apr": candidate.get("apr"),
-                    "liquidity_usd": candidate.get("liquidity_usd"),
-                    "volume_24h_usd": candidate.get("volume_24h_usd"),
-                    "health": h.get("score", "healthy"),
-                    "health_reasons": h.get("reasons", []),
-                    "momentum_score": mom.get("score"),
-                    "momentum_tier": mom.get("tier"),
-                    "momentum_exit_watch": mom.get("exit_watch"),
+                    "pool_id": trade.get("pool_id"),
+                    "pair": trade.get("pair"),
+                    "apr": trade.get("apr"),
+                    "liquidity_usd": trade.get("liquidity_usd"),
+                    "volume_24h_usd": trade.get("volume_24h_usd"),
+                    "health": trade.get("health"),
+                    "momentum_score": trade.get("momentum_score"),
+                    "momentum_tier": trade.get("momentum_tier"),
                     "dry_run": True,
                 }
             )
@@ -174,7 +291,11 @@ def build_dashboard(
         generated_at=_now_iso(),
         settings=settings,
         wallet_capacity=wallet_capacity,
+        live_wallet_capacity=live_wallet_capacity,
+        demo_wallet_capacity=demo_wallet_capacity,
         open_positions=positions,
+        live_open_positions=live_open_positions,
+        demo_simulated_trades=demo_simulated_trades,
         momentum_hot_top=list(report.get("momentum_hot_top") or []),
         recent_alerts=recent_alerts,
         rpc_health=list(rpc_health or []),

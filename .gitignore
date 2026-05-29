@@ -1,6 +1,17 @@
 .env
+secrets/
 config/settings.json
 reports/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+*.bak-*
+*.bak.before-*
+config/settings.json.bak*
+node_modules/
+active_positions.json
+alerts.json
+doctor_snapshot.json
+logs/
+closed_positions.json
+settings.json

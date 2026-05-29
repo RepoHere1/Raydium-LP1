@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # Keys the scanner reads (keep in sync with ScannerConfig.from_file).
 KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
+    "mode",
     "dry_run",
     "network",
     "strategy",
@@ -45,7 +46,9 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "emergency_max_slippage_pct",
     "position_size_sol",
     "reserve_sol",
+    "wallet_address",
     "dashboard_path",
+    "dashboard_port",
     "solana_rpc_urls",
     "momentum_enabled",
     "min_momentum_score",
@@ -59,7 +62,11 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "momentum_detective_enabled",
     "momentum_probe_market_lists",
     "sort_candidates_by_momentum",
+    "lp_selection_mode",
     "lp_planning_enabled",
+    "lp_active_strategy",
+    "lp_fee_bps",
+    "demo_paper_sol",
     "lp_range_mode",
     "lp_default_range_width_pct",
     "lp_range_width_candidates",
@@ -73,3 +80,4 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "scan_loop_interval_seconds",
     "spawn_verdict_watcher",
 )
+

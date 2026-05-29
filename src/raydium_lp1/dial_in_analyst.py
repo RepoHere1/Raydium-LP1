@@ -23,6 +23,33 @@ OBJECTIVE_BIAS_SUMMARY = (
     "unsafe Jupiter price impact relative to your caps."
 )
 
+# Human labels for verdict ``rejection_breakdown`` category keys (dashboard + narrative).
+REJECT_CATEGORY_LABELS: dict[str, str] = {
+    "hard_exit_red_line": (
+        "Exit-safety TVL floor — pool too shallow to trust selling back to SOL"
+    ),
+    "tvl_below_threshold": "Minimum pool TVL (liquidity) not met",
+    "apr_below_threshold": "Reported APR below your minimum",
+    "volume_below_threshold": "24h volume below your minimum",
+    "price_impact_too_high": "Sell quote price impact above your cap",
+    "no_sell_route": "No workable sell route to your allowed quotes",
+    "quote_symbol_not_allowed": "Pair does not include an allowed quote (SOL/USDC/USDT)",
+    "pool_not_verified": "Pool failed on-chain / Raydium verification",
+    "pool_age": "Pool age outside your min/max window",
+    "lp_burn_too_low": "LP burn % below your minimum",
+    "blocked_list": "Token or mint on your block list",
+    "missing_pool_id": "Missing pool id",
+    "momentum_below_threshold": "Momentum score below your minimum",
+    "other": "Other filter reasons",
+}
+
+
+def category_label(category: str) -> str:
+    key = (category or "").strip()
+    if not key:
+        return "Unknown"
+    return REJECT_CATEGORY_LABELS.get(key, key.replace("_", " "))
+
 
 def _pct(count: int, total: int) -> float:
     if total <= 0:
@@ -44,6 +71,7 @@ def _dominant_drivers(breakdown: dict[str, int], rejected: int) -> list[dict[str
         rows.append(
             {
                 "category": cat,
+                "human_label": category_label(cat),
                 "count": int(n),
                 "pct_of_rejects": _pct(int(n), rejected),
             }
@@ -401,11 +429,17 @@ def _narrative_lines(
         )
     if drivers:
         top = drivers[0]
+        label = top.get("human_label") or category_label(str(top.get("category", "")))
         lines.append(
-            f"Largest reject driver: {top['category']} ({top['pct_of_rejects']:.1f}% of rejects, n={top['count']})."
+            f"Main reason pools fail: {label} "
+            f"({top['pct_of_rejects']:.1f}% of rejects, n={top['count']})."
         )
         if len(drivers) > 1:
-            tail = ", ".join(f"{d['category']} {_pct(d['count'], rej):.1f}%" for d in drivers[1:3])
+            tail = ", ".join(
+                f"{d.get('human_label') or category_label(str(d.get('category', '')))} "
+                f"{_pct(d['count'], rej):.1f}%"
+                for d in drivers[1:3]
+            )
             if tail:
                 lines.append(f"Next signals: {tail}.")
     if pressures:

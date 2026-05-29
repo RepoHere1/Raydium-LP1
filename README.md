@@ -214,11 +214,31 @@ This project is designed to use real production data, not placeholders:
 
 Important: RPC URLs with API keys are secrets. Keep them in `.env`; do not paste them into `config\settings.json` if you plan to commit that file, and do not commit `.env`.
 
+## Full stack in Windows Terminal tabs (recommended on Windows 11)
+
+**Double-click** `START_LP1_STACK.bat` (alias: `START_STACK_WT.bat`) to open **one Windows Terminal window** with four tabs:
+
+| Tab | Role |
+|-----|------|
+| **Monitor** | Waits for dashboard health, opens browser pages, logs to `logs\stack_monitor.log` |
+| **Doctor** | `raydium_doctor --watch --advise` (live diagnosis; auto-heal off unless you pass `-DoctorHeal`) |
+| **Scanner** | Looping live Raydium scan + `reports/dashboard.json` |
+| **Dashboard** | http://127.0.0.1:8844/ |
+
+PowerShell equivalent:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\scripts\start_stack_wt.ps1
+```
+
+No Windows Terminal installed? Use `-UseLegacyWindows` for separate console windows instead of tabs.
+
 ## One CMD window: scan loop + local web (8844)
 
 From the repo root, this starts a **looping** scanner (writes `reports/dashboard.json`) and the **same** HTTP server that serves the funnel UI, a **positions-style** table (`/positions.html`), and the marketing **`/index.html`** page:
 
-- **Double-click** `START_STACK.bat` in the repo root, **or** from **PowerShell** (note the leading `.\`; without it, PowerShell treats `scripts` as a module name):
+- **Double-click** `START_STACK.bat` in the repo root (single console via `web_stack`), **or** use **`START_LP1_STACK.bat`** for WT tabs above, **or** from **PowerShell** (note the leading `.\`; without it, PowerShell treats `scripts` as a module name):
 
 ```powershell
 cd C:\Users\Taylor\Raydium-LP1
@@ -429,11 +449,46 @@ python scripts\scan_raydium_lps.py --config config\settings.json
 
 If `python --version` also fails, install Python 3 from <https://www.python.org/downloads/windows/>. During install, check **Add python.exe to PATH**, then open a new PowerShell window.
 
+## Wallet import (.env + settings.json)
+
+Sync your pubkey (and optional keys) to **both** places the scanner reads:
+
+```powershell
+cd C:\Users\Taylor\Raydium-LP1
+.\scripts\import_wallet.ps1
+# or double-click IMPORT_WALLET.bat
+```
+
+From an existing Solana CLI keypair file:
+
+```powershell
+.\scripts\import_wallet.ps1 -KeypairPath "$env:USERPROFILE\.config\solana\id.json"
+```
+
+Sets `WALLET_ADDRESS` in `.env`, `wallet_address` in `config\settings.json`, and optionally `WALLET_PRIVATE_KEY` / `SOLANA_KEYPAIR_PATH` in `.env` only.
+
+## DEMO vs LIVE (on-chain guard)
+
+| Mode | Behavior |
+|------|----------|
+| **demo** | Live market data; `trade_submit.py`, `swap_submit.py`, and CLMM `open_position` / `close_position` are **blocked** |
+| **live** | Same reads; spends allowed after you type **LIVE** on the dashboard |
+
+`mode_toggle.require_live()` is enforced on all on-chain entry points.
+
+## Doctor auto-heal
+
+**Default: heal ON** (fixes BOM/merge-marker/JSON glitches). **Heal pauses** when:
+
+- `RAYDIUM_LP1_AI_EDIT=1` or `CURSOR_AGENT=1`, or
+- empty marker file `.raydium_lp1_ai_edit` exists in the repo root
+
+Force off: `python -m raydium_lp1.raydium_doctor --no-heal`  
+Force on during AI edit: `--heal`
+
 ## Safety model
 
-This project does **not** ask for a seed phrase or private key. Do not paste wallet secrets into config files, `.env`, PowerShell, chat, or GitHub.
-
-The first production-data demo should only prove that live Raydium data can be fetched, normalized, filtered, and reported. A separate, explicit step is required before adding wallet signing or LP-opening logic.
+Keep private keys in `.env` only (never commit `.env`). Do not paste seed phrases into chat or GitHub.
 
 ## End-to-end demo (live Raydium, dry-run)
 

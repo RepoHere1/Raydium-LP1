@@ -22,10 +22,9 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "of 25 after you have raised min TVL.",
     ),
     "min_liquidity_usd": (
-        "Minimum pool TVL in USD. This is the main gate against zero-liquidity listings "
-        "that still appear when sorting Raydium by fee or APR.",
-        "Try 25k to 150k for exploratory scans, 250k to 2M when you want majors and "
-        "liquid alts only. Pair with min volume so dead pools do not pass on TVL alone.",
+        "Minimum pool TVL (USD) for economic interest — filters thin pools you would not "
+        "want to LP for yield. Not the same as hard_exit_min_tvl_usd (exit depth).",
+        "Try 25k to 150k for exploratory scans, 250k to 2M for majors. Pair with min volume.",
     ),
     "min_volume_24h_usd": (
         "Minimum Raydium-reported 24h notional volume in USD. Cuts stale pools that "
@@ -34,10 +33,10 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "relative activity must look healthy.",
     ),
     "hard_exit_min_tvl_usd": (
-        "Hard safety line: pools below this TVL are rejected immediately after the pool "
-        "id check, before softer gates. Intended for exit depth, not yield chasing.",
-        "Common range 500 to 5000 USD for cautious routing; raise if Jupiter quotes "
-        "wobble or impact spikes on your size.",
+        "hard_exit_min_tvl_usd: cannot-exit depth floor (USD) — reject pools too shallow "
+        "to sell back to SOL at acceptable impact. Use min_liquidity_usd for yield interest; "
+        "use this for hard exit safety only.",
+        "Common range 500 to 5000 USD; raise if Jupiter sell quotes fail or impact spikes.",
     ),
     "max_position_usd": (
         "Cap on notional size the planner uses per position when reasoning about impact "
@@ -142,6 +141,10 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "Order dry-run candidates by momentum instead of only APR/TVL.",
         "Turn on when APR sorts lie (fee-sorted pages with inflated tiny pools).",
     ),
+    "lp_selection_mode": (
+        "LIVE open target: apr = highest APR in shortlist; momentum = highest combined score among tier HOT only.",
+        "Use dashboard APR pick / MoM HOT buttons — re-scan after switching.",
+    ),
     "momentum_min_volume_tvl_ratio": (
         "Minimum 24h volume divided by TVL for momentum sweet spot logic.",
         "0.3 to 1.0 catches real turnover; your 0.5 is a solid active-pool default.",
@@ -232,6 +235,21 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
     "lp_planning_enabled": (
         "Turn on concentrated LP band planning in dry-run outputs.",
         "Enable after core scanning is stable.",
+    ),
+    "lp_active_strategy": (
+        "centered_tight_range: narrow band on spot. asymmetric_single_asset: one-sided band (bullish above / bearish below). "
+        "volatility_atr_width: width from day min/max swing. trailing_dynamic_skew: band skewed with momentum. "
+        "standard_full_range: wide passive band. auto_volatility_pick: chooses tight vs ATR from churn. "
+        "LIVE opens use this setting on the next CLMM deposit (see LP style column on dashboard).",
+        "Change before each experiment; dashboard groups LIVE fills by lp_style_label for comparison.",
+    ),
+    "lp_fee_bps": (
+        "Pool fee tier in basis points for paper fee estimates on the dashboard (25 = 0.25%).",
+        "Match your target Raydium pool tier when known.",
+    ),
+    "demo_paper_sol": (
+        "Paper SOL balance shown on the DRY_RUN wallet panel only.",
+        "10 SOL is a sensible default for slot math demos.",
     ),
     "lp_range_mode": (
         "How range width is chosen (project-specific string; see docs).",
@@ -351,9 +369,10 @@ SECTION_BLURB: dict[str, tuple[str, str]] = {
         "Sizing and optional emergency exit behaviour.",
         "Reserve SOL for fees; keep emergency close off until automation is trusted.",
     ),
-    "LP paper planning": (
-        "Optional concentrated-liquidity band planning in dry-run outputs.",
-        "Enable after scanning is stable; start with default band 15–25% on majors.",
+    "LP order entry (CLMM)": (
+        "Choose how the next CLMM position is ranged: centered, ATR-wide, single-sided, "
+        "momentum skew, or full range. Saved as lp_active_strategy; shown on LIVE trades.",
+        "Use the experiment loop checklist, then A/B small LIVE opens and read LP style stats.",
     ),
     "Network metadata": (
         "Strategy tag, RPC list, allow/block lists, and paths for dashboard output.",

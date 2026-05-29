@@ -66,10 +66,10 @@ NON_LIVE_COMPONENTS: list[dict[str, str]] = [
         "detail": "Heuristic widths + momentum skew from public list fields; not on-chain tick math; no signed txs",
     },
     {
-        "module": "scanner.py",
+        "module": "scanner.py / trade_submit",
         "what": "Trade execution",
-        "source": "DISABLED",
-        "detail": "dry_run=true required; no signed swaps in this build",
+        "source": "GATED",
+        "detail": "On-chain spends only when mode=live (require_live) and trade runner is invoked",
     },
 ]
 

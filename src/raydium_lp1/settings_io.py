@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from raydium_lp1.mode_toggle import sync_mode_fields
 from raydium_lp1.settings_schema import KNOWN_SETTINGS_KEYS
 
 # PowerShell ConvertTo-Json sometimes emits @{...} when -Depth is too low.
@@ -103,5 +104,7 @@ def merge_known_settings_patch(path: Path, patch: Mapping[str, Any]) -> dict[str
     prev = load_settings_json(path)
     merged = dict(prev)
     merged.update(pk)
+    if "mode" in pk or "dry_run" in pk:
+        merged = sync_mode_fields(merged)
     write_settings_json(path, merged)
     return merged

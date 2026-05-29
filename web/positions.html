@@ -3,114 +3,134 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Raydium-LP1 · Positions (dry-run)</title>
+  <title>Raydium-LP1 · Positions</title>
   <link rel="stylesheet" href="/styles.css"/>
   <style>
-    :root { --page:#ffffff; --hdr:#f6f7f9; --line:#d8dee9; --txt:#111827; --m:#5b6577; --a:#0b5fff; --panel:#000000; --ink:#e8eef8; --ink2:#9aa7bc; }
+    :root {
+      --page:#eef4ff;
+      --hdr:#dbeafe;
+      --line:#93c5fd;
+      --txt:#0f172a;
+      --m:#475569;
+      --a:#1d4ed8;
+      --panel:#e0edff;
+      --panel2:#c7ddff;
+      --ink:#0f172a;
+      --ink2:#334155;
+      --live-accent:#059669;
+      --demo-accent:#2563eb;
+    }
     * { box-sizing: border-box; }
     body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--page); color:var(--txt); }
-    header { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; padding:.75rem 1rem; border-bottom:1px solid var(--line); background:var(--hdr); }
+    body.view-live .zone-demo { opacity:.88; }
+    body.view-demo .zone-live { opacity:.88; }
+    body.view-live .zone-live, body.view-demo .zone-demo { opacity:1; box-shadow:0 0 0 2px rgba(37,99,235,.18); }
+    header.topbar { display:block; padding:0; border-bottom:1px solid var(--line); background:var(--hdr); }
+    body.view-demo .topbar-unified { border-top:4px solid #f59e0b; }
+    body.view-live .topbar-unified { border-top:4px solid #059669; }
+    .pool-id-cell{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center;max-width:min(100%,480px)}
+    .pool-id-field{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.72rem;flex:1 1 200px;min-width:150px;padding:.2rem .35rem;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:text}
+    button.btn-copy,a.btn-pool-link{font-size:.68rem;font-weight:600;padding:.15rem .45rem;border-radius:6px;border:1px solid var(--line);background:#fff;color:var(--a);text-decoration:none;cursor:pointer}
+    button.btn-copy:hover,a.btn-pool-link:hover{background:#eff6ff}
+    .topbar-row { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem .75rem; padding:.65rem 1rem; width:100%; }
+    .topbar-row.mode-glow-row { border-radius:12px; margin:-.15rem -.35rem .1rem; padding:.55rem .65rem; transition:box-shadow .25s,background .25s; }
+    body.view-demo .topbar-row.mode-glow-row{
+      background:linear-gradient(90deg,rgba(254,243,199,.95) 0%,rgba(255,251,235,.88) 50%,rgba(254,243,199,.95) 100%);
+      box-shadow:0 0 18px rgba(245,158,11,.45),0 0 42px rgba(251,191,36,.22),inset 0 0 0 1px rgba(245,158,11,.35);
+      animation:topbarGlowDemo 2.2s ease-in-out infinite alternate;
+    }
+    body.view-live .topbar-row.mode-glow-row{
+      background:linear-gradient(90deg,rgba(209,250,229,.95) 0%,rgba(236,253,245,.9) 50%,rgba(209,250,229,.95) 100%);
+      box-shadow:0 0 18px rgba(5,150,105,.4),0 0 42px rgba(52,211,153,.2),inset 0 0 0 1px rgba(5,150,105,.35);
+      animation:topbarGlowLive 2.2s ease-in-out infinite alternate;
+    }
+    @keyframes topbarGlowDemo{from{box-shadow:0 0 12px rgba(245,158,11,.3),0 0 28px rgba(251,191,36,.12)}to{box-shadow:0 0 22px rgba(245,158,11,.55),0 0 48px rgba(251,191,36,.28)}}
+    @keyframes topbarGlowLive{from{box-shadow:0 0 12px rgba(5,150,105,.28),0 0 28px rgba(52,211,153,.1)}to{box-shadow:0 0 22px rgba(5,150,105,.5),0 0 48px rgba(52,211,153,.25)}}
     h1 { font-size:1.05rem; margin:0; }
-    nav a { color:var(--a); margin-right:.75rem; font-size:.85rem; }
-    .pill { font-size:.65rem; text-transform:uppercase; letter-spacing:.06em; color:var(--m); border:1px solid var(--line); border-radius:999px; padding:.12rem .45rem; }
+    nav a { color:var(--a); margin-right:.75rem; font-size:.85rem; text-decoration:none; }
+    nav a:hover { text-decoration:underline; }
+    .mode-control { display:flex; gap:.35rem; }
+    .mode-pill { border:2px solid var(--line); background:#f1f5f9; color:#94a3b8; padding:.35rem .85rem; border-radius:8px; font-size:.72rem; font-weight:800; letter-spacing:.06em; cursor:pointer; opacity:.55; transition:opacity .15s,box-shadow .15s,background .15s; }
+    .mode-pill:hover { opacity:.85; }
+    .mode-pill.active { opacity:1; }
+    .mode-pill.demo.active { background:#fffbeb; border-color:#f59e0b; color:#92400e; box-shadow:0 0 0 2px #fcd34d; }
+    .mode-pill.live.active { background:#ecfdf5; border-color:#059669; color:#065f46; box-shadow:0 0 0 2px #6ee7b7; }
+    tr.row-mom-hot td { background:#d1fae5!important; }
+    tr.row-mom-hot:hover td { background:#a7f3d0!important; }
+    .mode-status { font-size:.78rem; color:var(--m); flex:1; min-width:12rem; }
+    .pill { font-size:.65rem; text-transform:uppercase; letter-spacing:.06em; color:var(--m); border:1px solid var(--line); border-radius:999px; padding:.12rem .45rem; background:#fff; }
+    #stamp { font-size:.75rem; color:var(--m); }
     main { max-width:1280px; margin:0 auto; padding:1rem; }
-    .kp { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:.6rem; margin-bottom:1rem; }
-    .k { background:var(--panel); color:var(--ink); border:1px solid #1a1a1a; border-radius:10px; padding:.55rem .7rem; }
+    .wall-grid { display:grid; grid-template-columns:1fr; gap:1rem; }
+    @media(min-width:900px){ .wall-grid { grid-template-columns:1fr 1fr; } }
+    .zone { border-radius:12px; border:1px solid var(--line); padding:.75rem; background:linear-gradient(180deg,#f8fbff 0%,var(--panel) 100%); }
+    .zone-live { border-left:4px solid var(--live-accent); }
+    .zone-demo { border-left:4px solid var(--demo-accent); }
+    h2 { font-size:.9rem; margin:0 0 .5rem; color:var(--m); font-weight:600; }
+    .kp { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:.5rem; margin-bottom:.5rem; }
+    .k { background:var(--panel2); color:var(--ink); border:1px solid #93c5fd; border-radius:10px; padding:.5rem .65rem; }
     .k span.l { display:block; font-size:.62rem; color:var(--ink2); text-transform:uppercase; letter-spacing:.05em; }
-    .k span.v { font-size:1.05rem; font-weight:600; font-variant-numeric:tabular-nums; }
-    h2 { font-size:.9rem; margin:1.2rem 0 .5rem; color:var(--m); font-weight:600; }
-    .tbl-wrap { overflow-x:auto; border-radius:10px; border:1px solid #1a1a1a; background:var(--panel); color:var(--ink); }
-    .tbl-wrap h3 { margin:0; padding:.55rem .75rem; font-size:.78rem; color:var(--ink2); border-bottom:1px solid #222; background:#000; font-weight:600; }
+    .k span.v { font-size:1.02rem; font-weight:600; font-variant-numeric:tabular-nums; }
+    .tbl-wrap { overflow-x:auto; border-radius:10px; border:1px solid #93c5fd; background:var(--panel2); color:var(--ink); margin-top:.5rem; }
+    .tbl-wrap h3 { margin:0; padding:.5rem .7rem; font-size:.75rem; color:var(--ink2); border-bottom:1px solid #93c5fd; background:var(--panel); font-weight:600; }
     table { width:100%; border-collapse:collapse; font-size:.82rem; }
-    th, td { padding:.4rem .5rem; border-bottom:1px solid #222; text-align:left; }
-    th { color:var(--ink2); font-weight:500; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; }
+    th, td { padding:.4rem .5rem; border-bottom:1px solid #bfdbfe; text-align:left; }
+    th { color:var(--ink2); font-weight:500; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; background:#dbeafe; }
     tr:last-child td { border-bottom:0; }
     td.mono { font-family:ui-monospace,Menlo,monospace; font-size:.72rem; color:var(--ink2); word-break:break-all; }
     #err { color:#c02626; margin:.5rem 0; font-size:.85rem; }
-    #stamp { font-size:.75rem; color:var(--m); }
+    #err:empty { display:none; }
+    .muted { color:var(--m); font-size:.82rem; margin:.35rem 0; }
   </style>
 </head>
-<body>
-  <header>
-    <h1>Positions <span class="pill">dry-run data</span></h1>
-    <nav>
-      <a href="/">Funnel &amp; settings</a>
-      <a href="/index.html">Project</a>
-      <a href="/api/dashboard">raw JSON</a>
-    </nav>
-    <label style="margin-left:auto;font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto 4s</label>
+<body class="view-demo">
+  <header class="topbar topbar-unified">
+    <div class="topbar-row mode-glow-row">
+      <h1>Positions</h1>
+      <div class="mode-control" role="group" aria-label="Trading mode">
+        <button type="button" id="btn-mode-demo" class="mode-pill demo active" aria-pressed="true">DRY_RUN</button>
+        <button type="button" id="btn-mode-live" class="mode-pill live" aria-pressed="false">LIVE</button>
+      </div>
+      <span class="mode-status" id="mode-status-text">Loading…</span>
+      <span id="stamp" title="Last refresh (UTC)">…</span>
+      <nav>
+        <a href="/">Dashboard</a>
+        <a href="/index.html">Stack</a>
+        <a href="/api/dashboard">JSON</a>
+      </nav>
+      <label style="margin-left:auto;font-size:.8rem;color:var(--m)"><input type="checkbox" id="auto" checked/> Auto 4s</label>
+    </div>
   </header>
   <main>
-    <p id="stamp">Loading…</p>
     <div id="err"></div>
-    <div class="kp" id="kp"></div>
-    <h2>RPC health</h2>
-    <div class="tbl-wrap"><h3>Solana getHealth (from dashboard.json)</h3><table><thead><tr>
-      <th>#</th><th>RPC URL</th><th>OK</th><th>Detail</th>
-    </tr></thead><tbody id="rpcb"></tbody></table></div>
-    <h2>Candidate pools (same as dashboard shortlist)</h2>
+    <div class="wall-grid">
+      <section class="zone zone-live">
+        <h2>LIVE wallet &amp; trades <span class="pill">RPC</span></h2>
+        <div class="kp" id="kp-live"></div>
+        <div class="tbl-wrap"><h3>Live opens</h3><table><thead><tr>
+          <th>#</th><th>Pair</th><th>APR</th><th>TVL</th><th>Vol24</th><th>Status</th><th>LP style</th><th>Pool</th><th>Fees</th>
+        </tr></thead><tbody id="tb-live"></tbody></table></div>
+      </section>
+      <section class="zone zone-demo">
+        <h2>DRY_RUN wallet &amp; paper trades <span class="pill">paper</span></h2>
+        <div class="kp" id="kp-demo"></div>
+        <div class="tbl-wrap"><h3>Would open in LIVE</h3><table><thead><tr>
+          <th>#</th><th>Pair</th><th>APR</th><th>TVL</th><th>Vol24</th><th>Action</th><th>Pool</th><th>Fees</th>
+        </tr></thead><tbody id="tb-demo"></tbody></table></div>
+      </section>
+    </div>
+    <h2>Candidate pools (scanner shortlist)</h2>
+    <p class="muted">Sorted by APR high→low. Green rows = momentum HOT.</p>
     <div class="tbl-wrap"><h3>Table</h3><table><thead><tr>
       <th>Pair</th><th>APR %</th><th>TVL $</th><th>Vol24 $</th><th>Momentum</th><th>Pool</th>
-    </tr></thead><tbody id="tb"></tbody></table></div>
-    <h2>Momentum HOT (top)</h2>
-    <div class="tbl-wrap"><h3>Table</h3><table><thead><tr>
-      <th>Pair</th><th>APR %</th><th>TVL $</th><th>Score (CMB)</th><th>Pool</th>
-    </tr></thead><tbody id="hot"></tbody></table></div>
+    </tr></thead><tbody id="tb-cand"></tbody></table></div>
+    <h2 style="margin-top:1.25rem">RPC health</h2>
+    <div class="tbl-wrap"><h3>Endpoints</h3><table><thead><tr>
+      <th>#</th><th>RPC URL</th><th>OK</th><th>Detail</th>
+    </tr></thead><tbody id="rpcb"></tbody></table></div>
   </main>
-  <script>
-(function(){
-  function esc(t){var d=document.createElement('div');d.textContent=t==null?'':String(t);return d.innerHTML;}
-  function num(n){return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0});}
-  function $(id){ return document.getElementById(id); }
-  async function load(){
-    $('err').textContent='';
-    var r=await fetch('/api/dashboard');
-    var t=await r.text();
-    var d; try{d=JSON.parse(t);}catch(e){ throw new Error(t.slice(0,200)); }
-    if(!r.ok) throw new Error(d.error||t);
-    $('stamp').textContent='dashboard.json · '+(d.generated_at||'?').replace('T',' ').slice(0,19)+'Z';
-    var wc=d.wallet_capacity||{};
-    var cap=wc.capacity||{};
-    var bal=wc.balance||{};
-    var cells=[
-      ['SOL (wallet)', bal.sol!=null?num(bal.sol):'—'],
-      ['max_positions', cap.max_positions!=null?String(cap.max_positions):'—'],
-      ['position_size_sol', cap.position_size_sol!=null?String(cap.position_size_sol):'—'],
-      ['reserved_sol', cap.reserved_sol!=null?String(cap.reserved_sol):'—'],
-      ['available_sol', cap.available_sol!=null?num(cap.available_sol):'—'],
-    ];
-    $('kp').innerHTML=cells.map(function(c){
-      return '<div class="k"><span class="l">'+esc(c[0])+'</span><span class="v">'+esc(c[1])+'</span></div>';
-    }).join('');
-    var rpc=d.rpc_health||[];
-    $('rpcb').innerHTML=rpc.length?rpc.map(function(r,i){
-      var ok=(r.ok===true||r.ok==='true')?'yes':'no';
-      var det=String(r.error||'');
-      if(!det && r.response){ try{ det=JSON.stringify(r.response).slice(0,160);}catch(e){ det=''; } }
-      return '<tr><td>'+esc(String(r.index!=null?r.index:(i+1)))+'</td><td class="mono">'+esc(String(r.url||''))+'</td><td>'+esc(ok)+'</td><td class="mono">'+esc(det)+'</td></tr>';
-    }).join(''):'<tr><td colspan="4" style="color:#9aa7bc">No RPC rows — configure solana_rpc_urls and run scanner with --dashboard.</td></tr>';
-    var rows=d.open_positions||[];
-    $('tb').innerHTML=rows.length?rows.map(function(p){
-      return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(p.liquidity_usd)+'</td><td>'+num(p.volume_24h_usd)+'</td><td>'+
-        esc([p.momentum_score,p.momentum_tier].filter(Boolean).join(' '))+'</td><td class="mono">'+esc(p.pool_id||p.id||'')+'</td></tr>';
-    }).join(''):'<tr><td colspan="6" style="color:#9aa7bc">No rows yet — run a scan with --dashboard.</td></tr>';
-    var hot=d.momentum_hot_top||[];
-    $('hot').innerHTML=hot.length?hot.map(function(p){
-      var tvl=p.tvl_usd!=null&&p.tvl_usd!==''?p.tvl_usd:p.liquidity_usd;
-      var sc=p.combined_score!=null&&p.combined_score!==''?p.combined_score:p.score;
-      var scStr=(sc!=null&&sc!==''&&isFinite(Number(sc)))?(Math.round(Number(sc)*10)/10).toString():'';
-      return '<tr><td>'+esc(p.pair||'')+'</td><td>'+num(p.apr)+'</td><td>'+num(tvl)+'</td><td>'+esc(scStr)+'</td><td class="mono">'+esc(p.pool_id||p.id||'')+'</td></tr>';
-    }).join(''):'<tr><td colspan="5" style="color:#9aa7bc">No HOT rows.</td></tr>';
-  }
-  var iv=null;
-  function arm(){
-    clearInterval(iv);
-    if($('auto').checked) iv=setInterval(function(){load().catch(function(e){$('err').textContent=String(e);});},4000);
-  }
-  $('auto').onchange=arm;
-  load().catch(function(e){$('err').textContent=String(e);});
-  arm();
-})();
-  </script>
+  <script src="/mode_shared.js?v=20260601"></script>
+  <script src="/lp1_copy.js?v=20260607"></script>
+  <script src="/positions_client.js?v=20260607"></script>
 </body>
 </html>

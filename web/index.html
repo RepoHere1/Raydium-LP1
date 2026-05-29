@@ -27,12 +27,13 @@
       Scans Raydium pool data, applies safety filters, and surfaces candidates. Local UIs read
       <code style="display:inline;padding:.1rem .35rem;font-size:.78rem;background:#111;color:#e8eef8;border-radius:6px;border:1px solid #333">reports/dashboard.json</code> from the scanner.
     </p>
-    <p class="warning">Dry-run only in this build: no signed swaps.</p>
+    <p class="warning">Use DRY_RUN until you arm LIVE in settings. Full stack starts with one launcher.</p>
     <nav>
       <a href="/">Funnel &amp; settings</a>
       <a href="/positions.html">Positions view</a>
     </nav>
-    <code>.\scripts\start_stack.cmd</code>
+    <code>LAUNCH_LP1.bat</code>
+    <p style="font-size:.82rem;margin-top:.5rem">Or: <code style="display:inline;padding:.1rem .3rem">.\scripts\launch_lp1.ps1</code> · one console: <code style="display:inline;padding:.1rem .3rem">-SingleWindow</code></p>
   </main>
 </body>
 </html>
