@@ -1099,8 +1099,12 @@
             topMsg('Position opened', true);
             msg('Live open OK — check LIVE trades panel.', true);
           }else{
-            topMsg(r.error||'Open failed', false);
-            msg(r.error||'Open failed', false);
+            var err=r.error||'Open failed';
+            if(r.manual_live_blocked&&r.notification){
+              err=err+' — alert: '+r.notification;
+            }
+            topMsg(err, false);
+            msg(err, false);
           }
           return refresh();
         })

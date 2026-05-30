@@ -115,9 +115,39 @@ def apply_pay_token_only_open(
     *,
     width_pct: float,
 ) -> dict[str, Any]:
-    """Force single-sided deposit on the pay mint (Raydium: above=mintA, below=mintB)."""
+    """Apply pay mint to open kwargs.
+
+    Straddling strategies (``single_side`` is None) keep a centered band so spot
+    stays in range. One-sided strategies (asymmetric / trailing skew) still map
+    to single_above (mintA pay) or single_below (mintB pay).
+    """
 
     kw = dict(open_kwargs)
+    single = kw.get("single_side")
+    centered = single is None or str(single).lower() in ("none", "null", "")
+
+    kw["input_mint"] = resolution.pay_mint
+    kw["pay_mint_only"] = True
+    kw["pay_symbol"] = resolution.pay_symbol
+
+    if centered:
+        lower = float(kw.get("tick_lower_pct_below") or 10)
+        upper = float(kw.get("tick_upper_pct_above") or 10)
+        is_full = lower >= 40 and upper >= 40
+        # One-sided deposit: straddle spot but sit near the pay-mint edge of the band.
+        if resolution.pay_is_mint_a:
+            kw["tick_lower_pct_below"] = (
+                max(2.0, min(lower, 4.0)) if is_full else max(1.5, min(lower, 3.0))
+            )
+            kw["tick_upper_pct_above"] = upper
+        else:
+            kw["tick_lower_pct_below"] = lower
+            kw["tick_upper_pct_above"] = (
+                max(2.0, min(upper, 4.0)) if is_full else max(1.5, min(upper, 3.0))
+            )
+        kw["_lp_placement"] = "full_range" if is_full else "centered"
+        return kw
+
     steps = int(kw.get("band_tick_steps") or 10)
     width = float(kw.get("single_side_width_pct") or width_pct or 15.0)
     if resolution.pay_is_mint_a:
@@ -129,9 +159,6 @@ def apply_pay_token_only_open(
     kw["single_side_start_pct"] = float(kw.get("single_side_start_pct") or 0.5)
     kw["single_side_width_pct"] = width
     kw["band_tick_steps"] = steps
-    kw["input_mint"] = resolution.pay_mint
-    kw["pay_mint_only"] = True
-    kw["pay_symbol"] = resolution.pay_symbol
     kw["_lp_placement"] = placement
     return kw
 
@@ -142,6 +169,10 @@ def enrich_open_style_for_pay(
     placement: str,
     resolution: PayMintResolution,
 ) -> tuple[str, str, str]:
+    if placement in ("full_range", "centered"):
+        label = f"{style_label} · pay {resolution.pay_symbol} only"
+        key = f"{style_key}|pay_{resolution.pay_symbol}"
+        return label, key, placement
     place = "single_above" if resolution.pay_is_mint_a else "single_below"
     label = f"{style_label} · pay {resolution.pay_symbol} only"
     key = f"{style_key}|pay_{resolution.pay_symbol}"

@@ -26,6 +26,7 @@ class FeeGuardTests(unittest.TestCase):
                 "fee_guard_enabled": True,
                 "min_clmm_deposit_sol": 0.008,
                 "block_deposits_below_sol": 0.006,
+                "min_lp_deposit_usd": 0,
             }
         )
         with self.assertRaises(FeeGuardBlockedError):
@@ -42,6 +43,35 @@ class FeeGuardTests(unittest.TestCase):
         )
         est = assert_clmm_open_allowed(0.20, settings=cfg)
         self.assertGreater(float(est["estimated_total_sol"]), 0.04)
+
+    def test_blocks_sub_min_usd_deposit(self) -> None:
+        cfg = fee_config_from_settings(
+            {
+                "fee_guard_enabled": True,
+                "min_lp_deposit_usd": 0.25,
+                "sol_price_usd": 180.0,
+                "min_clmm_deposit_sol": 0.0005,
+            }
+        )
+        with self.assertRaises(FeeGuardBlockedError):
+            assert_clmm_open_allowed(0.001, settings=cfg)  # ~$0.18
+
+    def test_note_broadcast_skips_failed_tx(self) -> None:
+        from raydium_lp1.fee_guard import _load_ledger, note_broadcast_result, reset_session_ledger
+
+        reset_session_ledger()
+        note_broadcast_result(
+            "open_position.mjs",
+            {"ok": False, "signature": "abc", "confirm_error": "reverted"},
+            {"estimated_total_sol": 0.042},
+        )
+        self.assertEqual(len(_load_ledger().get("attempts") or []), 0)
+        note_broadcast_result(
+            "open_position.mjs",
+            {"ok": True, "signature": "abc", "confirmed": True},
+            {"estimated_total_sol": 0.042},
+        )
+        self.assertEqual(len(_load_ledger().get("attempts") or []), 1)
 
     def test_sanitize_payload_open(self) -> None:
         out = sanitize_clmm_payload(

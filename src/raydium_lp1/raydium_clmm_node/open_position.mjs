@@ -19,7 +19,144 @@ import {
   BN, PublicKey, TxVersion,
 } from './_shared.mjs';
 import { PoolUtils, TickUtil } from '@raydium-io/raydium-sdk-v2';
+import { VersionedTransaction } from '@solana/web3.js';
 import Decimal from 'decimal.js';
+
+const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+const JUP_QUOTE = 'https://lite-api.jup.ag/swap/v1/quote';
+const JUP_SWAP = 'https://lite-api.jup.ag/swap/v1/swap';
+const JUP_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  Accept: 'application/json',
+  Origin: 'https://jup.ag',
+};
+
+async function pollConfirm(connection, signature, timeoutMs = 60_000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, 2_000));
+    const s = (await connection.getSignatureStatuses([signature]))?.value?.[0];
+    if (s) {
+      if (s.err) throw new Error('tx ' + signature + ' reverted: ' + JSON.stringify(s.err));
+      if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') return;
+    }
+  }
+  throw new Error('tx ' + signature + ' not confirmed within ' + timeoutMs + 'ms');
+}
+
+async function jupiterSwap({
+  connection, owner, inputMint, outputMint, amountRaw, slippageBps, priorityMicro, swapMode = 'ExactIn',
+}) {
+  const qs = new URLSearchParams({
+    inputMint, outputMint,
+    amount: String(amountRaw),
+    slippageBps: String(slippageBps),
+    swapMode,
+  });
+  let r = await fetch(`${JUP_QUOTE}?${qs}`, { headers: JUP_HEADERS, signal: AbortSignal.timeout(15_000) });
+  const quote = await r.json();
+  if (!r.ok || quote.error) throw new Error(`jupiter quote: ${quote.error || r.status}`);
+
+  r = await fetch(JUP_SWAP, {
+    method: 'POST',
+    headers: { ...JUP_HEADERS, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      quoteResponse: quote,
+      userPublicKey: owner.publicKey.toBase58(),
+      wrapAndUnwrapSol: true,
+      asLegacyTransaction: false,
+      computeUnitPriceMicroLamports: Number(priorityMicro ?? 2_000),
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const swap = await r.json();
+  if (!r.ok || swap.error) throw new Error(`jupiter swap: ${swap.error || r.status}`);
+
+  const tx = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
+  tx.sign([owner]);
+  const sig = await connection.sendTransaction(tx, { skipPreflight: false, maxRetries: 3 });
+  await pollConfirm(connection, sig);
+  return { signature: sig, in_amount: quote.inAmount, out_amount: quote.outAmount };
+}
+
+function tokenBalanceRaw(raydium, mintStr) {
+  let total = new BN(0);
+  for (const acc of raydium.account.tokenAccounts || []) {
+    const m = acc?.mint?.toBase58?.() ?? String(acc?.mint ?? '');
+    if (m === mintStr) {
+      const amt = acc?.amount;
+      if (amt?.add) total = total.add(amt);
+      else if (amt != null) total = total.add(new BN(String(amt)));
+    }
+  }
+  return total;
+}
+
+async function fundOtherLegIfNeeded({
+  raydium, connection, owner, payMintStr, otherMintStr, otherAmountMax, slippageBps, priorityMicro,
+}) {
+  if (!otherAmountMax || !otherAmountMax.gt(new BN(0))) return { funded: false, reason: 'no_other_leg' };
+  const have = tokenBalanceRaw(raydium, otherMintStr);
+  if (have.gte(otherAmountMax)) return { funded: false, reason: 'already_have_other_leg', have: have.toString() };
+  const need = otherAmountMax.sub(have).add(new BN(1));
+  const slip = Math.max(150, slippageBps);
+  let swap = null;
+  let mode = 'ExactOut';
+  try {
+    swap = await jupiterSwap({
+      connection, owner,
+      inputMint: payMintStr,
+      outputMint: otherMintStr,
+      amountRaw: need.toString(),
+      slippageBps: slip,
+      priorityMicro,
+      swapMode: 'ExactOut',
+    });
+  } catch (exactOutErr) {
+    const probes = payMintStr === WSOL_MINT
+      ? [5_000_000, 10_000_000, 20_000_000, 35_000_000, 50_000_000]
+      : [need.toString()];
+    let bestIn = null;
+    for (const amt of probes) {
+      const qs = new URLSearchParams({
+        inputMint: payMintStr,
+        outputMint: otherMintStr,
+        amount: String(amt),
+        slippageBps: String(slip),
+        swapMode: 'ExactIn',
+      });
+      let r = await fetch(`${JUP_QUOTE}?${qs}`, { headers: JUP_HEADERS, signal: AbortSignal.timeout(12_000) });
+      const quote = await r.json();
+      if (!r.ok || quote.error) continue;
+      try {
+        if (new BN(quote.outAmount).gte(need)) {
+          bestIn = String(Math.ceil(Number(quote.inAmount) * 1.08));
+          break;
+        }
+      } catch (_) { /* skip */ }
+    }
+    if (!bestIn) {
+      throw new Error(`ExactOut failed (${exactOutErr.message}); ExactIn quote could not cover other leg`);
+    }
+    mode = 'ExactIn';
+    swap = await jupiterSwap({
+      connection, owner,
+      inputMint: payMintStr,
+      outputMint: otherMintStr,
+      amountRaw: bestIn,
+      slippageBps: slip,
+      priorityMicro,
+      swapMode: 'ExactIn',
+    });
+  }
+  return {
+    funded: true,
+    signature: swap.signature,
+    out_amount: swap.out_amount,
+    in_amount: swap.in_amount,
+    swap_mode: mode,
+  };
+}
 
 async function refreshOwnerTokenAccounts(raydium, connection, owner) {
   const tokenAccountData = await fetchTokenAccountData(connection, owner);
@@ -145,7 +282,8 @@ async function main() {
     const inputAmount = new BN(
       new Decimal(inp.input_amount_human).mul(10 ** inputDecimals).toFixed(0)
     );
-    const slippage = Number(inp.slippage_bps ?? 100) / 10000;
+    const slippageBps = Number(inp.slippage_bps ?? (inp.single_side ? 100 : 800));
+    const slippage = slippageBps / 10000;
     const epochInfo = await raydium.connection.getEpochInfo();
     for (const tryBaseIn of tryBaseInOrder) {
       const probe = await PoolUtils.getLiquidityAmountOutFromAmountIn({
@@ -203,17 +341,45 @@ async function main() {
   // Refresh wallet ATAs so USDC/SPL pays work after a new token account is funded.
   await refreshOwnerTokenAccounts(raydium, connection, owner);
 
-  const inputMintStr = String(inp.input_mint || '');
-  const wsolMint = 'So11111111111111111111111111111111111111112';
-  const useSolBalance = inputMintStr === wsolMint;
+  const mintAStr = String(poolInfo.mintA.address ?? poolInfo.mintA.address?.toString?.() ?? '');
+  const mintBStr = String(poolInfo.mintB.address ?? poolInfo.mintB.address?.toString?.() ?? '');
+  const straddling = !band.singleSide;
 
   // Map probe slippage to the non-base leg; SDK uses it as amountA when base=MintB.
   let otherAmountMax = finalBaseIn
     ? (liq.amountSlippageB?.amount ?? new BN(0))
     : (liq.amountSlippageA?.amount ?? new BN(0));
-  if (payMintOnly) {
+  if (payMintOnly && !straddling) {
     otherAmountMax = new BN(0);
   }
+
+  let otherLegFunding = null;
+  if (straddling && otherAmountMax.gt(new BN(0))) {
+    const payMintStr = finalBaseIn ? mintAStr : mintBStr;
+    const otherMintStr = finalBaseIn ? mintBStr : mintAStr;
+    try {
+      otherLegFunding = await fundOtherLegIfNeeded({
+        raydium, connection, owner,
+        payMintStr, otherMintStr, otherAmountMax,
+        slippageBps: Number(inp.slippage_bps ?? 800),
+        priorityMicro: Number(inp.jupiter_priority_micro_lamports ?? inp.priority_fee_micro_lamports ?? 2_000),
+      });
+      if (otherLegFunding?.funded) {
+        await refreshOwnerTokenAccounts(raydium, connection, owner);
+      }
+    } catch (e) {
+      return finish({
+        ok: false,
+        error: `straddle other-leg funding failed: ${e.message}`,
+        other_amount_max: otherAmountMax.toString(),
+        pay_mint: payMintStr,
+        other_mint: otherMintStr,
+      });
+    }
+  }
+
+  const inputMintStr = String(inp.input_mint || '');
+  const useSolBalance = inputMintStr === WSOL_MINT;
 
   // SDK getOrCreateTokenAccount always re-fetches and can drop freshly funded ATAs.
   const origFetch = raydium.account.fetchWalletTokenAccounts?.bind(raydium.account);
@@ -290,6 +456,7 @@ async function main() {
     pay_symbol:            inp.pay_symbol ?? null,
     input_amount_lamports: inputAmount.toString(),
     other_amount_max:      otherAmountMax.toString(),
+    other_leg_funding:     otherLegFunding,
     pool_id:               inp.pool_id,
     owner:                 owner.publicKey.toBase58(),
     final_baseIn:          finalBaseIn,

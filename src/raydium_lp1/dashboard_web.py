@@ -448,6 +448,28 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "lp_full_range_budget_fraction", "label": "Full-range budget fraction", "type": "number", "step": "any"},
             {"key": "lp_main_budget_fraction", "label": "Main band budget fraction", "type": "number", "step": "any"},
             {"key": "lp_max_positions_per_mint", "label": "Max LP positions per mint", "type": "number"},
+            {
+                "key": "manual_live_min_pool_liquidity_usd",
+                "label": "Manual LIVE: min pool TVL ($)",
+                "type": "number",
+                "step": "any",
+            },
+            {
+                "key": "manual_live_require_sell_route",
+                "label": "Manual LIVE: require alt sell route",
+                "type": "checkbox",
+            },
+            {
+                "key": "manual_live_max_route_price_impact_pct",
+                "label": "Manual LIVE: route max impact % (0 = global)",
+                "type": "number",
+                "step": "any",
+            },
+            {
+                "key": "manual_live_alerts_path",
+                "label": "Manual LIVE: block alerts path",
+                "type": "text",
+            },
         ],
     },
     {

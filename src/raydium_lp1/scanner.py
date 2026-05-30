@@ -157,6 +157,11 @@ class ScannerConfig:
     lp_full_range_budget_fraction: float = 0.25
     lp_main_budget_fraction: float = 0.75
     lp_max_positions_per_mint: int = 2
+    # Manual LIVE (explicit pool id): stricter than scanner shortlist defaults.
+    manual_live_min_pool_liquidity_usd: float = 1000.0
+    manual_live_require_sell_route: bool = True
+    manual_live_max_route_price_impact_pct: float = 0.0  # 0 = use max_route_price_impact_pct
+    manual_live_alerts_path: str = "reports/manual_live_alerts.json"
     risk_profile: str = "balanced"  # balanced | degen
     # Exit-safe pools with real USD fees but low reported APR (dashboard ANOMALIES / CASH).
     cash_anomaly_enabled: bool = True
@@ -292,6 +297,18 @@ class ScannerConfig:
             lp_full_range_budget_fraction=float(raw_with_strategy.get("lp_full_range_budget_fraction", 0.25)),
             lp_main_budget_fraction=float(raw_with_strategy.get("lp_main_budget_fraction", 0.75)),
             lp_max_positions_per_mint=max(1, int(raw_with_strategy.get("lp_max_positions_per_mint", 2))),
+            manual_live_min_pool_liquidity_usd=float(
+                raw_with_strategy.get("manual_live_min_pool_liquidity_usd", 1000.0)
+            ),
+            manual_live_require_sell_route=bool(
+                raw_with_strategy.get("manual_live_require_sell_route", True)
+            ),
+            manual_live_max_route_price_impact_pct=float(
+                raw_with_strategy.get("manual_live_max_route_price_impact_pct", 0.0)
+            ),
+            manual_live_alerts_path=str(
+                raw_with_strategy.get("manual_live_alerts_path", "reports/manual_live_alerts.json")
+            ),
             risk_profile=str(raw_with_strategy.get("risk_profile") or "balanced"),
             cash_anomaly_enabled=bool(raw_with_strategy.get("cash_anomaly_enabled", True)),
             cash_anomaly_min_fee_usd=float(raw_with_strategy.get("cash_anomaly_min_fee_usd", 25.0)),

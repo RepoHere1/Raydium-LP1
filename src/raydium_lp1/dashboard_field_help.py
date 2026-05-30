@@ -352,6 +352,24 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "Cap concurrent planned positions per base mint.",
         "1 to 3 prevents over-concentration in one ticker.",
     ),
+    "manual_live_min_pool_liquidity_usd": (
+        "When you open a specific pool by id (open_live_lp_cli.py or dashboard POST with pool_id), "
+        "pool TVL must be at least this USD or the open stops immediately and an alert is written.",
+        "Default $1000 blocks micro pools; scanner min_liquidity_usd can stay lower for shortlists.",
+    ),
+    "manual_live_require_sell_route": (
+        "On manual pool-id opens, the non-pay (alt) token must have a Jupiter/Raydium sell route "
+        "to allowed quotes within the impact cap.",
+        "Leave on so opens like SOL/IDLE fail before signing when the alt leg cannot exit.",
+    ),
+    "manual_live_max_route_price_impact_pct": (
+        "Max price impact % for manual-open sell-route probes. 0 uses max_route_price_impact_pct.",
+        "Tighter than global (e.g. 3) if you only manual-open majors.",
+    ),
+    "manual_live_alerts_path": (
+        "JSON log of blocked manual LIVE attempts (TVL too low, no sell route, etc.).",
+        "Check after a failed CLI open; path is relative to repo root unless absolute.",
+    ),
     "strategy": (
         "Which strategy module the runner loads.",
         "Pick the strategy you actually run in production.",
@@ -439,9 +457,9 @@ SECTION_BLURB: dict[str, tuple[str, str]] = {
         "Reserve SOL for fees; keep emergency close off until automation is trusted.",
     ),
     "LP order entry (CLMM)": (
-        "Choose how the next CLMM position is ranged: centered, ATR-wide, single-sided, "
-        "momentum skew, or full range. Saved as lp_active_strategy; shown on LIVE trades.",
-        "Use the experiment loop checklist, then A/B small LIVE opens and read LP style stats.",
+        "Choose how the next CLMM position is ranged and pay-token rules. Manual LIVE opens "
+        "(explicit pool id) also enforce min pool TVL and optional alt sell-route checks below.",
+        "Keep manual min TVL at $1000+; use open_live_lp_cli.py POOL_ID for targeted opens.",
     ),
     "Network metadata": (
         "Strategy tag, RPC list, allow/block lists, and paths for dashboard output.",

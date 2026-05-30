@@ -42,6 +42,8 @@ class FeeGuardConfig:
     max_session_spend_sol: float = 0.12
     max_session_tx_attempts: int = 4
     block_deposits_below_sol: float = 0.006
+    min_lp_deposit_usd: float = 0.25
+    sol_price_usd: float = 180.0
     allow_fee_retry_after_failed_tx: bool = False
 
 
@@ -80,6 +82,8 @@ def fee_config_from_settings(settings: Any | None = None) -> FeeGuardConfig:
         max_session_spend_sol=max(0.0, _f("max_session_spend_sol", 0.12)),
         max_session_tx_attempts=max(1, _i("max_session_tx_attempts", 4)),
         block_deposits_below_sol=max(0.0, _f("block_deposits_below_sol", 0.006)),
+        min_lp_deposit_usd=max(0.0, _f("min_lp_deposit_usd", 0.25)),
+        sol_price_usd=max(1.0, _f("sol_price_usd", _f("lp_pay_funding_sol_price_usd", 180.0))),
         allow_fee_retry_after_failed_tx=_b("allow_fee_retry_after_failed_tx", False),
     )
 
@@ -231,6 +235,14 @@ def assert_clmm_open_allowed(
     dep = float(deposit_sol)
     total = float(est["estimated_total_sol"])
     pct = float(est["fee_pct_of_deposit"])
+    dep_usd = dep * cfg.sol_price_usd
+
+    if cfg.min_lp_deposit_usd > 0 and dep_usd + 1e-9 < cfg.min_lp_deposit_usd:
+        raise FeeGuardBlockedError(
+            f"Fee guard: deposit ~${dep_usd:.2f} is below min_lp_deposit_usd "
+            f"({cfg.min_lp_deposit_usd:.2f}). Sub-${cfg.min_lp_deposit_usd:.2f} CLMM opens "
+            "show as 8¢ positions after ~0.042 SOL rent — raise size or close zombies first."
+        )
 
     if dep < cfg.block_deposits_below_sol:
         raise FeeGuardBlockedError(
@@ -242,7 +254,8 @@ def assert_clmm_open_allowed(
         cfg.min_clmm_deposit_sol,
         total * cfg.min_deposit_to_fee_ratio,
     )
-    if dep < effective_min:
+    usd_floor_ok = cfg.min_lp_deposit_usd > 0 and dep_usd + 1e-9 >= cfg.min_lp_deposit_usd
+    if not usd_floor_ok and dep < effective_min:
         raise FeeGuardBlockedError(
             f"Fee guard: deposit {dep:.4f} SOL is too small. Need ≥ {effective_min:.4f} SOL "
             f"(min_clmm={cfg.min_clmm_deposit_sol}, est. cost ~{total:.4f} SOL incl. ~{cfg.clmm_open_rent_sol:.4f} rent). "
@@ -253,7 +266,8 @@ def assert_clmm_open_allowed(
             f"Fee guard: estimated tx cost {total:.4f} SOL exceeds "
             f"max_estimated_fee_sol_per_tx {cfg.max_estimated_fee_sol_per_tx}."
         )
-    if pct > cfg.max_fee_pct_of_deposit:
+    # Rent (~0.042 SOL) dominates tiny deposits; pct check only when deposit covers rent.
+    if dep >= cfg.clmm_open_rent_sol and pct > cfg.max_fee_pct_of_deposit:
         raise FeeGuardBlockedError(
             f"Fee guard: fees+rent would be ~{pct:.0f}% of deposit "
             f"(max {cfg.max_fee_pct_of_deposit:.0f}%). "
@@ -332,9 +346,23 @@ def guard_onchain_fee(operation: str, **context: Any) -> dict[str, Any] | None:
     return None
 
 
-def note_broadcast_result(script_name: str, result: dict[str, Any], estimate: dict[str, Any] | None) -> None:
-    """Record spend after a tx was sent (signature present) or confirmed."""
+def reset_session_ledger() -> dict[str, Any]:
+    """Clear session spend counters (after reviewing ledger or starting fresh)."""
 
+    data = {"attempts": [], "spent_sol_est": 0.0, "updated_at": datetime.now(UTC).isoformat()}
+    _save_ledger(data)
+    return session_summary()
+
+
+def note_broadcast_result(script_name: str, result: dict[str, Any], estimate: dict[str, Any] | None) -> None:
+    """Record spend only after a confirmed successful on-chain tx."""
+
+    if not result.get("ok"):
+        return
+    if result.get("confirm_error"):
+        return
+    if result.get("confirmed") is False:
+        return
     if not result.get("signature") and not result.get("tx") and not result.get("txId"):
         return
     est_sol = float((estimate or {}).get("estimated_total_sol") or 0)

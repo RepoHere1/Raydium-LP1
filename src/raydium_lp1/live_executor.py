@@ -171,9 +171,28 @@ def open_clmm_candidate(
             lp_skew_use_momentum=True,
             lp_planning_enabled=True,
         )
+    explicit_pool = bool(pool_id and str(pool_id).strip())
+    manual_check: dict[str, Any] | None = None
     report = _read_latest(latest_path)
     pool = _pick_candidate(report, pool_id, config=config)
     from raydium_lp1.lp_order_rules import pool_open_blocked
+
+    if explicit_pool:
+        from raydium_lp1.manual_live_open import ManualLiveBlockedError, assert_manual_live_open_allowed
+
+        try:
+            manual_check = assert_manual_live_open_allowed(
+                pool, config, explicit_pool_id=True
+            )
+        except ManualLiveBlockedError as exc:
+            detail = getattr(exc, "detail", None) or {}
+            return {
+                "ok": False,
+                "error": str(exc),
+                "manual_live_blocked": True,
+                "notification": detail.get("alert_path"),
+                "manual_live_detail": detail,
+            }
 
     block_msg = pool_open_blocked(str(pool.get("id") or ""), config)
     if block_msg:
@@ -299,7 +318,9 @@ def open_clmm_candidate(
         result = raydium_clmm.open_position(**attempt)
         if result.get("ok"):
             break
-        if result.get("signature") or result.get("tx"):
+        if result.get("fee_guard"):
+            break
+        if not fee_cfg.allow_fee_retry_after_failed_tx:
             break
     if not result.get("ok"):
         err = result.get("error") or (result.get("clmm") or {}).get("confirm_error")
@@ -313,6 +334,7 @@ def open_clmm_candidate(
 
     row = {
         "opened_at": _now_iso(),
+        "manual_live_check": manual_check if explicit_pool else None,
         "pool_id": pool.get("id"),
         "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
         "apr": pool.get("apr"),

@@ -11,6 +11,44 @@ import {
   BN, PublicKey, TxVersion,
 } from './_shared.mjs';
 import { VersionedTransaction } from '@solana/web3.js';
+import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
+
+const ZERO_PUBKEY = '11111111111111111111111111111111';
+
+/** RPC pool often has rewardDefaultInfos=[] while poolKeys still has live reward slots (SDK 6030). */
+function isRealRewardSlot(rk) {
+  const mint = String(rk?.mint?.address ?? rk?.mint ?? '');
+  const vault = String(rk?.vault ?? '');
+  return mint && mint !== ZERO_PUBKEY && vault && vault !== ZERO_PUBKEY;
+}
+
+async function poolInfoWithRewardDefaults({ raydium, connection, poolInfo, poolKeys }) {
+  const merged = [];
+  const seen = new Set();
+  for (const ex of poolInfo.rewardDefaultInfos || []) {
+    const m = String(ex?.mint?.address ?? '');
+    if (m && m !== ZERO_PUBKEY) {
+      merged.push(ex);
+      seen.add(m);
+    }
+  }
+  for (const rk of poolKeys.rewardInfos || []) {
+    if (!isRealRewardSlot(rk)) continue;
+    const mintAddr = String(rk.mint?.address ?? rk.mint);
+    if (seen.has(mintAddr)) continue;
+    const acct = await connection.getAccountInfo(new PublicKey(mintAddr));
+    merged.push({
+      mint: {
+        address: mintAddr,
+        programId: acct?.owner?.toBase58?.() ?? TOKEN_PROGRAM_ID.toBase58(),
+      },
+      perSecond: 0,
+    });
+    seen.add(mintAddr);
+  }
+  if (!merged.length) return poolInfo;
+  return { ...poolInfo, rewardDefaultInfos: merged };
+}
 
 async function pollConfirm(connection, signature, timeoutMs = 60_000) {
   const start = Date.now();
@@ -155,7 +193,8 @@ async function main() {
 
   const poolData = await raydium.clmm.getPoolInfoFromRpc(me.poolId.toBase58());
   if (!poolData) return finish({ ok: false, error: `pool ${me.poolId.toBase58()} fetch failed` });
-  const { poolInfo, poolKeys } = poolData;
+  let { poolInfo, poolKeys } = poolData;
+  poolInfo = await poolInfoWithRewardDefaults({ raydium, connection, poolInfo, poolKeys });
 
   const liquidity = new BN(me.liquidity.toString());
   const slippageBps = Number(inp.slippage_bps ?? 100);

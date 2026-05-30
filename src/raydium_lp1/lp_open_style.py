@@ -96,7 +96,7 @@ def resolve_live_open_style(
             "single_side": None,
             "tick_lower_pct_below": 45.0,
             "tick_upper_pct_above": 45.0,
-            "band_tick_steps": max(steps, 28),
+            "band_tick_steps": max(steps, 32),
         }
     elif sid == STRATEGY_ASYMMETRIC or (
         sid == STRATEGY_TRAILING_SKEW and abs(skew) >= 0.08

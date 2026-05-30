@@ -60,6 +60,11 @@ def _preview(
     if pay_token_only_enabled(config) and pay_res is None:
         raise ValueError(pay_mint_open_error(pool, config))
     style = resolve_live_open_style(config, pool)
+    manual_check: dict | None = None
+    if pool_id and str(pool_id).strip():
+        from raydium_lp1.manual_live_open import assert_manual_live_open_allowed
+
+        manual_check = assert_manual_live_open_allowed(pool, config, explicit_pool_id=True)
     return {
         "pool_id": pool.get("id"),
         "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
@@ -70,6 +75,7 @@ def _preview(
         "lp_style_label": style.lp_style_label,
         "lp_strategy_id": getattr(config, "lp_active_strategy", None),
         "lp_placement": style.placement,
+        "manual_live_check": manual_check,
         "open_kwargs": {
             k: style.open_kwargs.get(k)
             for k in (
@@ -109,6 +115,7 @@ def main() -> int:
         fee_config_from_settings,
     )
     from raydium_lp1.live_executor import live_readiness_check, open_clmm_candidate
+    from raydium_lp1.manual_live_open import ManualLiveBlockedError
     from raydium_lp1.mode_toggle import get_mode
     from raydium_lp1.scanner import load_dotenv
 
@@ -200,6 +207,21 @@ def main() -> int:
                 plan["fee_guard_block_reason"] = str(exc)
     except FeeGuardBlockedError as exc:
         print(json.dumps({"ok": False, "error": str(exc), "fee_guard": True}, indent=2))
+        return 1
+    except ManualLiveBlockedError as exc:
+        detail = getattr(exc, "detail", None) or {}
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "manual_live_blocked": True,
+                    "notification": detail.get("alert_path"),
+                    "manual_live_detail": detail,
+                },
+                indent=2,
+            )
+        )
         return 1
     except (FileNotFoundError, ValueError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
