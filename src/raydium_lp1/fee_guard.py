@@ -364,7 +364,12 @@ def guard_onchain_fee(operation: str, **context: Any) -> dict[str, Any] | None:
     script = str(context.get("script_name") or "")
     dep = context.get("deposit_sol")
     if dep is not None and ("open" in operation.lower() or script == "open_position.mjs"):
-        return assert_clmm_open_allowed(float(dep), priority_micro=context.get("priority_micro"))
+        return assert_clmm_open_allowed(
+            float(dep),
+            settings=context.get("settings"),
+            priority_micro=context.get("priority_micro"),
+            open_kwargs=context.get("open_kwargs"),
+        )
     if dep is not None and (script == "swap_sol_to_pay.mjs" or "swap" in operation.lower()):
         assert_swap_allowed(float(dep))
         _check_session_budget(cfg, cfg.clmm_base_fee_sol * 2)

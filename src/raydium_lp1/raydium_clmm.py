@@ -11,7 +11,8 @@ Public functions:
                   tick_lower_pct_below=10, tick_upper_pct_above=10,
                   slippage_bps=100, priority_fee_micro_lamports=50_000) -> dict
     close_position(position_nft_mint, slippage_bps=100, keep_position=False,
-                   priority_fee_micro_lamports=50_000) -> dict
+                   ensure_burn_nft=True, priority_fee_micro_lamports=50_000) -> dict
+    burn_position_nft(position_nft_mint, priority_fee_micro_lamports=50_000) -> dict
     quote_sell(input_mint, output_mint, amount_raw,
                slippage_bps=100, max_impact_pct=5.0) -> dict
     wallet_balance() -> dict   # SOL + USDC + WSOL snapshot, no spend
@@ -34,7 +35,12 @@ from pathlib import Path
 
 REPO  = Path(__file__).parent.parent.parent.resolve()        # src/raydium_lp1/ → repo root
 NODE_DIR = REPO / "src" / "raydium_lp1" / "raydium_clmm_node"
-_ONCHAIN_SPEND_SCRIPTS = frozenset({"open_position.mjs", "close_position.mjs", "swap_sol_to_pay.mjs"})
+_ONCHAIN_SPEND_SCRIPTS = frozenset({
+    "open_position.mjs",
+    "close_position.mjs",
+    "burn_position_nft.mjs",
+    "swap_sol_to_pay.mjs",
+})
 
 
 def _load_env() -> dict:
@@ -73,14 +79,33 @@ def _run_script(script_name: str, payload: dict, timeout: float = 60.0) -> dict:
             dep = int(payload.get("amount_lamports") or 0) / 1_000_000_000
         else:
             dep = None
+        fee_settings = payload.pop("_fee_guard_settings", None)
+        open_kw = None
+        if script_name == "open_position.mjs":
+            open_kw = {
+                k: payload[k]
+                for k in (
+                    "full_range",
+                    "wide_range",
+                    "wide_range_width_pct",
+                    "literal_pool_full_range",
+                    "single_side",
+                    "single_side_width_pct",
+                    "tick_lower_pct_below",
+                    "tick_upper_pct_above",
+                )
+                if k in payload
+            }
         try:
             guard_onchain(
                 f"Raydium CLMM {script_name}",
                 script_name=script_name,
                 deposit_sol=dep,
                 priority_micro=payload.get("priority_fee_micro_lamports"),
+                settings=fee_settings,
+                open_kwargs=open_kw or None,
             )
-            payload = sanitize_clmm_payload(script_name, payload)
+            payload = sanitize_clmm_payload(script_name, payload, settings=fee_settings)
             if script_name == "open_position.mjs":
                 from raydium_lp1.fee_guard import estimate_clmm_open_cost_sol, fee_config_from_settings
 
@@ -186,6 +211,14 @@ def open_position(*,
                   band_tick_steps: int = 10,
                   min_tick_steps: int = 2,
                   pay_mint_only: bool = False,
+                  full_range: bool = False,
+                  wide_range: bool | None = None,
+                  wide_range_width_pct: float | None = None,
+                  literal_pool_full_range: bool = False,
+                  wallet_inventory_full_range: bool = False,
+                  wallet_inventory_wide_range: bool = False,
+                  total_budget_usd: float | None = None,
+                  fee_guard_settings: dict | None = None,
                   timeout: float = 90.0) -> dict:
     """Open a new CLMM position.
 
@@ -213,6 +246,14 @@ def open_position(*,
         "slippage_bps":               int(slippage_bps),
         "priority_fee_micro_lamports":pri,
         "pay_mint_only":              bool(pay_mint_only),
+        "full_range":                 bool(full_range),
+        "wide_range":                 bool(wide_range if wide_range is not None else full_range),
+        "wide_range_width_pct":       float(wide_range_width_pct) if wide_range_width_pct is not None else None,
+        "literal_pool_full_range":    bool(literal_pool_full_range),
+        "wallet_inventory_full_range": bool(wallet_inventory_full_range or wallet_inventory_wide_range),
+        "wallet_inventory_wide_range": bool(wallet_inventory_wide_range or wallet_inventory_full_range),
+        **({"total_budget_usd": float(total_budget_usd)} if total_budget_usd is not None else {}),
+        **({"_fee_guard_settings": fee_guard_settings} if fee_guard_settings is not None else {}),
     }, timeout=timeout)
 
 
@@ -220,12 +261,16 @@ def close_position(*,
                    position_nft_mint: str,
                    slippage_bps: int = 100,
                    keep_position: bool = False,
+                   ensure_burn_nft: bool = True,
                    payout_as: str | None = "SOL",
                    sweep_trash_to_sol: bool = True,
                    trash_swap_max_attempts: int = 2,
                    priority_fee_micro_lamports: int | None = None,
                    timeout: float = 120.0) -> dict:
-    """Close (decrease to 0 + collect + burn NFT) a CLMM position.
+    """Close (decrease to 0 + collect) a CLMM position; burn empty NFT by default.
+
+    After remove-liquidity, runs ``closePosition`` again when the NFT still exists
+    with zero liquidity (stops Raydium UI ghost rows).
 
     Default: sweep non-stable trash tokens received on close → SOL via Jupiter
     (up to ``trash_swap_max_attempts``, then mark abandoned if unsellable).
@@ -239,11 +284,29 @@ def close_position(*,
         "position_nft_mint":          position_nft_mint,
         "slippage_bps":               int(slippage_bps),
         "keep_position":              bool(keep_position),
+        "ensure_burn_nft":            bool(ensure_burn_nft),
         "payout_as":                  payout_as,
         "sweep_trash_to_sol":         bool(sweep_trash_to_sol),
         "trash_swap_max_attempts":    max(1, int(trash_swap_max_attempts)),
         "priority_fee_micro_lamports":pri,
         "jupiter_priority_micro_lamports": cfg.jupiter_max_priority_micro_lamports,
+    }, timeout=timeout)
+
+
+def burn_position_nft(*,
+                      position_nft_mint: str,
+                      priority_fee_micro_lamports: int | None = None,
+                      timeout: float = 90.0) -> dict:
+    """Burn a CLMM position NFT when liquidity is already 0 (ghost cleanup)."""
+
+    from raydium_lp1.fee_guard import cap_priority_micro, fee_config_from_settings
+
+    cfg = fee_config_from_settings()
+    pri = cap_priority_micro(priority_fee_micro_lamports, cfg)
+    return _run_script("burn_position_nft.mjs", {
+        "position_nft_mint": position_nft_mint,
+        "priority_fee_micro_lamports": pri,
+        "compute_units": cfg.clmm_close_compute_units,
     }, timeout=timeout)
 
 

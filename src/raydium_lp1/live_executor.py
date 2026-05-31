@@ -124,12 +124,17 @@ def _resolve_deposit_human(
     pay_res: Any | None,
     *,
     usd_notional: float | None = None,
+    sol_price_usd: float | None = None,
 ) -> float:
     """Map CLI sizing to the pay-token human amount the Raydium SDK expects."""
 
     sym = str(getattr(pay_res, "pay_symbol", "") or "").upper()
-    if sym in ("USDC", "USDT", "USD1") and usd_notional is not None:
-        return float(usd_notional)
+    if usd_notional is not None and usd_notional > 0:
+        if sym in ("USDC", "USDT", "USD1"):
+            return float(usd_notional)
+        if sym in ("SOL", "WSOL"):
+            px = float(sol_price_usd or 180.0)
+            return float(usd_notional) / px if px > 0 else float(pos_sol)
     return float(pos_sol)
 
 
@@ -228,14 +233,16 @@ def open_clmm_candidate(
     else:
         pay_res = resolve_pay_mint(pool, config)
 
-    input_mint = str(style_open.get("input_mint") or (pay_res.pay_mint if pay_res else _sol_mint_for_pool(pool)))
-    deposit_human = _resolve_deposit_human(pos_sol, pay_res, usd_notional=input_amount_usd)
-
     from raydium_lp1.settings_io import load_settings_json
 
     fee_settings: Any = fee_guard_settings if fee_guard_settings is not None else load_settings_json(settings_path)
     fee_cfg = fee_config_from_settings(fee_settings)
     sol_px_guard = float(sol_price_usd or fee_cfg.sol_price_usd or 180.0)
+
+    input_mint = str(style_open.get("input_mint") or (pay_res.pay_mint if pay_res else _sol_mint_for_pool(pool)))
+    deposit_human = _resolve_deposit_human(
+        pos_sol, pay_res, usd_notional=input_amount_usd, sol_price_usd=sol_px_guard
+    )
 
     pay_sym = str(getattr(pay_res, "pay_symbol", "") or "").upper() if pay_res else "SOL"
 
@@ -366,7 +373,7 @@ def open_clmm_candidate(
 
     for extra in retry_extras[: max(1, fee_cfg.max_open_retries)]:
         attempt = {**open_kwargs, **extra}
-        result = raydium_clmm.open_position(**attempt)
+        result = raydium_clmm.open_position(**attempt, fee_guard_settings=fee_settings)
         if result.get("ok"):
             break
         if result.get("fee_guard"):
