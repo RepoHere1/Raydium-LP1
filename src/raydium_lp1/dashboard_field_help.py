@@ -234,6 +234,11 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "Reject opens when estimated rent+fees exceed this percent of deposit size.",
         "35% default; micro deposits fail this check on purpose.",
     ),
+    "max_rent_escrow_pct_of_deposit": (
+        "Hard cap on estimated non-recoverable tick-array rent as % of LP deposit (pre-trade). "
+        "Blocks literal full-range style traps before broadcast.",
+        "10% default — never let sunk escrow exceed one-tenth of deposit. Raise only for large positions.",
+    ),
     "clmm_open_rent_sol": (
         "Estimated one-time rent for CLMM NFT + tick accounts (the main fee trap on small opens).",
         "0.042 SOL is a realistic mainnet estimate.",
@@ -277,7 +282,7 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
     "lp_active_strategy": (
         "centered_tight_range: narrow band on spot. asymmetric_single_asset: one-sided band (bullish above / bearish below). "
         "volatility_atr_width: width from day min/max swing. trailing_dynamic_skew: band skewed with momentum. "
-        "standard_full_range: wide passive band. auto_volatility_pick: chooses tight vs ATR from churn. "
+        "standard_full_range: wide centered band (max 80% width, not literal min/max ticks). auto_volatility_pick: chooses tight vs ATR from churn. "
         "LIVE opens use this setting on the next CLMM deposit (see LP style column on dashboard).",
         "Change before each experiment; dashboard groups LIVE fills by lp_style_label for comparison.",
     ),
@@ -306,7 +311,7 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "Pairs with momentum enabled; off for symmetric testing.",
     ),
     "lp_open_pay_token_only": (
-        "When on (default), every LIVE CLMM open deposits only an allowed quote leg (SOL, USDC, USDT, or USD1) "
+        "When on (default), every LIVE CLMM open deposits only an allowed quote leg (SOL, USDC, or USDT) "
         "and places the band on that side so you never fund the memecoin leg unless you turn this off.",
         "Leave on for quote-only inventory; pools without a quote leg are skipped for LIVE opens.",
     ),
@@ -315,7 +320,7 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "Set USDC if you size positions in stablecoin rather than SOL.",
     ),
     "lp_pay_funding_enabled": (
-        "When on (default), LIVE opens that pay in USDC/USDT/USD1 auto-swap SOL via Jupiter if the wallet "
+        "When on (default), LIVE opens that pay in USDC/USDT auto-swap SOL via Jupiter if the wallet "
         "stable balance is below deposit size (+ buffer). SOL pay legs skip swapping.",
         "Turn off only if you pre-fund stables manually. Applies to all LIVE opens including manual trades from ANOMALIES.",
     ),
@@ -369,6 +374,51 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
     "manual_live_alerts_path": (
         "JSON log of blocked manual LIVE attempts (TVL too low, no sell route, etc.).",
         "Check after a failed CLI open; path is relative to repo root unless absolute.",
+    ),
+    "super_brainiac_min_liquidity_usd": (
+        "Minimum pool TVL for the SUPER-BRAINIAC universe scan (default $5,000).",
+        "Higher = safer depth; lower = more candidates but thinner books.",
+    ),
+    "super_brainiac_deposit_usd": (
+        "USD size for experiment LIVE opens (default $3). Uses pay-token-only + fee guard.",
+        "Does not bypass manual-live or session fee caps.",
+    ),
+    "super_brainiac_target_apr_pct": (
+        "Label threshold for «jackpot» APR in scoring UI (default 999.99). Ranking uses expected fee $.",
+        "Almost no pool truly sustains 1000% APR; treat as experiment dial not a promise.",
+    ),
+    "super_brainiac_auto_open_live": (
+        "When true, each brainiac cycle can open the top pick without a dashboard prompt.",
+        "Leave false until you trust scan + scoring; use Run once with LIVE confirm first.",
+    ),
+    "super_brainiac_scan_pages": (
+        "Raydium list pages per detective scan (each page = HTTP round trip).",
+        "8 pages × 100 pools is a good start; raise only if filters are tight.",
+    ),
+    "super_brainiac_prefer_fee_pct_min": (
+        "Fee-tier boost band lower bound (pool feeRate as %, e.g. 1 = 1%).",
+        "Pools inside min–max get a score multiplier; outside can still win on volume.",
+    ),
+    "super_brainiac_prefer_fee_pct_max": (
+        "Fee-tier boost band upper bound (default 4%).",
+        "Pairs well with memecoin CLMM tiers at 1–4%.",
+    ),
+    "super_brainiac_min_confidence": (
+        "Minimum in-range × width confidence before LIVE open (0–1).",
+        "Raise to avoid opens when day-range does not overlap your band.",
+    ),
+    "super_brainiac_continuous_interval_sec": (
+        "Seconds between scans in CLI loop mode.",
+        "Dashboard uses manual Run scan unless you run scripts/super_brainiac_possibilities.py loop.",
+    ),
+    "super_brainiac_report_path": (
+        "Latest scan leaderboard + top pick JSON for dashboard panel.",
+        "reports/super_brainiac_latest.json by default.",
+    ),
+    "super_brainiac_require_pay_alt_pair_only": (
+        "Detective-only: require exactly one pay leg (SOL/USDC/USDT) and one alt/memecoin. "
+        "Blocks SOL/USDC, SOL/USDT, USDC/USDT style pools.",
+        "Leave on for PAY + newish token experiments.",
     ),
     "strategy": (
         "Which strategy module the runner loads.",

@@ -76,6 +76,7 @@ def _preview(
         "lp_strategy_id": getattr(config, "lp_active_strategy", None),
         "lp_placement": style.placement,
         "manual_live_check": manual_check,
+        "style_open_kwargs": dict(style.open_kwargs),
         "open_kwargs": {
             k: style.open_kwargs.get(k)
             for k in (
@@ -85,6 +86,9 @@ def _preview(
                 "pay_symbol",
                 "single_side_width_pct",
                 "band_tick_steps",
+                "wide_range",
+                "wide_range_width_pct",
+                "literal_pool_full_range",
             )
             if k in style.open_kwargs
         },
@@ -191,16 +195,26 @@ def main() -> int:
             force_pay_only=bool(args.force_pay_only),
             strategy=strategy,
         )
+        from raydium_lp1.lp_rent_escrow import estimate_open_rent_escrow
+
         fee_cfg = fee_config_from_settings(fee_settings)
-        plan["fee_guard"] = estimate_clmm_open_cost_sol(fee_cfg, deposit_sol=amount_sol)
+        dep_usd = float(args.usd) if args.usd is not None else amount_sol * float(args.sol_price)
+        dep_sol = dep_usd / float(args.sol_price)
+        style_kw = plan.get("style_open_kwargs") or {}
+        plan["fee_guard"] = estimate_clmm_open_cost_sol(fee_cfg, deposit_sol=dep_sol)
+        plan["rent_escrow"] = estimate_open_rent_escrow(
+            deposit_sol=dep_sol,
+            open_kwargs=style_kw,
+            settings=fee_settings,
+        ).to_dict()
         plan["fee_guard_session"] = __import__(
             "raydium_lp1.fee_guard", fromlist=["session_summary"]
         ).session_summary(fee_cfg)
         if not args.preview_only:
-            assert_clmm_open_allowed(amount_sol, settings=fee_settings)
+            assert_clmm_open_allowed(dep_sol, settings=fee_settings, open_kwargs=style_kw)
         else:
             try:
-                assert_clmm_open_allowed(amount_sol, settings=fee_settings)
+                assert_clmm_open_allowed(dep_sol, settings=fee_settings, open_kwargs=style_kw)
                 plan["fee_guard_ok"] = True
             except FeeGuardBlockedError as exc:
                 plan["fee_guard_ok"] = False
@@ -231,6 +245,7 @@ def main() -> int:
     if args.preview_only:
         return 0
 
+    dep_usd = float(args.usd) if args.usd is not None else amount_sol * float(args.sol_price)
     result = open_clmm_candidate(
         pool_id=pool_id,
         input_amount_sol=amount_sol,
@@ -241,6 +256,27 @@ def main() -> int:
         sol_price_usd=float(args.sol_price),
     )
     print(json.dumps(result, indent=2, default=str))
+    if result.get("ok"):
+        try:
+            from raydium_lp1.lp_tx_cost_analysis import analyze_open_bundle
+            from raydium_lp1.raydium_clmm import wallet_balance
+
+            wb = wallet_balance()
+            fee_est = (result.get("clmm") or {}).get("fee_guard_estimate") or {}
+            rent = fee_est.get("rent_escrow") if isinstance(fee_est, dict) else plan.get("rent_escrow")
+            analysis = analyze_open_bundle(
+                result,
+                wallet=str(wb.get("address") or ""),
+                rpc_url=str(wb.get("rpc_url") or ""),
+                rent_escrow_estimate=rent,
+                deposit_usd=dep_usd,
+            )
+            out_path = REPO / "reports" / "last_open_cost_analysis.json"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(analysis, indent=2) + "\n", encoding="utf-8")
+            print(json.dumps({"cost_analysis": analysis, "report_path": str(out_path)}, indent=2))
+        except Exception as exc:
+            print(json.dumps({"cost_analysis_error": str(exc)}, indent=2))
     return 0 if result.get("ok") else 1
 
 

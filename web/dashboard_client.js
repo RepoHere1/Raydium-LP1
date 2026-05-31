@@ -400,7 +400,9 @@
           p.input_amount_sol!=null?(Number(p.input_amount_sol).toFixed(4)+' SOL'):'—');
         var tx=p.tx||'';
         var txCell=tx?('<a href="https://solscan.io/tx/'+encodeURIComponent(tx)+'" target="_blank" rel="noopener">'+esc(tx.slice(0,8))+'…</a>'):'—';
-        var oor=p.in_range_at_open===false||p.out_of_range_at_open?' <span class="muted">(OOR@open)</span>':'';
+        var oor='';
+        if(p.full_range_tick_mismatch) oor=' <span class="muted" title="Opened before true min/max tick fix; close and reopen as full range">(narrow band — reopen)</span>';
+        else if(p.in_range_at_open===false||p.out_of_range_at_open) oor=' <span class="muted">(OOR@open)</span>';
         return '<tr><td>'+esc(String(ix))+'</td><td>'+esc(p.pair||'')+'</td><td>'+esc(fmtAprPct(p.apr))+'</td><td>'+esc(size)+'</td><td>'+esc(fmtUsd(p.liquidity_usd))+'</td><td>'+
           esc(String(act))+'</td><td title="'+esc(p.lp_style_key||'')+'">'+esc(lpStyle)+oor+'</td><td class="mono">'+esc((p.position_nft_mint||'').slice(0,12))+(p.position_nft_mint?'…':'')+'</td><td>'+poolIdCell(p.pool_id||p.id)+'</td><td class="mono">'+txCell+'</td></tr>';
       }).join('')+'</tbody></table></div>';
@@ -579,10 +581,23 @@
   }
 
   function wireLpPickButtons(){
-    var apr=document.getElementById('btn-lp-apr');
-    var mom=document.getElementById('btn-lp-mom');
-    if(apr) apr.onclick=function(){ setLpSelectionMode('apr'); };
-    if(mom) mom.onclick=function(){ setLpSelectionMode('momentum'); };
+    /* APR / MoM HOT use data-action delegation (wireDashboardActions). */
+  }
+
+  function renderEmergencyBanner(d){
+    var el=document.getElementById('emergency-banner');
+    if(!el) return;
+    var b=d&&d.emergency_banner;
+    if(!b||!b.reason){
+      el.classList.remove('active');
+      el.innerHTML='';
+      return;
+    }
+    el.classList.add('active');
+    var pair=b.pair?(' · '+b.pair):'';
+    el.innerHTML='<span class="emergency-head">EMERGENCY CLOSE</span>'+
+      '<span class="emergency-reason">'+esc(b.reason)+esc(pair)+
+      (b.timestamp?(' <span class="muted">('+esc(b.timestamp)+')</span>'):'')+'</span>';
   }
 
   function renderModeBar(d){
@@ -853,6 +868,7 @@
   function renderAll(d){
     lastDash=d;
     if(d.lp_strategy_catalog) wireStrategyPicker(d.lp_strategy_catalog);
+    renderEmergencyBanner(d);
     renderModeBar(d);
     renderFunnel(d);
     renderWalletCapacity($('#wall-live'), d.live_wallet_capacity||d.wallet_capacity, 'live');
@@ -930,12 +946,14 @@
       kpHint+
       '</p>'+
       '<div class="tune-actions">'+
-      '<button type="button" id="scan-run-now" class="p">Run scan now</button>'+
+      '<button type="button" id="scan-run-now" class="p" data-action="scan-run">Run scan now</button>'+
       '<span id="scan-run-status" class="tune-meta"></span>'+
       '<a href="/api/scan_console" target="_blank" rel="noopener" class="tune-meta">Scan log</a>'+
-      '<button type="button" id="tune-apply-sel" class="p">Apply checked</button>'+
-      '<button type="button" id="tune-apply-all">Apply all with patches</button>'+
-      '<button type="button" id="live-open-top" class="p" style="margin-left:auto">Open top CLMM (LIVE)</button>'+
+      '<button type="button" id="tune-apply-sel" class="p" data-action="tune-apply-sel">Apply checked</button>'+
+      '<button type="button" id="tune-apply-all" data-action="tune-apply-all">Apply all with patches</button>'+
+      '<label class="tune-deposit-label" title="USDC/SOL deposit size for Open top CLMM">$'+
+      '<input type="number" id="live-open-deposit-usd" min="0.25" step="0.01" value="3" /></label>'+
+      '<button type="button" id="live-open-top" class="p" data-action="live-open-top" style="margin-left:auto">Open top CLMM (LIVE)</button>'+
       '<span class="tune-meta" id="lp-pick-hint"></span>'+
       '</div>';
     var items=plan.items||[];
@@ -1065,51 +1083,140 @@
   }
 
   function wireTuneButtons(){
-    var b0=document.getElementById('scan-run-now');
-    var b1=document.getElementById('tune-apply-sel');
-    var b2=document.getElementById('tune-apply-all');
-    var b3=document.getElementById('live-open-top');
-    if(b0) b0.onclick=runDashboardScan;
-    if(b1) b1.onclick=function(){
-      topMsg('Applying tune…', false, true);
-      gj('/api/tune/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:selectedTuneIds()})})
-        .then(function(r){
-          topMsg('Tune applied ('+(r.applied_ids||[]).length+' items)', true);
-          msg('Settings updated — click Run scan now.', true);
-          return loadSettings().then(function(){ return refresh(); });
-        })
-        .catch(function(e){ topMsg(String(e), false); msg(String(e), false); });
-    };
-    if(b2) b2.onclick=function(){
-      topMsg('Applying all…', false, true);
-      gj('/api/tune/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apply_all:true})})
-        .then(function(r){
-          topMsg('Applied '+((r.applied_ids||[]).length)+' tune(s)', true);
-          return loadSettings().then(function(){ return refresh(); });
-        })
-        .catch(function(e){ topMsg(String(e), false); msg(String(e), false); });
-    };
-    if(b3) b3.onclick=function(){
-      var typed=window.prompt('Type LIVE to open the top verified CLMM candidate on-chain:');
-      if(typed!=='LIVE'){ msg('Open cancelled.', false); return; }
-      topMsg('Opening CLMM…', false, true);
-      gj('/api/live/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'LIVE'})})
-        .then(function(r){
-          if(r.ok){
-            topMsg('Position opened', true);
-            msg('Live open OK — check LIVE trades panel.', true);
-          }else{
-            var err=r.error||'Open failed';
-            if(r.manual_live_blocked&&r.notification){
-              err=err+' — alert: '+r.notification;
-            }
-            topMsg(err, false);
-            msg(err, false);
+    /* Buttons use document-level data-action delegation (wireDashboardActions). */
+  }
+
+  function readDepositUsd(inputId, fallback){
+    var el=document.getElementById(inputId);
+    var v=el?parseFloat(el.value):NaN;
+    if(!isFinite(v)||v<=0) v=fallback;
+    return v;
+  }
+
+  function syncDepositInputsFromSettings(raw){
+    raw=raw||{};
+    var dep=Number(raw.super_brainiac_deposit_usd);
+    if(!isFinite(dep)||dep<=0) dep=3;
+    var live=document.getElementById('live-open-deposit-usd');
+    var brain=document.getElementById('brainiac-live-deposit-usd');
+    if(live) live.value=String(dep);
+    if(brain) brain.value=String(dep);
+  }
+
+  function applyTuneSelection(applyAll){
+    topMsg(applyAll?'Applying all…':'Applying tune…', false, true);
+    var body=applyAll?{apply_all:true}:{ids:selectedTuneIds()};
+    return gj('/api/tune/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(function(r){
+        topMsg('Applied '+((r.applied_ids||[]).length)+' tune item(s)', true);
+        msg(applyAll?'All patches applied.':'Settings updated — click Run scan now.', true);
+        return loadSettings().then(function(){ return refresh(); });
+      })
+      .catch(function(e){ topMsg(String(e), false); msg(String(e), false); });
+  }
+
+  function runLiveOpenTop(){
+    var typed=window.prompt('Type LIVE to open the top verified CLMM candidate on-chain:');
+    if(typed!=='LIVE'){ msg('Open cancelled.', false); return; }
+    var dep=readDepositUsd('live-open-deposit-usd', 3);
+    topMsg('Opening CLMM ($'+dep.toFixed(2)+')…', false, true);
+    gj('/api/live/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'LIVE',deposit_usd:dep})})
+      .then(function(r){
+        if(r.ok){
+          topMsg('Position opened', true);
+          msg('Live open OK ($'+dep.toFixed(2)+') — check LIVE trades panel.', true);
+        }else{
+          var err=r.error||'Open failed';
+          if(r.manual_live_blocked&&r.notification) err=err+' — alert: '+r.notification;
+          topMsg(err, false);
+          msg(err, false);
+        }
+        return refresh();
+      })
+      .catch(function(e){ topMsg(String(e), false); msg(String(e), false); });
+  }
+
+  function runBrainiacLiveOpen(){
+    if(brainiacBusy) return;
+    var typed=window.prompt('Type LIVE to open SUPER-BRAINIAC top pick:');
+    if(typed!=='LIVE') return;
+    var dep=readDepositUsd('brainiac-live-deposit-usd', 3);
+    var t0=Date.now();
+    setBrainiacBusy(true,'Detective scan → pick best PAY/ALT → sign CLMM open ($'+dep.toFixed(2)+'). Often 2–4 min.','live');
+    topMsg('LIVE open pipeline ($'+dep.toFixed(2)+')…', false, true);
+    msg('SUPER-BRAINIAC LIVE: scanning then opening — watch purple panel.', false);
+    var tick=setInterval(function(){
+      var el=$('#brainiac-progress-text');
+      if(el&&brainiacBusy) el.textContent='LIVE pipeline… '+Math.round((Date.now()-t0)/1000)+'s';
+    }, 1000);
+    gj('/api/super-brainiac/run-once',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'LIVE',deposit_usd:dep})})
+      .then(function(r){
+        clearInterval(tick);
+        setBrainiacBusy(false,'');
+        var sec=Math.round((Date.now()-t0)/1000);
+        if(r.ok){
+          topMsg('LIVE open OK ('+sec+'s)', true);
+          msg('LIVE open confirmed in '+sec+'s.', true);
+          refresh();
+        }else{
+          topMsg(r.error||'LIVE failed', false);
+          msg(r.error||'LIVE failed', false);
+        }
+        if(r.top_pick||r.report) renderBrainiacStatus(r.report||r);
+        var lo=r.live_open;
+        if(lo&&lo.ok){
+          var st=$('#brainiac-status');
+          if(st){
+            var sig=(lo.clmm&&lo.clmm.signature)||lo.signature||'';
+            st.innerHTML+=(st.innerHTML?'<p style="margin-top:.5rem;color:var(--ok)">LIVE tx: <code>'+esc(String(sig).slice(0,24))+'…</code></p>':'');
           }
-          return refresh();
-        })
-        .catch(function(e){ topMsg(String(e), false); msg(String(e), false); });
-    };
+        }
+      })
+      .catch(function(e){
+        clearInterval(tick);
+        setBrainiacBusy(false,'');
+        topMsg(String(e), false);
+        msg(String(e), false);
+      });
+  }
+
+  function wireDashboardActions(){
+    if(wireDashboardActions._wired) return;
+    wireDashboardActions._wired=true;
+    document.addEventListener('click', function(ev){
+      var btn=ev.target.closest('[data-action]');
+      if(!btn||btn.disabled) return;
+      var act=btn.getAttribute('data-action');
+      if(act==='scan-run'){ ev.preventDefault(); runDashboardScan(); return; }
+      if(act==='tune-apply-sel'){ ev.preventDefault(); applyTuneSelection(false); return; }
+      if(act==='tune-apply-all'){ ev.preventDefault(); applyTuneSelection(true); return; }
+      if(act==='live-open-top'){ ev.preventDefault(); runLiveOpenTop(); return; }
+      if(act==='lp-pick-apr'){ ev.preventDefault(); setLpSelectionMode('apr'); return; }
+      if(act==='lp-pick-mom'){ ev.preventDefault(); setLpSelectionMode('momentum'); return; }
+      if(act==='brainiac-scan'){
+        if(brainiacBusy) return;
+        ev.preventDefault();
+        var t0=Date.now();
+        setBrainiacBusy(true,'Fetching Raydium pools + route probes… usually 1–2 min.','scan');
+        topMsg('Detective scan started…', false, true);
+        gj('/api/super-brainiac/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+          .then(function(r){
+            var rep=r.report||r;
+            var sec=rep.scan_duration_sec!=null?rep.scan_duration_sec:Math.round((Date.now()-t0)/1000);
+            setBrainiacBusy(false,'');
+            renderBrainiacStatus(rep);
+            topMsg(rep.scan_message||('Scan done in '+sec+'s'), true);
+          })
+          .catch(function(e){
+            setBrainiacBusy(false,'');
+            topMsg(String(e), false);
+            var st=$('#brainiac-status');
+            if(st) st.innerHTML='<span style="color:var(--no)">Scan failed: '+esc(String(e))+'</span>';
+          });
+        return;
+      }
+      if(act==='brainiac-live'){ ev.preventDefault(); runBrainiacLiveOpen(); return; }
+    }, false);
   }
 
   async function loadTunePlan(){
@@ -1158,7 +1265,9 @@
   }
 
   async function loadSettings(){
-    var s=await gj('/api/settings'); mount(s);
+    var s=await gj('/api/settings');
+    syncDepositInputsFromSettings(s);
+    mount(s);
   }
 
   function msg(t, ok){
@@ -1265,6 +1374,126 @@
     if(bootMode) applyViewMode(bootMode);
   }
 
+  var brainiacBusy=false;
+  function setBrainiacBusy(on,msg,mode){
+    brainiacBusy=!!on;
+    var panel=$('#super-brainiac-panel');
+    var prog=$('#brainiac-progress');
+    var txt=$('#brainiac-progress-text');
+    var b1=$('#btn-brainiac-scan');
+    var b2=$('#btn-brainiac-live');
+    if(panel) panel.classList.toggle('brainiac-busy',brainiacBusy);
+    if(prog) prog.classList.toggle('active',brainiacBusy);
+    if(txt&&msg) txt.textContent=msg;
+    if(b1){
+      b1.disabled=brainiacBusy;
+      b1.textContent=brainiacBusy&&mode!=='live'?'Scanning…':'Run detective scan';
+    }
+    if(b2){
+      b2.disabled=brainiacBusy;
+      b2.textContent=brainiacBusy&&mode==='live'?'Opening LIVE…':'LIVE open top pick';
+    }
+  }
+  function renderBrainiacDocs(docs){
+    var el=$('#brainiac-body');
+    if(!el) return;
+    var logic=docs.logic||{};
+    var cp=docs.create_pool||{};
+    var cfg=docs.config||{};
+    var targetApr=cfg.target_apr_pct!=null?cfg.target_apr_pct:999.99;
+    var html='<div class="lp-experiment-loop"><h3>'+esc(logic.module||'SUPER-BRAINIAC')+'</h3>';
+    html+='<p class="loop-sub">'+esc(logic.purpose||'')+'</p>';
+    html+='<div class="brainiac-apr-note"><strong>APR threshold ('+esc(String(targetApr))+'%)</strong> — experiment label only. ';
+    html+=esc(logic.apr_target_note||'We rank by expected fee USD and confidence, not headline pool APR.')+'</div>';
+    if(logic.pair_shape_rule){
+      html+='<p class="loop-sub">'+esc(logic.pair_shape_rule)+'</p>';
+    }
+    html+='<ul>';
+    (logic.universe_filters||[]).forEach(function(x){ html+='<li>'+esc(x)+'</li>'; });
+    html+='</ul><p class="loop-sub"><strong>Scoring</strong></p><ul>';
+    (logic.scoring_model||[]).forEach(function(x){ html+='<li>'+esc(x)+'</li>'; });
+    html+='</ul>';
+    html+='<div class="brainiac-fee-tier-box"><strong>fee_tier_boost:</strong> favors 1%–4% pool feeRate; still picks 0.115%+ if expected $ wins.</div>';
+    html+='<div id="brainiac-progress" class="brainiac-progress"><span class="brainiac-spin"></span><span id="brainiac-progress-text">Idle</span></div>';
+    html+='<div class="brainiac-live-row">';
+    html+='<button type="button" id="btn-brainiac-scan" class="p" data-action="brainiac-scan">Run detective scan</button>';
+    html+='<label class="tune-deposit-label" title="Deposit size for detective LIVE open (pay USDC/SOL only)">$';
+    html+='<input type="number" id="brainiac-live-deposit-usd" min="0.25" step="0.01" value="'+esc(String(cfg.deposit_usd!=null?cfg.deposit_usd:3))+'" /></label>';
+    html+='<button type="button" id="btn-brainiac-live" class="p" data-action="brainiac-live">LIVE open top pick</button>';
+    html+='</div>';
+    html+='<div id="brainiac-status" class="brainiac-result muted">No scan yet — click <strong>Run detective scan</strong> (about 1–2 minutes).</div></div>';
+    if(cp.verdict_short){
+      html+='<div class="sec-blurb" style="margin-top:1rem"><strong>Create pool?</strong> '+esc(cp.verdict_short)+'</div>';
+    }
+    el.innerHTML=html;
+    syncDepositInputsFromSettings({super_brainiac_deposit_usd: cfg.deposit_usd});
+  }
+  function brainiacEstFeeCell(bs, cfgDeposit){
+    var est=bs&&bs.est_fee_usd_24h;
+    var dep=cfgDeposit!=null?cfgDeposit:(bs&&bs.deposit_usd);
+    var html='<strong>your est fee/24h '+esc(fmtFeesUsd(est))+'</strong>';
+    if(dep!=null) html+=' <span class="muted">(deposit $'+esc(String(dep))+')</span>';
+    return html;
+  }
+  function renderBrainiacLeaderboard(rep){
+    var rows=(rep.leaderboard||[]).slice(0,12);
+    if(!rows.length) return '';
+    var dep=rep.config&&rep.config.deposit_usd;
+    return '<p class="muted" style="margin:.85rem 0 .35rem">Top scored PAY/ALT (hover to pause refresh while copying links)</p>'+
+      '<div class="tbl-scroll"><table class="tb2 brainiac-leader-tbl"><thead><tr>'+
+      '<th>#</th><th>Pair</th><th>Est fee/24h</th><th>Pool fee 24h</th><th>TVL</th><th>Score</th><th>Pool id</th></tr></thead><tbody>'+
+      rows.map(function(r,i){
+        var bs=r.best_strategy||{};
+        return '<tr><td>'+(i+1)+'</td><td>'+esc(r.pair_label||r.pair||'')+'</td><td>'+
+          esc(fmtFeesUsd(bs.est_fee_usd_24h))+(dep!=null?' <span class="muted">@$'+esc(String(dep))+'</span>':'')+'</td><td>'+
+          esc(fmtUsd(r.fee_24h_usd))+'</td><td>'+esc(fmtUsd(r.liquidity_usd))+'</td><td>'+
+          esc(String(bs.brainiac_score!=null?Number(bs.brainiac_score).toFixed(4):''))+'</td><td>'+
+          poolIdCell(r.pool_id)+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+  }
+  function renderBrainiacStatus(rep){
+    var st=$('#brainiac-status');
+    if(!st||!rep) return;
+    if(rep.scan_message&&!rep.top_pick){
+      st.innerHTML='<p>'+esc(rep.scan_message)+'</p><p class="muted">No PAY/ALT pool passed filters. Try more scan pages or relax confidence.</p>';
+      return;
+    }
+    var top=rep.top_pick;
+    if(!top){
+      st.textContent='No qualifying PAY/ALT pool.';
+      return;
+    }
+    var b=top.best_strategy||{};
+    var label=top.pair_label||top.pair||'';
+    var conf=b.confidence!=null?(' confidence '+Math.round(Number(b.confidence)*100)+'%'):'';
+    var hdr=rep.scan_message?('<p class="muted" style="margin:0 0 .5rem">'+esc(rep.scan_message)+'</p>'):'';
+    var depUsd=rep.config&&rep.config.deposit_usd;
+    var feeTier=top.fee_tier_pct!=null?(' · pool fee tier '+esc(String(top.fee_tier_pct))+'%'):'';
+    st.innerHTML=hdr+
+      '<p class="anom-pause-banner" style="margin:0 0 .5rem">Hover here to pause auto-refresh — use Copy / DEX / Sol on pool id.</p>'+
+      '<p style="margin:0"><strong>'+esc(label)+'</strong> <span class="muted">('+esc(top.pair_shape||'pay/alt')+')</span>'+feeTier+'</p>'+
+      '<p style="margin:.45rem 0 0" class="brainiac-pool-row"><span class="muted">Pool id</span> '+poolIdCell(top.pool_id)+'</p>'+
+      '<p style="margin:.35rem 0 0">TVL '+esc(fmtUsd(top.liquidity_usd))+
+      ' · pool fee 24h '+esc(fmtUsd(top.fee_24h_usd))+
+      ' · '+brainiacEstFeeCell(b, depUsd)+'</p>'+
+      '<p style="margin:.35rem 0 0">Model APR ~'+esc(String(b.theoretical_apr_pct||'?'))+'%'+conf+
+      ' · style <code>'+esc(b.strategy_id||'')+'</code> · score '+esc(String(b.brainiac_score||''))+'</p>'+
+      (b.meets_apr_target?'<p style="margin:.35rem 0 0;color:var(--ok)">Meets APR label threshold</p>':
+        '<p style="margin:.35rem 0 0;color:var(--muted)">Below APR label — still ranked by fee $</p>')+
+      renderBrainiacLeaderboard(rep);
+  }
+  function wireBrainiacFeedPause(){
+    var root=document.getElementById('super-brainiac-panel');
+    if(!root||root._brainiacPauseWired) return;
+    root._brainiacPauseWired=true;
+    root.addEventListener('mouseenter', function(){ setAutoRefreshPaused(true); });
+    root.addEventListener('mouseleave', function(){ setAutoRefreshPaused(false); });
+  }
+  gj('/api/super-brainiac/docs').then(renderBrainiacDocs).catch(function(){});
+  gj('/api/super-brainiac/status').then(function(r){ if(!r.empty) renderBrainiacStatus(r); }).catch(function(){});
+  wireBrainiacFeedPause();
+
+  wireDashboardActions();
   wireLpPickButtons();
   checkDashboardApi().then(function(h){
     if(h&&apiHasScanRoute===false){

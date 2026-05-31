@@ -31,12 +31,13 @@ class FeeGuardConfig:
     jupiter_max_priority_micro_lamports: int = 2_000
     clmm_open_compute_units: int = 200_000
     clmm_close_compute_units: int = 280_000
-    clmm_open_rent_sol: float = 0.042
+    clmm_open_rent_sol: float = 0.055
     clmm_close_overhead_sol: float = 0.012
     clmm_base_fee_sol: float = 0.000_02
     min_clmm_deposit_sol: float = 0.17
     min_deposit_to_fee_ratio: float = 4.0
     max_fee_pct_of_deposit: float = 35.0
+    max_rent_escrow_pct_of_deposit: float = 10.0
     max_estimated_fee_sol_per_tx: float = 0.065
     max_open_retries: int = 1
     max_session_spend_sol: float = 0.12
@@ -71,12 +72,13 @@ def fee_config_from_settings(settings: Any | None = None) -> FeeGuardConfig:
         jupiter_max_priority_micro_lamports=max(0, _i("jupiter_max_priority_micro_lamports", 2_000)),
         clmm_open_compute_units=max(100_000, _i("clmm_open_compute_units", 200_000)),
         clmm_close_compute_units=max(100_000, _i("clmm_close_compute_units", 280_000)),
-        clmm_open_rent_sol=max(0.0, _f("clmm_open_rent_sol", 0.042)),
+        clmm_open_rent_sol=max(0.0, _f("clmm_open_rent_sol", 0.055)),
         clmm_close_overhead_sol=max(0.0, _f("clmm_close_overhead_sol", 0.012)),
         clmm_base_fee_sol=max(0.0, _f("clmm_base_fee_sol", 0.00002)),
         min_clmm_deposit_sol=max(0.0, _f("min_clmm_deposit_sol", 0.008)),
         min_deposit_to_fee_ratio=max(1.0, _f("min_deposit_to_fee_ratio", 4.0)),
         max_fee_pct_of_deposit=max(1.0, _f("max_fee_pct_of_deposit", 35.0)),
+        max_rent_escrow_pct_of_deposit=max(1.0, min(100.0, _f("max_rent_escrow_pct_of_deposit", 10.0))),
         max_estimated_fee_sol_per_tx=max(0.0, _f("max_estimated_fee_sol_per_tx", 0.065)),
         max_open_retries=max(1, _i("max_open_retries", 1)),
         max_session_spend_sol=max(0.0, _f("max_session_spend_sol", 0.12)),
@@ -224,11 +226,23 @@ def assert_clmm_open_allowed(
     *,
     settings: Any | None = None,
     priority_micro: int | None = None,
+    open_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Raise if this open is economically unsafe; return cost estimate dict."""
 
     cfg = fee_config_from_settings(settings)
     est = estimate_clmm_open_cost_sol(cfg, deposit_sol=deposit_sol, priority_micro=priority_micro)
+    rent_est = None
+    if open_kwargs is not None:
+        from raydium_lp1.lp_rent_escrow import assert_rent_escrow_allowed
+
+        rent_est = assert_rent_escrow_allowed(
+            deposit_sol=deposit_sol,
+            open_kwargs=open_kwargs,
+            settings=settings,
+            priority_micro=priority_micro,
+        )
+        est = {**est, "rent_escrow": rent_est.to_dict()}
     if not cfg.enabled:
         return est
 
@@ -306,14 +320,29 @@ def sanitize_clmm_payload(script_name: str, payload: dict[str, Any], *, settings
     if script_name == "open_position.mjs":
         out["compute_units"] = cfg.clmm_open_compute_units
         dep = float(out.get("input_amount_human") or 0)
-        assert_clmm_open_allowed(dep, settings=settings, priority_micro=micro)
-    elif script_name == "close_position.mjs":
+        open_kw = {
+            k: out[k]
+            for k in (
+                "full_range",
+                "wide_range",
+                "wide_range_width_pct",
+                "literal_pool_full_range",
+                "single_side",
+                "single_side_width_pct",
+                "tick_lower_pct_below",
+                "tick_upper_pct_above",
+            )
+            if k in out
+        }
+        assert_clmm_open_allowed(dep, settings=settings, priority_micro=micro, open_kwargs=open_kw or None)
+    elif script_name in ("close_position.mjs", "burn_position_nft.mjs"):
         out["compute_units"] = cfg.clmm_close_compute_units
         assert_clmm_close_allowed(settings=settings, priority_micro=micro)
-        out["jupiter_priority_micro_lamports"] = min(
-            cfg.jupiter_max_priority_micro_lamports,
-            int(out.get("jupiter_priority_micro_lamports") or cfg.jupiter_max_priority_micro_lamports),
-        )
+        if script_name == "close_position.mjs":
+            out["jupiter_priority_micro_lamports"] = min(
+                cfg.jupiter_max_priority_micro_lamports,
+                int(out.get("jupiter_priority_micro_lamports") or cfg.jupiter_max_priority_micro_lamports),
+            )
     elif script_name == "swap_sol_to_pay.mjs":
         lamports = int(out.get("amount_lamports") or 0)
         assert_swap_allowed(lamports / 1_000_000_000, settings=settings)

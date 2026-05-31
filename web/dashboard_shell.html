@@ -182,7 +182,26 @@ a{color:var(--a)}a#rj{margin-left:auto;font-size:.78rem;font-weight:500;color:va
 .topbar a{color:var(--a);font-size:.84rem;text-decoration:none;font-weight:500}
 .topbar a:hover{text-decoration:underline}
 @media(min-width:1100px){.funnel-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem;align-items:start}.funnel-grid .settings-wide{grid-column:1/-1}}
+.brainiac-apr-note{margin:.75rem 0;padding:.65rem .85rem;border-radius:10px;border:1px solid #c4b5fd;background:#f5f3ff;font-size:.84rem;line-height:1.45;color:#4c1d95}
+.brainiac-fee-tier-box{margin:.5rem 0 .75rem;padding:.55rem .75rem;border-radius:8px;border:1px dashed #a78bfa;background:#faf5ff;font-size:.8rem;color:#5b21b6}
+.brainiac-live-row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.5rem 0}
+.brainiac-live-row input[type=number]{width:5rem;padding:.25rem .4rem;border:1px solid var(--line);border-radius:6px}
+.tune-deposit-label{display:inline-flex;align-items:center;gap:.35rem;font-size:.82rem;color:var(--muted)}
+.tune-deposit-label input{width:4.5rem;padding:.2rem .35rem;border:1px solid var(--line);border-radius:6px}
+.brainiac-progress{margin:.75rem 0;padding:.75rem 1rem;border-radius:10px;border:1px solid #93c5fd;background:#eff6ff;display:none}
+.brainiac-progress.active{display:block}
+.brainiac-progress .brainiac-spin{display:inline-block;width:1rem;height:1rem;margin-right:.5rem;border:2px solid #93c5fd;border-top-color:#2563eb;border-radius:50%;animation:brainiacSpin .8s linear infinite;vertical-align:middle}
+@keyframes brainiacSpin{to{transform:rotate(360deg)}}
+#super-brainiac-panel.brainiac-busy{box-shadow:0 0 0 3px rgba(124,58,237,.25)}
+.brainiac-result{margin-top:.65rem;padding:.65rem .85rem;border-radius:10px;border:1px solid var(--line);background:#f8fafc;font-size:.86rem;line-height:1.5}
+.brainiac-pool-row .pool-id-cell{margin-top:.25rem}
+.brainiac-leader-tbl .pool-id-cell{max-width:min(100%,360px)}
+.emergency-banner{display:none;margin:0;padding:.65rem 1rem;border-bottom:3px solid #dc2626;background:#fef2f2;font-size:.9rem;line-height:1.45}
+.emergency-banner.active{display:block}
+.emergency-banner .emergency-head{font-weight:800;color:#dc2626;font-size:1rem;letter-spacing:.04em;margin-right:.5rem}
+.emergency-banner .emergency-reason{color:#0f172a}
 </style></head><body class="view-demo">
+<div id="emergency-banner" class="emergency-banner" role="alert" aria-live="assertive"></div>
 <header class="topbar topbar-unified">
 <div class="topbar-row mode-glow-row">
 <h1>Raydium-LP1</h1>
@@ -191,8 +210,8 @@ a{color:var(--a)}a#rj{margin-left:auto;font-size:.78rem;font-weight:500;color:va
 <button type="button" id="btn-mode-live" class="mode-pill live" aria-pressed="false" title="Real on-chain (type LIVE)">LIVE</button>
 </div>
 <div class="mode-control lp-pick-control" id="lp-pick-control" role="group" aria-label="LP buy priority">
-<button type="button" id="btn-lp-apr" class="mode-pill lp-apr" aria-pressed="true" title="LIVE opens top pool by APR">APR pick</button>
-<button type="button" id="btn-lp-mom" class="mode-pill lp-mom" aria-pressed="false" title="LIVE opens top tier=HOT by momentum score">MoM HOT</button>
+<button type="button" id="btn-lp-apr" class="mode-pill lp-apr" data-action="lp-pick-apr" aria-pressed="true" title="LIVE opens top pool by APR">APR pick</button>
+<button type="button" id="btn-lp-mom" class="mode-pill lp-mom" data-action="lp-pick-mom" aria-pressed="false" title="LIVE opens top tier=HOT by momentum score">MoM HOT →</button>
 </div>
 <span class="mode-status" id="mode-status-text">Loading mode…</span>
 <span class="badge badge-warn">127.0.0.1</span>
@@ -228,6 +247,7 @@ a{color:var(--a)}a#rj{margin-left:auto;font-size:.78rem;font-weight:500;color:va
 <div id="tab-funnel" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-funnel" aria-hidden="true">
 <div class="funnel-grid">
 <section id="lp-order-entry" class="panel panel-lp-order settings-wide"><h2>LP order entry — CLMM style <span class="pill pill-live">LIVE + DRY_RUN</span><span class="sub">Next open uses <code>lp_active_strategy</code> · stats on Positions tab</span></h2><div class="bd"><div id="fo-lp"></div></div></section>
+<section id="super-brainiac-panel" class="panel settings-wide" style="border:3px solid #7c3aed;border-radius:16px"><h2 style="background:linear-gradient(90deg,#f5f3ff,#fff);color:#5b21b6">SUPER-BRAINIAC_POSSIBILITIES <span class="pill" style="background:#ede9fe;color:#5b21b6;border-color:#c4b5fd">experiment</span><span class="sub">Fee-capture detective · scan → score order types → optional $3 LIVE</span></h2><div class="bd" id="brainiac-body"><p class="muted">Loading experiment logic…</p></div></section>
 <section class="panel"><h2>Scan funnel <a id="rj" href="api/dashboard">GET /api/dashboard →</a></h2><div id="fu" class="bd"></div></section>
 <section class="panel settings-wide"><h2>Auto-tune gates <span class="sub">Run scan, tune, apply — stay in browser</span></h2><div id="tune-panel" class="bd tune-panel"><p class="muted">Loading tune plan…</p></div></section>
 <section class="panel"><h2>Doctor recommends <span class="sub">Extra diagnosis</span></h2><div id="doctor-panel" class="bd doctor-panel"><p class="muted">Loading…</p></div></section>
@@ -239,5 +259,5 @@ a{color:var(--a)}a#rj{margin-left:auto;font-size:.78rem;font-weight:500;color:va
 </div>
 <script src="/mode_shared.js?v=20260601" defer></script>
 <script src="/lp1_copy.js?v=20260607" defer></script>
-<script src="/dashboard_client.js?v=20260610" defer></script>
+<script src="/dashboard_client.js?v=20260615" defer></script>
 </body></html>

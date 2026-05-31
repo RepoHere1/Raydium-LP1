@@ -49,6 +49,7 @@ API_FEATURES = (
     "tune_apply",
     "live_readiness",
     "live_open",
+    "super_brainiac",
     "doctor",
     "mode",
 )
@@ -385,6 +386,8 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "emergency_max_slippage_pct", "label": "Emergency max slip (0-1 frac)", "type": "number", "step": "any"},
             {"key": "emergency_base_symbol", "label": "Emergency base symbol", "type": "text"},
             {"key": "emergency_alerts_path", "label": "Alerts path", "type": "text"},
+            {"key": "emergency_route_watch_enabled", "label": "Route watch (5×/24h)", "type": "checkbox"},
+            {"key": "emergency_route_checks_per_day", "label": "Route checks per 24h", "type": "number", "step": "1"},
             {"key": "track_liquidity_health", "label": "Track liquidity health", "type": "checkbox"},
             {"key": "liquidity_history_path", "label": "Liquidity history path", "type": "text"},
         ],
@@ -407,6 +410,7 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
             {"key": "max_open_retries", "label": "Max open attempts per click", "type": "number"},
             {"key": "max_session_spend_sol", "label": "Max session spend est. (SOL)", "type": "number", "step": "any"},
             {"key": "max_fee_pct_of_deposit", "label": "Max fee+rent % of deposit", "type": "number", "step": "any"},
+            {"key": "max_rent_escrow_pct_of_deposit", "label": "Max sunk rent % of deposit", "type": "number", "step": "any"},
             {"key": "clmm_open_rent_sol", "label": "Est. CLMM open rent (SOL)", "type": "number", "step": "any"},
         ],
     },
@@ -469,6 +473,38 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
                 "key": "manual_live_alerts_path",
                 "label": "Manual LIVE: block alerts path",
                 "type": "text",
+            },
+        ],
+    },
+    {
+        "title": "SUPER-BRAINIAC_POSSIBILITIES (experiment)",
+        "section_id": "super_brainiac",
+        "section_help": (
+            "Experimental fee-capture detective: scans CLMM pools with $5k+ TVL and two-way routes, "
+            "scores all LP order styles, optionally opens the top pick for a small deposit."
+        ),
+        "section_rec": (
+            "Start with scan-only; enable auto_open only when you accept unattended LIVE. "
+            "Target APR 999.99 is a ranking label — real fee $ matters more."
+        ),
+        "fields": [
+            {"key": "super_brainiac_enabled", "label": "Experiment enabled", "type": "checkbox"},
+            {"key": "super_brainiac_min_liquidity_usd", "label": "Min pool TVL ($)", "type": "number", "step": "any"},
+            {"key": "super_brainiac_deposit_usd", "label": "Experiment deposit ($)", "type": "number", "step": "any"},
+            {"key": "super_brainiac_target_apr_pct", "label": "Target APR % (ranking label)", "type": "number", "step": "any"},
+            {"key": "super_brainiac_auto_open_live", "label": "Auto LIVE open top pick", "type": "checkbox"},
+            {"key": "super_brainiac_scan_pages", "label": "Scan pages", "type": "number"},
+            {"key": "super_brainiac_prefer_fee_pct_min", "label": "Prefer fee % min", "type": "number", "step": "any"},
+            {"key": "super_brainiac_prefer_fee_pct_max", "label": "Prefer fee % max", "type": "number", "step": "any"},
+            {"key": "super_brainiac_require_buy_route", "label": "Require buy routes", "type": "checkbox"},
+            {"key": "super_brainiac_require_sell_route", "label": "Require sell routes", "type": "checkbox"},
+            {"key": "super_brainiac_min_confidence", "label": "Min confidence to open", "type": "number", "step": "any"},
+            {"key": "super_brainiac_continuous_interval_sec", "label": "Loop interval (sec)", "type": "number", "step": "any"},
+            {"key": "super_brainiac_report_path", "label": "Report JSON path", "type": "text"},
+            {
+                "key": "super_brainiac_require_pay_alt_pair_only",
+                "label": "PAY/ALT pairs only (no SOL/USDC)",
+                "type": "checkbox",
             },
         ],
     },
@@ -672,6 +708,43 @@ def main(argv: list[str] | None = None) -> int:
             if path == "/api/scan/status":
                 self._send_json(200, scan_status())
                 return
+            if path == "/api/super-brainiac/status":
+                from raydium_lp1.super_brainiac.possibilities import load_brainiac_config, report_path
+
+                cfg, _ = load_brainiac_config(paths.settings_path)
+                rpath = report_path(cfg)
+                if not rpath.is_file():
+                    self._send_json(
+                        200,
+                        {"ok": True, "empty": True, "report_path": str(rpath), "message": "No scan yet"},
+                    )
+                    return
+                try:
+                    data = json.loads(rpath.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    self._send_json(500, {"error": str(exc)})
+                    return
+                self._send_json(200, data)
+                return
+            if path == "/api/super-brainiac/docs":
+                from raydium_lp1.super_brainiac.possibilities import LOGIC_DOCS, load_brainiac_config
+                from raydium_lp1.super_brainiac.create_pool_analysis import analyze_create_pool_feasibility
+
+                bcfg, _ = load_brainiac_config(paths.settings_path)
+                self._send_json(
+                    200,
+                    {
+                        "logic": LOGIC_DOCS,
+                        "create_pool": analyze_create_pool_feasibility(),
+                        "config": {
+                            "target_apr_pct": bcfg.target_apr_pct,
+                            "deposit_usd": bcfg.deposit_usd,
+                            "min_liquidity_usd": bcfg.min_liquidity_usd,
+                            "require_pay_alt_pair_only": bcfg.require_pay_alt_pair_only,
+                        },
+                    },
+                )
+                return
             if path == "/api/scan_console":
                 if WEB_SCAN_CONSOLE_LOG.is_file():
                     try:
@@ -742,6 +815,45 @@ def main(argv: list[str] | None = None) -> int:
                     return
                 self._send_json(200, result)
                 return
+            if path == "/api/super-brainiac/scan":
+                try:
+                    from raydium_lp1.super_brainiac.possibilities import (
+                        load_brainiac_config,
+                        scan_brainiac_universe,
+                        write_brainiac_report,
+                    )
+
+                    cfg, scanner = load_brainiac_config(paths.settings_path)
+                    report = scan_brainiac_universe(cfg=cfg, scanner=scanner)
+                    rpath = write_brainiac_report(report, cfg)
+                    self._send_json(200, {"ok": True, "report_path": str(rpath), "report": report})
+                except Exception as exc:
+                    self._send_json(500, {"error": str(exc)})
+                return
+            if path == "/api/super-brainiac/run-once":
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except json.JSONDecodeError as exc:
+                    self._send_json(400, {"error": f"invalid JSON: {exc}"})
+                    return
+                if str(body.get("confirm", "")).upper() != "LIVE":
+                    self._send_json(400, {"error": "POST confirm=LIVE required"})
+                    return
+                try:
+                    from raydium_lp1.super_brainiac.possibilities import run_brainiac_cycle
+
+                    dep_raw = body.get("deposit_usd") or body.get("input_amount_usd")
+                    dep_usd = float(dep_raw) if dep_raw not in (None, "") else None
+                    result = run_brainiac_cycle(
+                        execute_live=True,
+                        settings_path=paths.settings_path,
+                        deposit_usd=dep_usd,
+                    )
+                except Exception as exc:
+                    self._send_json(500, {"error": str(exc)})
+                    return
+                self._send_json(200 if result.get("ok") else 502, result)
+                return
             if path == "/api/live/open":
                 try:
                     body = json.loads(raw_body.decode("utf-8"))
@@ -752,9 +864,25 @@ def main(argv: list[str] | None = None) -> int:
                     self._send_json(400, {"error": "POST confirm=LIVE required"})
                     return
                 try:
+                    dep_raw = body.get("deposit_usd") or body.get("input_amount_usd")
+                    dep_usd = float(dep_raw) if dep_raw not in (None, "") else None
+                    sol_raw = body.get("input_amount_sol")
+                    settings = load_settings_json(paths.settings_path)
+                    sol_price = float(
+                        body.get("sol_price_usd")
+                        or settings.get("lp_pay_funding_sol_price_usd")
+                        or 180
+                    ) or 180.0
+                    amount_sol = (
+                        float(sol_raw)
+                        if sol_raw not in (None, "")
+                        else (dep_usd / sol_price if dep_usd else None)
+                    )
                     result = open_clmm_candidate(
                         pool_id=str(body.get("pool_id") or "") or None,
-                        input_amount_sol=body.get("input_amount_sol"),
+                        input_amount_sol=amount_sol,
+                        input_amount_usd=dep_usd,
+                        sol_price_usd=sol_price,
                     )
                 except (FileNotFoundError, ValueError) as exc:
                     self._send_json(400, {"error": str(exc)})
