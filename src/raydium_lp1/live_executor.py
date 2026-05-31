@@ -267,11 +267,84 @@ def open_clmm_candidate(
         open_kwargs["pay_mint_only"] = False
     open_kwargs["priority_fee_micro_lamports"] = fee_cfg.max_priority_fee_micro_lamports
 
-    dep_sol_for_guard = (
-        float(input_amount_usd) / sol_px_guard
-        if input_amount_usd is not None
-        else float(pos_sol)
+    spend_plan: dict[str, Any] | None = None
+    from raydium_lp1.spend_less_get_more import (
+        TAG as SPEND_LESS_TAG,
+        analyze_open_plan,
+        attach_post_open_analysis,
+        enforce_open_plan,
     )
+
+    if input_amount_usd is not None:
+        req_usd = float(input_amount_usd)
+    elif pay_sym in ("USDC", "USDT", "USD1"):
+        req_usd = float(deposit_human)
+    else:
+        req_usd = float(deposit_human) * sol_px_guard
+    sl = analyze_open_plan(
+        requested_deposit_usd=req_usd,
+        open_kwargs=open_kwargs,
+        pay_symbol=pay_sym,
+        balance_sol=bal_sol,
+        reserve_sol=reserve,
+        settings=fee_settings,
+        strategy_id=strategy_id or getattr(config, "lp_active_strategy", None),
+        sol_price_usd=sol_px_guard,
+    )
+    spend_plan = sl.to_dict()
+
+    if sl.strategy_override and sl.strategy_override != getattr(config, "lp_active_strategy", None):
+        config = replace(
+            config,
+            lp_active_strategy=sl.strategy_override,
+            lp_skew_use_momentum=True,
+            lp_planning_enabled=True,
+        )
+        lp_style = resolve_live_open_style(config, pool)
+        style_open = dict(lp_style.open_kwargs)
+        open_kwargs = _build_clmm_open_kwargs(
+            style_open,
+            pool_id=str(pool["id"]),
+            input_mint=input_mint,
+            input_amount_human=deposit_human,
+            tick_lower_pct_below=tick_lower_pct_below,
+            tick_upper_pct_above=tick_upper_pct_above,
+        )
+        open_kwargs["priority_fee_micro_lamports"] = fee_cfg.max_priority_fee_micro_lamports
+        sl = analyze_open_plan(
+            requested_deposit_usd=req_usd,
+            open_kwargs=open_kwargs,
+            pay_symbol=pay_sym,
+            balance_sol=bal_sol,
+            reserve_sol=reserve,
+            settings=fee_settings,
+            strategy_id=sl.strategy_override,
+            sol_price_usd=sol_px_guard,
+        )
+        spend_plan = sl.to_dict()
+
+    if sl.clamped or sl.effective_deposit_usd != req_usd:
+        input_amount_usd = sl.effective_deposit_usd
+        deposit_human = _resolve_deposit_human(
+            pos_sol, pay_res, usd_notional=input_amount_usd, sol_price_usd=sol_px_guard
+        )
+        open_kwargs["input_amount_human"] = deposit_human
+
+    if not sl.ok:
+        try:
+            enforce_open_plan(sl)
+        except FeeGuardBlockedError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "fee_guard": True,
+                "spend_less_get_more": spend_plan,
+                "hint": spend_plan.get("recommendations", [None])[0]
+                if spend_plan.get("recommendations")
+                else f"{SPEND_LESS_TAG}: see spend_less_get_more in response.",
+            }
+
+    dep_sol_for_guard = sl.effective_deposit_sol
     try:
         fee_est = assert_clmm_open_allowed(
             dep_sol_for_guard,
@@ -284,8 +357,9 @@ def open_clmm_candidate(
             "ok": False,
             "error": str(exc),
             "fee_guard": True,
+            "spend_less_get_more": spend_plan,
             "hint": (
-                "CLMM rent/escrow guard blocked this open. Check rent_escrow in the error, "
+                "CLMM rent/escrow guard blocked this open. Check rent_escrow in spend_less_get_more, "
                 "raise deposit size, narrow the band, or adjust max_rent_escrow_pct_of_deposit in settings."
             ),
         }
@@ -313,41 +387,33 @@ def open_clmm_candidate(
         cap = assess_capacity(config, w)
         bal_sol = float((cap.get("balance") or {}).get("sol") or 0.0)
 
-    rent_row = fee_est.get("rent_escrow") if isinstance(fee_est.get("rent_escrow"), dict) else {}
-    rent_total = float(rent_row.get("total_wallet_sol_est") or fee_est.get("rent_sol") or open_cost_sol)
-    rent_buffer = 0.05 if pay_sym in ("SOL", "WSOL") else 0.003
-    sol_need = reserve + rent_total + rent_buffer
-    if pay_sym in ("SOL", "WSOL"):
-        sol_need += dep_sol_for_guard
-    elif pay_sym not in ("SOL", "WSOL"):
-        pass
-    max_dep_sol = max(0.0, bal_sol - reserve - rent_total - rent_buffer)
-    if pay_sym in ("SOL", "WSOL") and dep_sol_for_guard > max_dep_sol + 1e-9:
+    if sl.sol_need_est > 0 and bal_sol + 1e-9 < sl.sol_need_est:
         return {
             "ok": False,
             "error": (
-                f"wallet cannot fund ${(dep_sol_for_guard * sol_px_guard):.2f} SOL deposit + rent: "
-                f"balance={bal_sol:.4f} SOL, max deposit ~{max_dep_sol:.4f} SOL (~${max_dep_sol * sol_px_guard:.2f})"
+                f"{SPEND_LESS_TAG}: wallet {bal_sol:.4f} SOL < need ~{sl.sol_need_est:.4f} SOL "
+                f"for ${sl.effective_deposit_usd:.2f} deposit + rent."
             ),
             "balance_sol": bal_sol,
-            "max_deposit_sol": round(max_dep_sol, 6),
+            "spend_less_get_more": spend_plan,
             "fee_guard_estimate": fee_est,
-            "hint": "Top up SOL, lower deposit_usd, or use a narrower band (less rent).",
+            "hint": spend_plan.get("recommendations", ["Top up SOL or lower deposit."])[0],
         }
     if funding_result and funding_result.get("funded"):
         plan = funding_result.get("funding_plan") or {}
-        sol_need += float(plan.get("estimated_sol_swap") or 0.0)
-    if bal_sol < sol_need:
-        return {
-            "ok": False,
-            "error": (
-                f"insufficient SOL: balance={bal_sol:.4f} need ~{sol_need:.4f} "
-                "(reserve + CLMM rent/fees + optional pay-token swap)"
-            ),
-            "balance_sol": bal_sol,
-            "pay_funding": funding_result,
-            "fee_guard_estimate": fee_est,
-        }
+        sol_need_extra = reserve + float(plan.get("estimated_sol_swap") or 0.0) + open_cost_sol
+        if bal_sol + 1e-9 < sol_need_extra:
+            return {
+                "ok": False,
+                "error": (
+                    f"insufficient SOL: balance={bal_sol:.4f} need ~{sol_need_extra:.4f} "
+                    "(reserve + CLMM rent/fees + optional pay-token swap)"
+                ),
+                "balance_sol": bal_sol,
+                "pay_funding": funding_result,
+                "fee_guard_estimate": fee_est,
+                "spend_less_get_more": spend_plan,
+            }
 
     result: dict[str, Any] = {"ok": False, "error": "open not attempted"}
     retry_extras: list[dict[str, Any]] = [{}]
@@ -387,8 +453,19 @@ def open_clmm_candidate(
                 "On-chain tx failed (often insufficient SOL for NFT rent + tick accounts). "
                 "Keep ~0.04–0.06 SOL in wallet for a 0.005 SOL CLMM open, not just the deposit size."
             )
-        out = {"ok": False, "error": err or "CLMM open failed", "clmm": result, "fee_guard_estimate": fee_est}
-        return out
+        out = {
+            "ok": False,
+            "error": err or "CLMM open failed",
+            "clmm": result,
+            "fee_guard_estimate": fee_est,
+            "spend_less_get_more": spend_plan,
+        }
+        return attach_post_open_analysis(
+            out,
+            plan=sl,
+            deposit_usd=sl.effective_deposit_usd,
+            settings=fee_settings,
+        )
 
     row = {
         "opened_at": _now_iso(),
@@ -397,7 +474,7 @@ def open_clmm_candidate(
         "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
         "apr": pool.get("apr"),
         "liquidity_usd": pool.get("liquidity_usd"),
-        "input_amount_sol": pos_sol,
+        "input_amount_sol": dep_sol_for_guard,
         "input_amount_human": deposit_human,
         "input_pay_symbol": getattr(pay_res, "pay_symbol", None) if pay_res else None,
         "position_nft_mint": result.get("position_nft_mint") or result.get("nftMint"),
@@ -408,13 +485,24 @@ def open_clmm_candidate(
         **lp_style.to_position_fields(),
     }
     _append_active_position(row)
-    out_ok: dict[str, Any] = {"ok": True, "position": row, "clmm": result, "fee_guard_estimate": fee_est}
+    out_ok: dict[str, Any] = {
+        "ok": True,
+        "position": row,
+        "clmm": result,
+        "fee_guard_estimate": fee_est,
+        "spend_less_get_more": spend_plan,
+    }
     if funding_result is not None:
         out_ok["pay_funding"] = funding_result
     from raydium_lp1.lp_wallet_settlement import settle_wallet_after_trade
 
     out_ok["wallet_settlement"] = settle_wallet_after_trade(sol_price_usd=sol_price_usd, fee_settings=fee_settings)
-    return out_ok
+    return attach_post_open_analysis(
+        out_ok,
+        plan=sl,
+        deposit_usd=sl.effective_deposit_usd,
+        settings=fee_settings,
+    )
 
 
 def _append_active_position(row: dict[str, Any]) -> None:

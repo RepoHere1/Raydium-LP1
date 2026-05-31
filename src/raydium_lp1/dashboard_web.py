@@ -506,6 +506,10 @@ _FORM_SECTIONS: list[dict[str, Any]] = [
                 "label": "PAY/ALT pairs only (no SOL/USDC)",
                 "type": "checkbox",
             },
+            {"key": "spend_less_get_more_enabled", "label": "SPEND LESS=GET MORE enabled", "type": "checkbox"},
+            {"key": "spend_less_auto_clamp_deposit", "label": "Auto-clamp deposit to affordable", "type": "checkbox"},
+            {"key": "spend_less_auto_fallback_from_wide", "label": "Wide→single-sided fallback", "type": "checkbox"},
+            {"key": "spend_less_on_chain_rent_buffer_sol", "label": "SOL rent buffer (SOL pay)", "type": "number", "step": "any"},
         ],
     },
     {

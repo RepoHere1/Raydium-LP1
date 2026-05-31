@@ -1,6 +1,8 @@
 """Universal LP open/close order rules (ONE PAY funding, trash→SOL sweep, abandoned pools).
 
 Buy / open rules (enforced before any live CLMM open):
+- **SPEND LESS=GET MORE** (`spend_less_get_more.analyze_open_plan`) — wallet headroom, rent cap,
+  optional deposit clamp, wide→single-sided fallback; runs before broadcast.
 - Run ``lp_rent_escrow.estimate_open_rent_escrow`` via ``fee_guard.assert_clmm_open_allowed``.
 - **Never** exceed ``max_rent_escrow_pct_of_deposit`` (default 10%) on estimated *sunk*
   (non-recoverable) tick-array rent vs deposit USD — adjustable in dashboard settings.

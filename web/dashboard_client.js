@@ -1451,6 +1451,26 @@
           poolIdCell(r.pool_id)+'</td></tr>';
       }).join('')+'</tbody></table></div>';
   }
+  function renderBrainiacSpendLess(sl, depUsd){
+    if(!sl||!sl.tag) return '';
+    var eff=sl.effective_deposit_usd!=null?sl.effective_deposit_usd:depUsd;
+    var lines='<div class="brainiac-spend-less" style="margin:.5rem 0;padding:.55rem .75rem;border-radius:8px;border:1px solid #a7f3d0;background:#ecfdf5;font-size:.82rem">';
+    lines+='<strong>'+esc(sl.tag||'SPEND LESS=GET MORE')+'</strong> ';
+    if(sl.ok){
+      lines+='<span style="color:var(--ok)">OK</span> · effective deposit <strong>'+esc(fmtFeesUsd(eff))+'</strong>';
+      if(sl.clamped) lines+=' <span class="muted">(clamped from $'+esc(String(sl.requested_deposit_usd))+')</span>';
+      if(sl.strategy_override) lines+=' · style <code>'+esc(sl.strategy_override)+'</code>';
+    }else{
+      lines+='<span style="color:var(--bad)">blocked</span>';
+      if(sl.block_reasons&&sl.block_reasons.length) lines+=' — '+esc(sl.block_reasons.join('; '));
+    }
+    if(sl.min_deposit_usd_rent_cap!=null&&sl.min_deposit_usd_rent_cap>0)
+      lines+='<br><span class="muted">Min deposit ~$'+esc(String(Math.ceil(sl.min_deposit_usd_rent_cap)))+' for rent cap · wallet max ~$'+esc(String(Math.floor(sl.max_deposit_usd_wallet||0)))+'</span>';
+    if(sl.recommendations&&sl.recommendations[0])
+      lines+='<br><span class="muted">'+esc(sl.recommendations[0])+'</span>';
+    lines+='</div>';
+    return lines;
+  }
   function renderBrainiacStatus(rep){
     var st=$('#brainiac-status');
     if(!st||!rep) return;
@@ -1472,6 +1492,7 @@
     st.innerHTML=hdr+
       '<p class="anom-pause-banner" style="margin:0 0 .5rem">Hover here to pause auto-refresh — use Copy / DEX / Sol on pool id.</p>'+
       '<p style="margin:0"><strong>'+esc(label)+'</strong> <span class="muted">('+esc(top.pair_shape||'pay/alt')+')</span>'+feeTier+'</p>'+
+      renderBrainiacSpendLess(top.spend_less_get_more, depUsd)+
       '<p style="margin:.45rem 0 0" class="brainiac-pool-row"><span class="muted">Pool id</span> '+poolIdCell(top.pool_id)+'</p>'+
       '<p style="margin:.35rem 0 0">TVL '+esc(fmtUsd(top.liquidity_usd))+
       ' · pool fee 24h '+esc(fmtUsd(top.fee_24h_usd))+

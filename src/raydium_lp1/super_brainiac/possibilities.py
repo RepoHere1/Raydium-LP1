@@ -65,6 +65,11 @@ LOGIC_DOCS: dict[str, Any] = {
         "When super_brainiac_auto_open_live is true, run-once picks the top passing pool and "
         "opens with super_brainiac_deposit_usd using normal pay-token, fee-guard, and manual-live rules."
     ),
+    "spend_less_get_more": (
+        "SPEND LESS=GET MORE runs on every detective scan and LIVE open: estimates sunk rent vs deposit, "
+        "wallet headroom, clamps deposit when auto_clamp is on, and can fall back from wide band to "
+        "single-sided on SOL/alt when micro deposits fail the rent cap."
+    ),
 }
 
 
@@ -468,8 +473,9 @@ def scan_brainiac_universe(
     scanner: ScannerConfig | None = None,
     settings_path: Path | None = None,
 ) -> dict[str, Any]:
+    spath = settings_path or (REPO / "config" / "settings.json")
     if cfg is None or scanner is None:
-        cfg, scanner = load_brainiac_config(settings_path)
+        cfg, scanner = load_brainiac_config(spath)
 
     from dataclasses import replace
 
@@ -547,6 +553,28 @@ def scan_brainiac_universe(
     )
 
     top = scored[0] if scored else None
+    if top:
+        try:
+            from raydium_lp1 import wallet as wallet_mod
+            from raydium_lp1.scanner import assess_capacity
+            from raydium_lp1.settings_io import load_settings_json
+            from raydium_lp1.spend_less_get_more import annotate_brainiac_pick
+
+            w = wallet_mod.load_wallet()
+            cap = assess_capacity(scanner, w)
+            bal = float((cap.get("balance") or {}).get("sol") or 0.0)
+            sl_settings = load_settings_json(spath)
+            top = annotate_brainiac_pick(
+                top,
+                deposit_usd=cfg.deposit_usd,
+                balance_sol=bal,
+                reserve_sol=float(getattr(scanner, "reserve_sol", 0.002) or 0.002),
+                settings=sl_settings,
+                scanner=scanner,
+            )
+        except Exception as exc:
+            top = {**top, "spend_less_get_more_error": str(exc)}
+
     duration = round(time.time() - t0, 2)
     return {
         "scanned_at": datetime.now(UTC).isoformat(),
@@ -607,32 +635,65 @@ def execute_brainiac_open(
     cfg: BrainiacConfig,
     scanner: ScannerConfig,
     force: bool = True,
+    deposit_usd: float | None = None,
 ) -> dict[str, Any]:
-    from raydium_lp1.fee_guard import reset_session_ledger
+    from raydium_lp1.fee_guard import FeeGuardBlockedError, reset_session_ledger
     from raydium_lp1.live_executor import open_clmm_candidate
     from raydium_lp1.settings_io import load_settings_json
+    from raydium_lp1 import wallet as wallet_mod
+    from raydium_lp1.scanner import assess_capacity
+    from raydium_lp1.spend_less_get_more import prepare_brainiac_live_open
 
     pool_id = str(pick.get("pool_id") or "")
-    best = pick.get("best_strategy") if isinstance(pick.get("best_strategy"), dict) else {}
-    strategy_id = str(best.get("strategy_id") or "auto_volatility_pick")
+    dep = float(deposit_usd if deposit_usd is not None else cfg.deposit_usd)
 
     settings_path = REPO / "config" / "settings.json"
-    fee_settings = load_settings_json(settings_path)
+    fee_settings = dict(load_settings_json(settings_path))
     fee_settings["fee_guard_enabled"] = True
     reset_session_ledger()
 
-    sol_price = float(fee_settings.get("lp_pay_funding_sol_price_usd") or 180) or 180.0
-    amount_sol = cfg.deposit_usd / sol_price
+    w = wallet_mod.load_wallet()
+    cap = assess_capacity(scanner, w)
+    bal = float((cap.get("balance") or {}).get("sol") or 0.0)
+    reserve = float(getattr(scanner, "reserve_sol", 0.002) or 0.002)
 
-    return open_clmm_candidate(
+    plan, strategy_id, eff_dep = prepare_brainiac_live_open(
+        pick,
+        deposit_usd=dep,
+        balance_sol=bal,
+        reserve_sol=reserve,
+        settings=fee_settings,
+        scanner=scanner,
+    )
+    if not plan.ok:
+        try:
+            from raydium_lp1.spend_less_get_more import enforce_open_plan
+
+            enforce_open_plan(plan)
+        except FeeGuardBlockedError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "fee_guard": True,
+                "spend_less_get_more": plan.to_dict(),
+            }
+
+    sol_price = float(fee_settings.get("lp_pay_funding_sol_price_usd") or 180) or 180.0
+    use_usd = float(eff_dep if eff_dep is not None else dep)
+    amount_sol = use_usd / sol_price
+
+    out = open_clmm_candidate(
         pool_id=pool_id,
         input_amount_sol=amount_sol,
-        input_amount_usd=cfg.deposit_usd,
+        input_amount_usd=use_usd,
         force_pay_token_only=True,
         strategy_id=strategy_id,
         fee_guard_settings=fee_settings,
         sol_price_usd=sol_price,
     )
+    if "spend_less_get_more" not in out:
+        out["spend_less_get_more"] = plan.to_dict()
+    return out
 
 
 def run_brainiac_cycle(
@@ -663,7 +724,12 @@ def run_brainiac_cycle(
             out["ok"] = False
             out["error"] = block or "no pick"
         else:
-            live = execute_brainiac_open(pick, cfg=cfg, scanner=scanner)
+            live = execute_brainiac_open(
+                pick,
+                cfg=cfg,
+                scanner=scanner,
+                deposit_usd=deposit_usd,
+            )
             out["live_open"] = live
             out["ok"] = bool(live.get("ok"))
             report["live_open"] = live

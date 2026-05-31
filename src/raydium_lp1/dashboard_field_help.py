@@ -239,6 +239,22 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "Blocks literal full-range style traps before broadcast.",
         "10% default — never let sunk escrow exceed one-tenth of deposit. Raise only for large positions.",
     ),
+    "spend_less_get_more_enabled": (
+        "SPEND LESS=GET MORE planner on every LIVE open and detective scan/LIVE top pick.",
+        "Estimates rent, wallet headroom, clamps deposit, suggests style fallbacks.",
+    ),
+    "spend_less_auto_clamp_deposit": (
+        "When requested deposit exceeds wallet+rent affordability, lower to max safe size automatically.",
+        "On for detective $3 opens — wide band may still block until deposit is large enough.",
+    ),
+    "spend_less_auto_fallback_from_wide": (
+        "If wide 80% band fails rent cap on a SOL/alt pool, retry plan as single-sided asymmetric.",
+        "Avoids straddle Jupiter funding on micro deposits.",
+    ),
+    "spend_less_on_chain_rent_buffer_sol": (
+        "Extra SOL reserved beyond rent estimate when pay leg is SOL (one-tx headroom).",
+        "0.05 default — reduces Custom:1 insufficient-lamports failures.",
+    ),
     "clmm_open_rent_sol": (
         "Estimated one-time rent for CLMM NFT + tick accounts (the main fee trap on small opens).",
         "0.042 SOL is a realistic mainnet estimate.",
