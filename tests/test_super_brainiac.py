@@ -8,6 +8,7 @@ from raydium_lp1.super_brainiac.possibilities import (
     fee_tier_boost,
     in_range_factor,
     pool_passes_universe,
+    score_pool,
     score_strategy_for_pool,
 )
 
@@ -69,8 +70,42 @@ class SuperBrainiacTests(unittest.TestCase):
         self.assertGreater(fee_tier_boost(2.0, cfg), fee_tier_boost(0.05, cfg))
 
     def test_in_range_full_range_high(self) -> None:
-        ir = in_range_factor(self._pool(), width_pct=100, placement="full_range", skew=0)
-        self.assertEqual(ir, 1.0)
+        ir = in_range_factor(self._pool(), width_pct=100, placement="wide_band", skew=0)
+        self.assertEqual(ir, 0.82)
+
+    @patch("raydium_lp1.super_brainiac.possibilities.resolve_pay_mint")
+    @patch("raydium_lp1.super_brainiac.possibilities.check_pool_buy_routes")
+    @patch("raydium_lp1.super_brainiac.possibilities.routes.check_pool_sellability")
+    def test_score_pool_skips_routes_when_requested(self, mock_sell, mock_buy, mock_pay) -> None:
+        from raydium_lp1.lp_pay_mint import PayMintResolution
+
+        mock_pay.return_value = PayMintResolution(
+            pay_mint="So11111111111111111111111111111111111111112",
+            pay_symbol="SOL",
+            pay_is_mint_a=True,
+            alt_mint="MemeMint1111111111111111111111111111111111",
+            alt_symbol="MEME",
+        )
+        mock_buy.return_value = (False, ["no buy route"])
+        sell = unittest.mock.MagicMock()
+        sell.ok = False
+        sell.reasons = ["no sell route"]
+        mock_sell.return_value = sell
+
+        cfg = BrainiacConfig(deposit_usd=3.0, require_pay_alt_pair_only=True, min_liquidity_usd=100)
+        scanner = unittest.mock.MagicMock(
+            allowed_quote_symbols=("SOL", "USDC"),
+            route_sources=("jupiter",),
+            lp_open_pay_token_only=True,
+            lp_default_range_width_pct=15,
+            lp_skew_use_momentum=True,
+        )
+        pool = self._pool()
+        pool["open_time"] = int(__import__("time").time()) - 3600
+        row = score_pool(pool, cfg=cfg, scanner=scanner, check_routes=False)
+        self.assertIsNotNone(row)
+        self.assertFalse(row["routes_probed"])
+        self.assertIsNone(row["routes_verified"])
 
     @patch("raydium_lp1.super_brainiac.possibilities.resolve_pay_mint")
     @patch("raydium_lp1.super_brainiac.possibilities.check_pool_buy_routes")

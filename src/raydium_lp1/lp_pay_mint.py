@@ -1,4 +1,4 @@
-"""Pay-token-only CLMM opens: deposit and fee bias toward SOL / USDC / USDT, not the alt leg."""
+"""Pay-token-only CLMM opens: deposit and fee bias toward SOL / USDC / USDT (not USD1 or alt)."""
 
 from __future__ import annotations
 
@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 WSOL_MINT = "So11111111111111111111111111111111111111112"
-DEFAULT_PAY_SYMBOLS = frozenset({"SOL", "WSOL", "USDC", "USDT", "USD1"})
-PAY_PREFERENCE = ("SOL", "USDC", "USDT", "USD1")
+# Pay legs for CLMM opens only (USD1 excluded — not used as deposit quote).
+DEFAULT_PAY_SYMBOLS = frozenset({"SOL", "WSOL", "USDC", "USDT"})
+PAY_PREFERENCE = ("SOL", "USDC", "USDT")
 
 
 def _norm_symbol(sym: str) -> str:
@@ -42,7 +43,7 @@ class PayMintResolution:
 
 
 def resolve_pay_mint(pool: Mapping[str, Any], config: Any | None = None) -> PayMintResolution | None:
-    """Pick the pool's pay leg (SOL/USDC/USDT/USD1). Returns None if neither side qualifies."""
+    """Pick the pool's pay leg (SOL/USDC/USDT). Returns None if neither side qualifies."""
 
     allowed = allowed_pay_symbols(config)
     prefer = _norm_symbol(
@@ -123,6 +124,16 @@ def apply_pay_token_only_open(
     """
 
     kw = dict(open_kwargs)
+    if kw.get("wide_range") or (kw.get("full_range") and not kw.get("literal_pool_full_range")):
+        kw["input_mint"] = resolution.pay_mint
+        kw["pay_mint_only"] = True
+        kw["pay_symbol"] = resolution.pay_symbol
+        kw["single_side"] = None
+        kw["wide_range"] = True
+        kw["full_range"] = False
+        kw["_lp_placement"] = "wide_band"
+        return kw
+
     single = kw.get("single_side")
     centered = single is None or str(single).lower() in ("none", "null", "")
 
@@ -133,19 +144,14 @@ def apply_pay_token_only_open(
     if centered:
         lower = float(kw.get("tick_lower_pct_below") or 10)
         upper = float(kw.get("tick_upper_pct_above") or 10)
-        is_full = lower >= 40 and upper >= 40
         # One-sided deposit: straddle spot but sit near the pay-mint edge of the band.
         if resolution.pay_is_mint_a:
-            kw["tick_lower_pct_below"] = (
-                max(2.0, min(lower, 4.0)) if is_full else max(1.5, min(lower, 3.0))
-            )
+            kw["tick_lower_pct_below"] = max(1.5, min(lower, 3.0))
             kw["tick_upper_pct_above"] = upper
         else:
             kw["tick_lower_pct_below"] = lower
-            kw["tick_upper_pct_above"] = (
-                max(2.0, min(upper, 4.0)) if is_full else max(1.5, min(upper, 3.0))
-            )
-        kw["_lp_placement"] = "full_range" if is_full else "centered"
+            kw["tick_upper_pct_above"] = max(1.5, min(upper, 3.0))
+        kw["_lp_placement"] = "centered"
         return kw
 
     steps = int(kw.get("band_tick_steps") or 10)
@@ -169,7 +175,7 @@ def enrich_open_style_for_pay(
     placement: str,
     resolution: PayMintResolution,
 ) -> tuple[str, str, str]:
-    if placement in ("full_range", "centered"):
+    if placement in ("wide_band", "full_range", "centered"):
         label = f"{style_label} · pay {resolution.pay_symbol} only"
         key = f"{style_key}|pay_{resolution.pay_symbol}"
         return label, key, placement

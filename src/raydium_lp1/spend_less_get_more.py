@@ -12,7 +12,11 @@ from typing import Any, Mapping
 
 from raydium_lp1.fee_guard import FeeGuardBlockedError, assert_clmm_open_allowed, fee_config_from_settings
 from raydium_lp1.lp_full_range import is_wide_band_open_kwargs, open_kwargs_for_wide_band
-from raydium_lp1.lp_order_strategies import STRATEGY_ASYMMETRIC, STRATEGY_FULL_RANGE
+from raydium_lp1.lp_order_strategies import (
+    STRATEGY_ASYMMETRIC,
+    STRATEGY_BRAINIAC_CURSOR_SUCCESS,
+    STRATEGY_FULL_RANGE,
+)
 from raydium_lp1.lp_rent_escrow import RentEscrowEstimate, estimate_open_rent_escrow
 
 TAG = "SPEND LESS=GET MORE"
@@ -26,7 +30,7 @@ class SpendLessConfig:
     enabled: bool = True
     auto_clamp_deposit: bool = True
     auto_fallback_from_wide: bool = True
-    on_chain_rent_buffer_sol: float = 0.05
+    on_chain_rent_buffer_sol: float = 0.012
     min_deposit_usd_floor: float = 0.25
 
     @classmethod
@@ -43,7 +47,7 @@ class SpendLessConfig:
             enabled=_b("spend_less_get_more_enabled", True),
             auto_clamp_deposit=_b("spend_less_auto_clamp_deposit", True),
             auto_fallback_from_wide=_b("spend_less_auto_fallback_from_wide", True),
-            on_chain_rent_buffer_sol=max(0.0, _f("spend_less_on_chain_rent_buffer_sol", 0.05)),
+            on_chain_rent_buffer_sol=max(0.0, _f("spend_less_on_chain_rent_buffer_sol", 0.012)),
             min_deposit_usd_floor=max(0.0, _f("spend_less_min_deposit_usd_floor", 0.25)),
         )
 
@@ -97,11 +101,14 @@ def _rent_est(
     deposit_sol: float,
     open_kwargs: Mapping[str, Any],
     settings: Any,
+    *,
+    pay_needs_ata: bool = False,
 ) -> RentEscrowEstimate:
     return estimate_open_rent_escrow(
         deposit_sol=deposit_sol,
         open_kwargs=open_kwargs,
         settings=settings,
+        pay_needs_ata=pay_needs_ata,
     )
 
 
@@ -201,6 +208,7 @@ def analyze_open_plan(
     px = float(sol_price_usd or fee_cfg.sol_price_usd or 180.0)
     pay_sym = str(pay_symbol or "SOL").upper()
     pay_is_sol = pay_sym in ("SOL", "WSOL")
+    pay_needs_ata = not pay_is_sol
     req = max(0.0, float(requested_deposit_usd))
     kw = dict(open_kwargs)
     blocks: list[str] = []
@@ -209,7 +217,7 @@ def analyze_open_plan(
 
     if not sl_cfg.enabled:
         dep_sol = req / px if px > 0 else 0.0
-        est = _rent_est(dep_sol, kw, settings)
+        est = _rent_est(dep_sol, kw, settings, pay_needs_ata=pay_needs_ata)
         return SpendLessPlan(
             ok=True,
             blocked=False,
@@ -224,7 +232,7 @@ def analyze_open_plan(
 
     max_pct = float(fee_cfg.max_rent_escrow_pct_of_deposit)
     dep_sol_req = req / px if px > 0 else 0.0
-    est_req = _rent_est(dep_sol_req, kw, settings)
+    est_req = _rent_est(dep_sol_req, kw, settings, pay_needs_ata=pay_needs_ata)
     rent_total = float(est_req.total_wallet_sol_est)
     buffer = sl_cfg.on_chain_rent_buffer_sol if pay_is_sol else 0.003
 
@@ -240,10 +248,10 @@ def analyze_open_plan(
     max_usd_rent = _max_deposit_usd_rent_cap(kw, settings=settings, sol_price_usd=px)
 
     wide = is_wide_band_open_kwargs(kw) or (strategy_id or "").strip() == STRATEGY_FULL_RANGE
-    if wide and req + 1e-9 < min_usd_rent:
+    if wide and min_usd_rent > 1.0 and req + 1e-9 < min_usd_rent:
         recs.append(
-            f"Wide band (80%) needs ~${min_usd_rent:.0f}+ deposit at {max_pct:.0f}% sunk-rent cap "
-            f"(~${est_req.sunk_usd:.2f} sunk on ${req:.2f})."
+            f"Wide band may need ~${min_usd_rent:.0f}+ deposit if pool must create new tick arrays "
+            f"(~${est_req.sunk_usd:.2f} sunk est. on ${req:.2f})."
         )
 
     effective_usd = req
@@ -251,10 +259,13 @@ def analyze_open_plan(
     strat_override: str | None = None
     clamped = False
 
+    brainiac_order = (strategy_id or "").strip() == STRATEGY_BRAINIAC_CURSOR_SUCCESS
+
     # Style fallback: wide → single-sided SOL deposit when rent cap blocks micro wide opens.
     if (
         sl_cfg.auto_fallback_from_wide
         and wide
+        and not brainiac_order
         and req + 1e-9 < min_usd_rent
         and pay_is_sol
     ):
@@ -268,7 +279,7 @@ def analyze_open_plan(
                 f"(saves alt-leg swap + lower sunk rent)."
             )
             min_usd_rent = min_fb
-            est_req = _rent_est(req / px, effective_kw, settings)
+            est_req = _rent_est(req / px, effective_kw, settings, pay_needs_ata=pay_needs_ata)
             rent_total = float(est_req.total_wallet_sol_est)
 
     affordable = min(max_usd_wallet, max_usd_rent) if max_usd_rent > 0 else max_usd_wallet
@@ -283,10 +294,10 @@ def analyze_open_plan(
         )
 
     dep_sol_eff = effective_usd / px if px > 0 else 0.0
-    est_eff = _rent_est(dep_sol_eff, effective_kw, settings)
+    est_eff = _rent_est(dep_sol_eff, effective_kw, settings, pay_needs_ata=pay_needs_ata)
     if est_eff.literal_pool_ticks:
         blocks.append("Literal pool full range is disabled (use wide band max 80%).")
-    elif est_eff.sunk_pct_of_deposit > max_pct + 1e-9:
+    elif est_eff.sunk_sol_est > 0.004 and est_eff.sunk_pct_of_deposit > max_pct + 1e-9:
         blocks.append(
             f"Sunk rent ~{est_eff.sunk_pct_of_deposit:.1f}% of ${effective_usd:.2f} deposit "
             f"(max {max_pct:.1f}%). Need ~${min_usd_rent:.0f}+ or narrower band."
@@ -304,7 +315,16 @@ def analyze_open_plan(
             f"Wallet {balance_sol:.4f} SOL < need ~{sol_need:.4f} SOL "
             f"(deposit {dep_sol_eff:.4f} + rent ~{est_eff.total_wallet_sol_est:.4f} + buffer {buffer:.4f})."
         )
-        recs.append("Top up SOL (~0.35+ recommended for $15–20 SOL-side opens).")
+        recs.append("Top up SOL (~0.02+ for USDC-pay opens, more if deposit is SOL).")
+
+    if not pay_is_sol:
+        min_sol_headroom = float(est_eff.recoverable_sol_est) + buffer + 0.008
+        if balance_sol + 1e-9 < min_sol_headroom:
+            blocks.append(
+                f"USDC/alt pay: wallet SOL {balance_sol:.4f} < ~{min_sol_headroom:.3f} "
+                f"for position rent (~{est_eff.recoverable_sol_est:.4f} SOL recoverable on close) + tx fees."
+            )
+            recs.append("Keep ~0.02–0.03 SOL; Raydium does not need 0.14 SOL for a normal open.")
 
     if est_eff.sunk_pct_of_deposit > max_pct * 0.85:
         recs.append(

@@ -42,9 +42,10 @@ def _read_settings() -> dict[str, Any]:
     if not path.is_file():
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-            return sync_mode_fields(data) if isinstance(data, dict) else {}
+        from raydium_lp1.settings_io import read_settings_text
+
+        data = json.loads(read_settings_text(path))
+        return sync_mode_fields(data) if isinstance(data, dict) else {}
     except Exception:
         return {}
 

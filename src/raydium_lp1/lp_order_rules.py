@@ -4,14 +4,14 @@ Buy / open rules (enforced before any live CLMM open):
 - **SPEND LESS=GET MORE** (`spend_less_get_more.analyze_open_plan`) — wallet headroom, rent cap,
   optional deposit clamp, wide→single-sided fallback; runs before broadcast.
 - Run ``lp_rent_escrow.estimate_open_rent_escrow`` via ``fee_guard.assert_clmm_open_allowed``.
-- **Never** exceed ``max_rent_escrow_pct_of_deposit`` (default 10%) on estimated *sunk*
-  (non-recoverable) tick-array rent vs deposit USD — adjustable in dashboard settings.
+- Block only on **material sunk** rent (new tick arrays), not recoverable position rent.
+  Cap: ``max_rent_escrow_pct_of_deposit`` (default 50% of deposit on sunk only).
 - Literal pool min/max full range is always blocked regardless of cap.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 # TSLAX/USDC — failed Token-2022 open; do not retry.
 ABANDONED_POOL_IDS = frozenset({
@@ -50,16 +50,26 @@ def close_trash_swap_attempts(config: Any | None = None) -> int:
 def close_clmm_position(
     position_nft_mint: str,
     *,
+    pool: Mapping[str, Any] | None = None,
     config: Any | None = None,
     slippage_bps: int = 100,
     keep_position: bool = False,
     ensure_burn_nft: bool = True,
     priority_fee_micro_lamports: int | None = None,
+    fee_guard_settings: dict | None = None,
     timeout: float = 120.0,
 ) -> dict[str, Any]:
-    """Close CLMM position; burn empty NFT; sweep non-stable trash legs to SOL."""
+    """Close CLMM position; burn empty NFT; sweep trash legs → pool pay mint (not junk pay/alt)."""
 
     from raydium_lp1 import raydium_clmm
+    from raydium_lp1.lp_junk_to_pay import close_position_pay_trash_options, junk_sweep_to_pay_enabled
+
+    close_kw: dict[str, Any] = {
+        "sweep_trash_to_sol": close_sweep_trash_enabled(config),
+        "trash_swap_max_attempts": close_trash_swap_attempts(config),
+    }
+    if pool is not None and junk_sweep_to_pay_enabled(config):
+        close_kw.update(close_position_pay_trash_options(pool, config))
 
     result = raydium_clmm.close_position(
         position_nft_mint=position_nft_mint,
@@ -67,15 +77,19 @@ def close_clmm_position(
         keep_position=keep_position,
         ensure_burn_nft=ensure_burn_nft,
         payout_as="SOL",
-        sweep_trash_to_sol=close_sweep_trash_enabled(config),
-        trash_swap_max_attempts=close_trash_swap_attempts(config),
         priority_fee_micro_lamports=priority_fee_micro_lamports,
+        fee_guard_settings=fee_guard_settings,
         timeout=timeout,
+        **close_kw,
     )
     if result.get("ok"):
         from raydium_lp1.lp_wallet_settlement import settle_wallet_after_trade
 
-        result["wallet_settlement"] = settle_wallet_after_trade(sweep_junk=True)
+        result["wallet_settlement"] = settle_wallet_after_trade(
+            pool=pool,
+            config=config,
+            sweep_junk=True,
+        )
     return result
 
 

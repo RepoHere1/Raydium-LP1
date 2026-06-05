@@ -17,6 +17,7 @@ STRATEGY_ATR_WIDTH = "volatility_atr_width"
 STRATEGY_TRAILING_SKEW = "trailing_dynamic_skew"
 STRATEGY_FULL_RANGE = "standard_full_range"
 STRATEGY_AUTO = "auto_volatility_pick"
+STRATEGY_BRAINIAC_CURSOR_SUCCESS = "brainiac_cursor_success_80_skewed_no_escrow"
 
 ALL_STRATEGY_IDS: tuple[str, ...] = (
     STRATEGY_AUTO,
@@ -25,6 +26,7 @@ ALL_STRATEGY_IDS: tuple[str, ...] = (
     STRATEGY_ATR_WIDTH,
     STRATEGY_TRAILING_SKEW,
     STRATEGY_FULL_RANGE,
+    STRATEGY_BRAINIAC_CURSOR_SUCCESS,
 )
 
 
@@ -80,13 +82,15 @@ STRATEGY_CATALOG: tuple[LPStrategySpec, ...] = (
     ),
     LPStrategySpec(
         id=STRATEGY_FULL_RANGE,
-        official_name="Standard Full Range Order",
-        short_label="Full range",
+        official_name="Standard Wide Band Order (max 80%)",
+        short_label="Wide band",
         description=(
-            "Uses the maximum practical tick span (CPMM-style or wide CLMM). Lower fee intensity per "
-            "dollar but simpler maintenance and less out-of-range risk."
+            "Centered CLMM band up to 80% total width around spot (not literal pool min/max ticks). "
+            "Much lower SOL rent than true full range; price can go out of range on large moves."
         ),
-        raydium_notes="Raydium standard AMM pool or CLMM max-range position.",
+        raydium_notes=(
+            "CLMM openPosition with ±40% price band (80% total). Literal MIN/MAX ticks are disabled for live opens."
+        ),
     ),
     LPStrategySpec(
         id=STRATEGY_AUTO,
@@ -97,6 +101,20 @@ STRATEGY_CATALOG: tuple[LPStrategySpec, ...] = (
             "you specialize per pair."
         ),
         raydium_notes="Uses scanner lp_range_mode=auto width selection.",
+    ),
+    LPStrategySpec(
+        id=STRATEGY_BRAINIAC_CURSOR_SUCCESS,
+        official_name="BRAINIAC-CURSOR-SUCCESS-80%-SKEWED-WIDE-No ESCROW",
+        short_label="Brainiac 80% skew",
+        description=(
+            "Reasoning-based 80% skewed straddle: Brainiac scores pool, grid-searches skew for "
+            "24h overlap, two-sided wallet inventory, pay-type-only settlement, recoverable rent."
+        ),
+        raydium_notes=(
+            "Placement: SUPER-BRAINIAC skew on 80% width; no pay-only wide fallback. "
+            "Settlement: sweeps and funding use resolve_pay_mint only; non-pay pair token never "
+            "sink or swap input. Rent: recoverable NFT, no sunk tick-array escrow."
+        ),
     ),
 )
 
@@ -182,9 +200,21 @@ def build_open_order(
         width_note = "centered_tight_cap"
         skew = 0.0
     elif sid == STRATEGY_FULL_RANGE:
-        width_pct = 100.0
-        width_note = "full_range"
+        from raydium_lp1.lp_full_range import DEFAULT_WIDE_BAND_WIDTH_PCT
+
+        width_pct = DEFAULT_WIDE_BAND_WIDTH_PCT
+        width_note = "wide_band_max_80"
         skew = 0.0
+    elif sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+        from raydium_lp1.lp_brainiac_cursor_success import build_brainiac_cursor_open_plan
+
+        plan_bc = build_brainiac_cursor_open_plan(
+            pool,
+            momentum,
+            default_width_pct=default_width_pct,
+            skew_use_momentum=skew_use_momentum,
+        )
+        return plan_bc
     else:
         width_pct = default_width_pct
         width_note = f"default:{width_pct}"

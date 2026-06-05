@@ -11,14 +11,26 @@ from raydium_lp1.lp_pay_mint import (
     pay_token_only_enabled,
     resolve_pay_mint,
 )
+from raydium_lp1.lp_full_range import (
+    WIDE_BAND_PLACEMENT,
+    clmm_position_in_range,
+    is_wide_band_position,
+    open_kwargs_for_wide_band,
+    position_spans_full_ticks,
+)
 from raydium_lp1.lp_order_strategies import (
     STRATEGY_ASYMMETRIC,
     STRATEGY_AUTO,
+    STRATEGY_BRAINIAC_CURSOR_SUCCESS,
     STRATEGY_CENTERED_TIGHT,
     STRATEGY_FULL_RANGE,
     STRATEGY_TRAILING_SKEW,
     build_open_order,
     get_strategy,
+)
+from raydium_lp1.lp_brainiac_cursor_success import (
+    PLACEMENT_BRAINIAC_SKEWED_WIDE,
+    open_kwargs_from_plan,
 )
 
 
@@ -34,7 +46,7 @@ class LiveOpenStyle:
     pool_type: str
     strategy_id: str
     strategy_label: str
-    placement: str  # single_above | single_below | centered | full_range
+    placement: str  # single_above | single_below | centered | wide_band
     width_pct: float
     open_kwargs: dict[str, Any]
     lp_style_key: str
@@ -63,6 +75,8 @@ def resolve_live_open_style(
     pool: Mapping[str, Any],
     *,
     momentum: Mapping[str, Any] | None = None,
+    open_deposit_usd: float | None = None,
+    band_tick_steps_cap: int | None = None,
 ) -> LiveOpenStyle:
     """Turn ``lp_active_strategy`` (+ pool momentum) into ``raydium_clmm.open_position`` kwargs."""
 
@@ -90,14 +104,18 @@ def resolve_live_open_style(
     placement = "centered"
     open_kwargs: dict[str, Any]
 
-    if sid == STRATEGY_FULL_RANGE:
-        placement = "full_range"
-        open_kwargs = {
-            "single_side": None,
-            "tick_lower_pct_below": 45.0,
-            "tick_upper_pct_above": 45.0,
-            "band_tick_steps": max(steps, 32),
-        }
+    if sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+        placement = PLACEMENT_BRAINIAC_SKEWED_WIDE
+        open_kwargs = open_kwargs_from_plan(
+            plan,
+            deposit_usd=open_deposit_usd,
+            band_tick_steps_cap=band_tick_steps_cap,
+        )
+        width = float(plan.get("width_pct") or width)
+    elif sid == STRATEGY_FULL_RANGE:
+        placement = WIDE_BAND_PLACEMENT
+        open_kwargs = open_kwargs_for_wide_band(width_pct=min(width, 80.0))
+        open_kwargs["band_tick_steps"] = max(steps, open_kwargs["band_tick_steps"])
     elif sid == STRATEGY_ASYMMETRIC or (
         sid == STRATEGY_TRAILING_SKEW and abs(skew) >= 0.08
     ):
@@ -146,16 +164,20 @@ def resolve_live_open_style(
                 "band_tick_steps": steps,
             }
 
-    pay_res = resolve_pay_mint(pool, config) if pay_token_only_enabled(config) else None
-    if pay_res is not None:
-        open_kwargs = apply_pay_token_only_open(pay_res, open_kwargs, width_pct=width)
-        placement = str(open_kwargs.pop("_lp_placement", placement))
+    pay_res = None
+    if sid != STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+        pay_res = resolve_pay_mint(pool, config) if pay_token_only_enabled(config) else None
+        if pay_res is not None:
+            open_kwargs = apply_pay_token_only_open(pay_res, open_kwargs, width_pct=width)
+            placement = str(open_kwargs.pop("_lp_placement", placement))
 
     place_human = {
         "single_above": "single above",
         "single_below": "single below",
         "centered": "centered",
-        "full_range": "full range",
+        "wide_band": "wide band",
+        "full_range": "wide band (legacy label)",
+        PLACEMENT_BRAINIAC_SKEWED_WIDE: "brainiac 80% skewed",
     }.get(placement, placement)
     label = f"CLMM · {place_human} · {width:.0f}% · {spec.short_label}"
     key = f"{sid}|{placement}|w{int(round(width))}"
@@ -184,6 +206,8 @@ def infer_style_from_clmm_result(clmm: Mapping[str, Any], *, strategy_id: str = 
         placement = "single_above"
     elif mode == "below":
         placement = "single_below"
+    elif clmm.get("wide_range") or clmm.get("full_range"):
+        placement = WIDE_BAND_PLACEMENT
     elif mode in ("", "none", "null"):
         placement = "centered"
     else:
@@ -216,14 +240,12 @@ def annotate_position_style(row: dict[str, Any], config: Any | None = None) -> d
             pass
     out.setdefault("lp_pool_type", "CLMM")
     if clmm:
-        lo, hi, cur = clmm.get("tick_lower"), clmm.get("tick_upper"), clmm.get("tick_current")
-        if lo is not None and hi is not None and cur is not None:
-            try:
-                in_rng = int(lo) <= int(cur) <= int(hi)
-                out["in_range_at_open"] = in_rng
-                out["out_of_range_at_open"] = not in_rng
-            except (TypeError, ValueError):
-                pass
+        in_rng = clmm_position_in_range(out, clmm)
+        if in_rng is not None:
+            out["in_range_at_open"] = in_rng
+            out["out_of_range_at_open"] = not in_rng
+        if is_wide_band_position(out) and position_spans_full_ticks(clmm):
+            out["legacy_literal_full_range_ticks"] = True
     return out
 
 

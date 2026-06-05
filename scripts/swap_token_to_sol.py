@@ -142,6 +142,7 @@ def main() -> int:
     from raydium_lp1.fee_guard import cap_priority_micro, fee_config_from_settings, record_spend_attempt
     from raydium_lp1.live_guard import guard_onchain
     from raydium_lp1.raydium_clmm import quote_sell
+    from solders.message import to_bytes_versioned
     from solders.transaction import VersionedTransaction
 
     parser = argparse.ArgumentParser(description="Swap token mint → SOL (Jupiter, full wallet balance).")
@@ -217,7 +218,10 @@ def main() -> int:
     )
     tx_b64 = _jupiter_swap_tx(quote=quote, user_pubkey=owner, priority_micro=pri)
     raw_tx = VersionedTransaction.from_bytes(base64.b64decode(tx_b64))
-    signed = VersionedTransaction.populate(raw_tx.message, [kp.sign_message(raw_tx.message.serialize())])
+    signed = VersionedTransaction.populate(
+        raw_tx.message,
+        [kp.sign_message(to_bytes_versioned(raw_tx.message))],
+    )
     sig = _send_signed_tx(rpc, base64.b64encode(bytes(signed)).decode())
 
     record_spend_attempt(

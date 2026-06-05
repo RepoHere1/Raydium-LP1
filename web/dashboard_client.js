@@ -52,6 +52,17 @@
     var x=Number(n); if(!isFinite(x)) return '0';
     return String(Math.round(x));
   }
+  function fmtModelAprPct(n){
+    var x=Number(n);
+    if(!isFinite(x)) return '?';
+    if(x>=500) return num(x)+'% (model est.)';
+    return (Math.round(x*10)/10)+'%';
+  }
+  function brainiacRoutesCell(r){
+    if(r.routes_verified===true) return '<span style="color:var(--ok);font-weight:600">OK</span>';
+    if(r.routes_probed) return '<span style="color:var(--bad);font-weight:600" title="'+esc((r.route_reject_reasons||[]).join('; '))+'">No</span>';
+    return '<span class="muted" title="Route check not run on this row">—</span>';
+  }
   function poolIdWithProof(p){
     var pv=p&&p.pool_verification||{};
     var tag=String(pv.proof_tag||'').trim();
@@ -378,6 +389,50 @@
       (note?('<p class="muted" style="margin:.35rem 0 0">'+esc(note)+'</p>'):'');
   }
 
+  function fmtEconUsd(n){
+    var x=Number(n);
+    if(n==null||!isFinite(x)) return '—';
+    return '$'+x.toFixed(2);
+  }
+
+  function openEconomicsCard(p, zone){
+    var e=p.open_economics||{};
+    var pair=esc(p.pair||'position');
+    var bePct=e.break_even_pct_of_deposit;
+    var beLine=bePct!=null
+      ? ('Break even on fees: <span class="be-line">'+esc(fmtEconUsd(e.break_even_fee_income_usd))+' ('+esc(String(bePct))+'% of deposit)</span>')
+      : ('Break even on fees: <span class="be-line">'+esc(fmtEconUsd(e.break_even_fee_income_usd))+'</span>');
+    var days=e.days_to_breakeven_at_current_fee_rate;
+    var daysLine=days!=null?('<p class="rec">~'+esc(String(days))+' day(s) at est. fee share / 24h</p>'):'';
+    var failed=Number(e.failed_attempts_usd||0);
+    var failedRow=failed>0?('<dt>Failed tries</dt><dd>'+esc(fmtEconUsd(failed))+'</dd>'):'';
+    var zoneNote=zone==='demo'?' <span class="muted">(est. from plan)</span>':'';
+    return '<article class="open-econ-card"><h4>Open cost · '+pair+zoneNote+'</h4>'+beLine+daysLine+
+      '<dl><dt>Deposit</dt><dd>'+esc(fmtEconUsd(e.deposit_usd))+'</dd>'+
+      '<dt>Sunk rent</dt><dd>'+esc(fmtEconUsd(e.sunk_rent_usd))+
+      (e.sunk_pct_of_deposit!=null?' ('+esc(String(e.sunk_pct_of_deposit))+'%)':'')+'</dd>'+
+      '<dt>Recoverable rent</dt><dd>'+esc(fmtEconUsd(e.recoverable_rent_usd))+' <span class="muted">on close</span></dd>'+
+      '<dt>Network fees</dt><dd>'+esc(fmtEconUsd(e.network_fees_usd))+'</dd>'+
+      '<dt>Funding swap</dt><dd>'+esc(fmtEconUsd(e.funding_swap_usd))+'</dd>'+
+      failedRow+
+      '<dt>Non-recoverable</dt><dd>'+esc(fmtEconUsd(e.non_recoverable_usd))+'</dd>'+
+      '<dt>Est. fee share /24h</dt><dd>'+esc(fmtEconUsd(e.est_fee_share_24h_usd))+'</dd></dl></article>';
+  }
+
+  function renderOpenEconomicsGrid(rows, zone){
+    rows=rows||[];
+    if(!rows.length) return '';
+    return '<div class="open-econ-grid">'+rows.map(function(p){ return openEconomicsCard(p, zone); }).join('')+'</div>';
+  }
+
+  function renderOpenEconomicsTips(el, d){
+    if(!el) return;
+    var tips=(d&&d.open_economics_tips)||[];
+    if(!tips.length){ el.innerHTML=''; return; }
+    el.innerHTML='<div class="open-econ-tips"><strong>Spend less on opens</strong><ul>'+
+      tips.map(function(t){ return '<li>'+esc(t)+'</li>'; }).join('')+'</ul></div>';
+  }
+
   function renderTradesTable(el, rows, zone){
     if(!el) return;
     rows=rows||[];
@@ -389,7 +444,8 @@
       return;
     }
     el.innerHTML='<p class="muted">'+rows.length+' row(s) — '+tag+'</p>'+
-      '<div class="tbl-scroll wide-trades"><table class="tb2"><thead><tr><th>#</th><th>Pair</th><th>APR %</th><th>Size</th><th>TVL</th><th>Action</th><th>LP style</th><th>NFT mint</th><th>Pool id</th><th>Tx</th></tr></thead><tbody>'+
+      '<div class="tbl-scroll wide-trades"><table class="tb2"><thead><tr><th>#</th><th>Pair</th><th>APR %</th><th>Size</th><th>TVL</th><th>Action</th><th>LP style</th><th>NFT mint</th><th>Pool id</th><th>Tx</th>'+
+      (zone==='live'?'<th>Harvest</th>':'')+'</tr></thead><tbody>'+
       rows.map(function(p,i){
         var ix=p.index!=null?p.index:(i+1);
         var act=p.action||p.status||'';
@@ -397,15 +453,21 @@
         if(strat) act=act+(act?' · ':'')+strat;
         var lpStyle=p.lp_style_label||p.lp_placement||'—';
         var size=p.value_usd!=null?('$'+Number(p.value_usd).toFixed(2)):(
-          p.input_amount_sol!=null?(Number(p.input_amount_sol).toFixed(4)+' SOL'):'—');
+          p.input_amount_human!=null&&p.input_pay_symbol?('$'+Number(p.input_amount_human).toFixed(2)+' '+String(p.input_pay_symbol)):(
+          p.input_amount_sol!=null?(Number(p.input_amount_sol).toFixed(4)+' SOL'):'—'));
         var tx=p.tx||'';
         var txCell=tx?('<a href="https://solscan.io/tx/'+encodeURIComponent(tx)+'" target="_blank" rel="noopener">'+esc(tx.slice(0,8))+'…</a>'):'—';
         var oor='';
         if(p.full_range_tick_mismatch) oor=' <span class="muted" title="Opened before true min/max tick fix; close and reopen as full range">(narrow band — reopen)</span>';
         else if(p.in_range_at_open===false||p.out_of_range_at_open) oor=' <span class="muted">(OOR@open)</span>';
+        var harvestBtn='';
+        if(zone==='live'&&p.position_nft_mint){
+          harvestBtn='<td><button type="button" class="btn-sm" data-action="lp-harvest-one" data-nft="'+esc(p.position_nft_mint)+'" title="Collect fees to pay-type (liquidity unchanged)">Harvest</button></td>';
+        }else if(zone==='live'){ harvestBtn='<td>—</td>'; }
         return '<tr><td>'+esc(String(ix))+'</td><td>'+esc(p.pair||'')+'</td><td>'+esc(fmtAprPct(p.apr))+'</td><td>'+esc(size)+'</td><td>'+esc(fmtUsd(p.liquidity_usd))+'</td><td>'+
-          esc(String(act))+'</td><td title="'+esc(p.lp_style_key||'')+'">'+esc(lpStyle)+oor+'</td><td class="mono">'+esc((p.position_nft_mint||'').slice(0,12))+(p.position_nft_mint?'…':'')+'</td><td>'+poolIdCell(p.pool_id||p.id)+'</td><td class="mono">'+txCell+'</td></tr>';
-      }).join('')+'</tbody></table></div>';
+          esc(String(act))+'</td><td title="'+esc(p.lp_style_key||'')+'">'+esc(lpStyle)+oor+'</td><td class="mono">'+esc((p.position_nft_mint||'').slice(0,12))+(p.position_nft_mint?'…':'')+'</td><td>'+poolIdCell(p.pool_id||p.id)+'</td><td class="mono">'+txCell+'</td>'+harvestBtn+'</tr>';
+      }).join('')+'</tbody></table></div>'+
+      renderOpenEconomicsGrid(rows, zone);
   }
 
   function renderAlerts(el, d){
@@ -872,6 +934,7 @@
     renderModeBar(d);
     renderFunnel(d);
     renderWalletCapacity($('#wall-live'), d.live_wallet_capacity||d.wallet_capacity, 'live');
+    renderOpenEconomicsTips($('#live-rent-tips'), d);
     renderWalletCapacity($('#wall-demo'), d.demo_wallet_capacity||d.wallet_capacity, 'demo');
     renderTradesTable($('#live-trades'), d.live_open_positions||[], 'live');
     renderLiveStyleStats($('#live-style-stats'), d.live_lp_style_report);
@@ -952,7 +1015,8 @@
       '<button type="button" id="tune-apply-sel" class="p" data-action="tune-apply-sel">Apply checked</button>'+
       '<button type="button" id="tune-apply-all" data-action="tune-apply-all">Apply all with patches</button>'+
       '<label class="tune-deposit-label" title="USDC/SOL deposit size for Open top CLMM">$'+
-      '<input type="number" id="live-open-deposit-usd" min="0.25" step="0.01" value="3" /></label>'+
+      '<input type="number" id="live-open-deposit-usd" min="0.25" step="0.01" value="3.5" /></label>'+
+      '<button type="button" id="lp-harvest-all" class="p" data-action="lp-harvest-all" title="Harvest all open positions; non-pay fees → pay-type">Harvest all fees</button>'+
       '<button type="button" id="live-open-top" class="p" data-action="live-open-top" style="margin-left:auto">Open top CLMM (LIVE)</button>'+
       '<span class="tune-meta" id="lp-pick-hint"></span>'+
       '</div>';
@@ -1096,7 +1160,7 @@
   function syncDepositInputsFromSettings(raw){
     raw=raw||{};
     var dep=Number(raw.super_brainiac_deposit_usd);
-    if(!isFinite(dep)||dep<=0) dep=3;
+    if(!isFinite(dep)||dep<=0) dep=3.5;
     var live=document.getElementById('live-open-deposit-usd');
     var brain=document.getElementById('brainiac-live-deposit-usd');
     if(live) live.value=String(dep);
@@ -1118,7 +1182,7 @@
   function runLiveOpenTop(){
     var typed=window.prompt('Type LIVE to open the top verified CLMM candidate on-chain:');
     if(typed!=='LIVE'){ msg('Open cancelled.', false); return; }
-    var dep=readDepositUsd('live-open-deposit-usd', 3);
+    var dep=readDepositUsd('live-open-deposit-usd', 3.5);
     topMsg('Opening CLMM ($'+dep.toFixed(2)+')…', false, true);
     gj('/api/live/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'LIVE',deposit_usd:dep})})
       .then(function(r){
@@ -1136,11 +1200,31 @@
       .catch(function(e){ topMsg(String(e), false); msg(String(e), false); });
   }
 
+  function runLpHarvestFees(nftMint){
+    var typed=window.prompt('Type LIVE to harvest accrued LP fees (non-pay leg → pay-type):');
+    if(typed!=='LIVE'){ msg('Harvest cancelled.', false); return; }
+    topMsg('Harvesting fees…', false, true);
+    var body={confirm:'LIVE'};
+    if(nftMint) body.position_nft_mint=nftMint;
+    gj('/api/lp/harvest-fees',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(function(r){
+        if(r.ok){
+          topMsg('Harvest OK', true);
+          msg('Fees collected — pay-type kept; non-pay swapped when applicable.', true);
+        }else{
+          topMsg(r.error||'Harvest failed', false);
+          msg(r.error||JSON.stringify(r).slice(0,200), false);
+        }
+        return refresh();
+      })
+      .catch(function(e){ topMsg(String(e), false); msg(String(e), false); });
+  }
+
   function runBrainiacLiveOpen(){
     if(brainiacBusy) return;
     var typed=window.prompt('Type LIVE to open SUPER-BRAINIAC top pick:');
     if(typed!=='LIVE') return;
-    var dep=readDepositUsd('brainiac-live-deposit-usd', 3);
+    var dep=readDepositUsd('brainiac-live-deposit-usd', 3.5);
     var t0=Date.now();
     setBrainiacBusy(true,'Detective scan → pick best PAY/ALT → sign CLMM open ($'+dep.toFixed(2)+'). Often 2–4 min.','live');
     topMsg('LIVE open pipeline ($'+dep.toFixed(2)+')…', false, true);
@@ -1196,10 +1280,11 @@
       if(act==='brainiac-scan'){
         if(brainiacBusy) return;
         ev.preventDefault();
+        var dep=readDepositUsd('brainiac-live-deposit-usd', 3.5);
         var t0=Date.now();
         setBrainiacBusy(true,'Fetching Raydium pools + route probes… usually 1–2 min.','scan');
-        topMsg('Detective scan started…', false, true);
-        gj('/api/super-brainiac/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+        topMsg('Detective scan started ($'+dep.toFixed(2)+')…', false, true);
+        gj('/api/super-brainiac/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deposit_usd:dep})})
           .then(function(r){
             var rep=r.report||r;
             var sec=rep.scan_duration_sec!=null?rep.scan_duration_sec:Math.round((Date.now()-t0)/1000);
@@ -1216,6 +1301,12 @@
         return;
       }
       if(act==='brainiac-live'){ ev.preventDefault(); runBrainiacLiveOpen(); return; }
+      if(act==='lp-harvest-one'){
+        ev.preventDefault();
+        runLpHarvestFees(btn.getAttribute('data-nft')||'');
+        return;
+      }
+      if(act==='lp-harvest-all'){ ev.preventDefault(); runLpHarvestFees(''); return; }
     }, false);
   }
 
@@ -1418,7 +1509,7 @@
     html+='<div class="brainiac-live-row">';
     html+='<button type="button" id="btn-brainiac-scan" class="p" data-action="brainiac-scan">Run detective scan</button>';
     html+='<label class="tune-deposit-label" title="Deposit size for detective LIVE open (pay USDC/SOL only)">$';
-    html+='<input type="number" id="brainiac-live-deposit-usd" min="0.25" step="0.01" value="'+esc(String(cfg.deposit_usd!=null?cfg.deposit_usd:3))+'" /></label>';
+    html+='<input type="number" id="brainiac-live-deposit-usd" min="0.25" step="0.01" value="'+esc(String(cfg.deposit_usd!=null?cfg.deposit_usd:3.5))+'" /></label>';
     html+='<button type="button" id="btn-brainiac-live" class="p" data-action="brainiac-live">LIVE open top pick</button>';
     html+='</div>';
     html+='<div id="brainiac-status" class="brainiac-result muted">No scan yet — click <strong>Run detective scan</strong> (about 1–2 minutes).</div></div>';
@@ -1431,7 +1522,7 @@
   function brainiacEstFeeCell(bs, cfgDeposit){
     var est=bs&&bs.est_fee_usd_24h;
     var dep=cfgDeposit!=null?cfgDeposit:(bs&&bs.deposit_usd);
-    var html='<strong>your est fee/24h '+esc(fmtFeesUsd(est))+'</strong>';
+    var html='<span class="brainiac-status-est-fee">your est fee/24h '+esc(fmtFeesUsd(est))+'</span>';
     if(dep!=null) html+=' <span class="muted">(deposit $'+esc(String(dep))+')</span>';
     return html;
   }
@@ -1441,11 +1532,14 @@
     var dep=rep.config&&rep.config.deposit_usd;
     return '<p class="muted" style="margin:.85rem 0 .35rem">Top scored PAY/ALT (hover to pause refresh while copying links)</p>'+
       '<div class="tbl-scroll"><table class="tb2 brainiac-leader-tbl"><thead><tr>'+
-      '<th>#</th><th>Pair</th><th>Est fee/24h</th><th>Pool fee 24h</th><th>TVL</th><th>Score</th><th>Pool id</th></tr></thead><tbody>'+
+      '<th class="col-idx">#</th><th class="col-pair">Pair</th><th class="col-est-fee">Est fee/24h</th><th class="col-apr">APR %</th><th>Routes</th><th>Pool fee 24h</th><th>TVL</th><th>Score</th><th>Pool id</th></tr></thead><tbody>'+
       rows.map(function(r,i){
         var bs=r.best_strategy||{};
-        return '<tr><td>'+(i+1)+'</td><td>'+esc(r.pair_label||r.pair||'')+'</td><td>'+
-          esc(fmtFeesUsd(bs.est_fee_usd_24h))+(dep!=null?' <span class="muted">@$'+esc(String(dep))+'</span>':'')+'</td><td>'+
+        var aprCell='<span class="brainiac-apr-model" title="Model APR from your est fee share × 365">'+esc(fmtModelAprPct(bs.theoretical_apr_pct))+'</span>';
+        if(r.apr_reported!=null&&isFinite(Number(r.apr_reported)))
+          aprCell+=' <span class="muted" title="Raydium reported APR">('+esc(fmtAprPct(r.apr_reported))+'% pool)</span>';
+        return '<tr><td class="col-idx">'+(i+1)+'</td><td class="col-pair">'+esc(r.pair_label||r.pair||'')+'</td><td class="col-est-fee">'+
+          esc(fmtFeesUsd(bs.est_fee_usd_24h))+(dep!=null?' <span class="muted">@$'+esc(String(dep))+'</span>':'')+'</td><td class="col-apr">'+aprCell+'</td><td>'+brainiacRoutesCell(r)+'</td><td>'+
           esc(fmtUsd(r.fee_24h_usd))+'</td><td>'+esc(fmtUsd(r.liquidity_usd))+'</td><td>'+
           esc(String(bs.brainiac_score!=null?Number(bs.brainiac_score).toFixed(4):''))+'</td><td>'+
           poolIdCell(r.pool_id)+'</td></tr>';
@@ -1478,29 +1572,42 @@
       st.innerHTML='<p>'+esc(rep.scan_message)+'</p><p class="muted">No PAY/ALT pool passed filters. Try more scan pages or relax confidence.</p>';
       return;
     }
-    var top=rep.top_pick;
-    if(!top){
+    var leader=rep.score_leader||rep.top_pick;
+    var live=rep.live_pick;
+    if(!leader){
       st.textContent='No qualifying PAY/ALT pool.';
       return;
     }
-    var b=top.best_strategy||{};
-    var label=top.pair_label||top.pair||'';
+    var b=leader.best_strategy||{};
+    var label=leader.pair_label||leader.pair||'';
     var conf=b.confidence!=null?(' confidence '+Math.round(Number(b.confidence)*100)+'%'):'';
     var hdr=rep.scan_message?('<p class="muted" style="margin:0 0 .5rem">'+esc(rep.scan_message)+'</p>'):'';
     var depUsd=rep.config&&rep.config.deposit_usd;
-    var feeTier=top.fee_tier_pct!=null?(' · pool fee tier '+esc(String(top.fee_tier_pct))+'%'):'';
+    var targetApr=rep.config&&rep.config.target_apr_pct;
+    var aprLabel=(targetApr!=null&&Number(targetApr)<500);
+    var feeTier=leader.fee_tier_pct!=null?(' · pool fee tier '+esc(String(leader.fee_tier_pct))+'%'):'';
+    var liveHdr='';
+    if(live&&live.pool_id&&String(live.pool_id)!==String(leader.pool_id)){
+      var lb=live.pair_label||live.pair||'';
+      liveHdr='<p style="margin:.5rem 0 0;padding:.45rem .65rem;border-radius:8px;border:1px solid #a7f3d0;background:#ecfdf5;font-size:.85rem">'+
+        '<strong>LIVE open target</strong> (first route-verified): <span class="brainiac-top-pair">'+esc(lb)+'</span> '+
+        brainiacRoutesCell(live)+' · pool id '+poolIdCell(live.pool_id)+'</p>';
+    }
     st.innerHTML=hdr+
       '<p class="anom-pause-banner" style="margin:0 0 .5rem">Hover here to pause auto-refresh — use Copy / DEX / Sol on pool id.</p>'+
-      '<p style="margin:0"><strong>'+esc(label)+'</strong> <span class="muted">('+esc(top.pair_shape||'pay/alt')+')</span>'+feeTier+'</p>'+
-      renderBrainiacSpendLess(top.spend_less_get_more, depUsd)+
-      '<p style="margin:.45rem 0 0" class="brainiac-pool-row"><span class="muted">Pool id</span> '+poolIdCell(top.pool_id)+'</p>'+
-      '<p style="margin:.35rem 0 0">TVL '+esc(fmtUsd(top.liquidity_usd))+
-      ' · pool fee 24h '+esc(fmtUsd(top.fee_24h_usd))+
+      '<p class="muted" style="margin:0 0 .35rem">#1 by estimated fee share (model rank)</p>'+
+      '<p style="margin:0"><span class="brainiac-top-pair">'+esc(label)+'</span> <span class="muted">('+esc(leader.pair_shape||'pay/alt')+')</span>'+feeTier+'</p>'+
+      renderBrainiacSpendLess((live&&live.spend_less_get_more)||leader.spend_less_get_more, depUsd)+
+      liveHdr+
+      '<p style="margin:.45rem 0 0" class="brainiac-pool-row"><span class="muted">Pool id</span> '+poolIdCell(leader.pool_id)+'</p>'+
+      '<p style="margin:.35rem 0 0">TVL '+esc(fmtUsd(leader.liquidity_usd))+
+      ' · pool fee 24h '+esc(fmtUsd(leader.fee_24h_usd))+
       ' · '+brainiacEstFeeCell(b, depUsd)+'</p>'+
-      '<p style="margin:.35rem 0 0">Model APR ~'+esc(String(b.theoretical_apr_pct||'?'))+'%'+conf+
+      '<p style="margin:.35rem 0 0">Model APR ~'+esc(fmtModelAprPct(b.theoretical_apr_pct))+conf+
       ' · style <code>'+esc(b.strategy_id||'')+'</code> · score '+esc(String(b.brainiac_score||''))+'</p>'+
-      (b.meets_apr_target?'<p style="margin:.35rem 0 0;color:var(--ok)">Meets APR label threshold</p>':
-        '<p style="margin:.35rem 0 0;color:var(--muted)">Below APR label — still ranked by fee $</p>')+
+      (aprLabel&&(b.meets_apr_target?'<p style="margin:.35rem 0 0;color:var(--ok)">Meets APR label threshold</p>':
+        '<p style="margin:.35rem 0 0;color:var(--muted)">Below APR label — still ranked by fee $</p>'))+
+      (!live?'<p style="margin:.35rem 0 0;color:var(--warn)">No route-verified pool found — LIVE open blocked. Routes column shows Jupiter buy/sell checks.</p>':'')+
       renderBrainiacLeaderboard(rep);
   }
   function wireBrainiacFeedPause(){

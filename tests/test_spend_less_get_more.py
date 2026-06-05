@@ -10,7 +10,7 @@ from raydium_lp1.spend_less_get_more import TAG, analyze_open_plan
 
 
 class SpendLessTests(unittest.TestCase):
-    def test_wide_three_dollar_blocked(self) -> None:
+    def test_wide_three_dollar_raydium_not_rent_blocked(self) -> None:
         plan = analyze_open_plan(
             requested_deposit_usd=3.0,
             open_kwargs=open_kwargs_for_wide_band(),
@@ -21,8 +21,11 @@ class SpendLessTests(unittest.TestCase):
             strategy_id="standard_full_range",
         )
         self.assertEqual(plan.tag, TAG)
-        self.assertFalse(plan.ok)
-        self.assertGreater(plan.min_deposit_usd_rent_cap, 50)
+        self.assertLess(plan.rent_escrow.get("sunk_sol_est", 99), 0.01)
+        self.assertFalse(
+            any("Sunk rent" in b for b in plan.block_reasons),
+            msg=plan.block_reasons,
+        )
 
     def test_sol_single_sided_clamp(self) -> None:
         kw = {
@@ -43,7 +46,8 @@ class SpendLessTests(unittest.TestCase):
             },
             strategy_id=STRATEGY_ASYMMETRIC,
         )
-        self.assertTrue(plan.clamped or plan.effective_deposit_usd < 20.0)
+        self.assertTrue(plan.ok)
+        self.assertAlmostEqual(plan.effective_deposit_usd, 20.0, places=2)
 
 
 if __name__ == "__main__":

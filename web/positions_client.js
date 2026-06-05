@@ -91,6 +91,54 @@
       .join('');
   }
 
+  function fmtEconUsd(n) {
+    var x = Number(n);
+    if (n == null || !isFinite(x)) return '—';
+    return '$' + x.toFixed(2);
+  }
+
+  function renderOpenEconomicsGrid(el, rows, zone) {
+    if (!el) return;
+    rows = rows || [];
+    if (!rows.length) {
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML =
+      '<div class="open-econ-grid">' +
+      rows
+        .map(function (p) {
+          var e = p.open_economics || {};
+          var bePct = e.break_even_pct_of_deposit;
+          var beLine =
+            bePct != null
+              ? fmtEconUsd(e.break_even_fee_income_usd) + ' (' + bePct + '% of deposit)'
+              : fmtEconUsd(e.break_even_fee_income_usd);
+          var failed = Number(e.failed_attempts_usd || 0);
+          return (
+            '<article class="open-econ-card"><h4>' +
+            esc(p.pair || 'position') +
+            (zone === 'demo' ? ' (est.)' : '') +
+            '</h4><p class="be-line">Break even: ' +
+            esc(beLine) +
+            '</p><dl>' +
+            '<dt>Deposit</dt><dd>' +
+            esc(fmtEconUsd(e.deposit_usd)) +
+            '</dd><dt>Sunk rent</dt><dd>' +
+            esc(fmtEconUsd(e.sunk_rent_usd)) +
+            '</dd><dt>Network</dt><dd>' +
+            esc(fmtEconUsd(e.network_fees_usd)) +
+            '</dd>' +
+            (failed > 0 ? '<dt>Failed tries</dt><dd>' + esc(fmtEconUsd(failed)) + '</dd>' : '') +
+            '<dt>Non-recoverable</dt><dd>' +
+            esc(fmtEconUsd(e.non_recoverable_usd)) +
+            '</dd></dl></article>'
+          );
+        })
+        .join('') +
+      '</div>';
+  }
+
   function renderTradeRows(tbody, rows) {
     rows = rows || [];
     if (!rows.length) {
@@ -227,9 +275,11 @@
     renderKpis($('kp-live'), d.live_wallet_capacity || d.wallet_capacity, 'live');
     renderKpis($('kp-demo'), d.demo_wallet_capacity || d.wallet_capacity, 'demo');
     renderTradeRows($('tb-live'), d.live_open_positions || []);
+    renderOpenEconomicsGrid($('live-open-econ'), d.live_open_positions || [], 'live');
     var demoFeed = d.demo_simulated_trades || [];
     if (!demoFeed.length && (d.demo_open_positions || []).length) demoFeed = d.demo_open_positions;
     renderTradeRows($('tb-demo'), demoFeed);
+    renderOpenEconomicsGrid($('demo-open-econ'), demoFeed, 'demo');
     var rpc = d.rpc_health || [];
     $('rpcb').innerHTML = rpc.length
       ? rpc

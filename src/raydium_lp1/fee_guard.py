@@ -1,6 +1,7 @@
 """Block and cap Solana / Raydium spend that burns SOL on fees + rent for tiny deposits.
 
-CLMM opens cost mostly **account rent** (NFT + tick arrays), not just priority fees.
+CLMM opens lock **recoverable** position rent (returned on close) plus network fees.
+New tick-array rent is paid only when the pool has no array yet (rare on active pools).
 Multiple failed retries and high ``priority_fee_micro_lamports`` multiply the damage.
 This module is mandatory for every on-chain path in LP1.
 """
@@ -31,13 +32,13 @@ class FeeGuardConfig:
     jupiter_max_priority_micro_lamports: int = 2_000
     clmm_open_compute_units: int = 200_000
     clmm_close_compute_units: int = 280_000
-    clmm_open_rent_sol: float = 0.055
+    clmm_open_rent_sol: float = 0.009
     clmm_close_overhead_sol: float = 0.012
     clmm_base_fee_sol: float = 0.000_02
     min_clmm_deposit_sol: float = 0.17
     min_deposit_to_fee_ratio: float = 4.0
     max_fee_pct_of_deposit: float = 35.0
-    max_rent_escrow_pct_of_deposit: float = 10.0
+    max_rent_escrow_pct_of_deposit: float = 50.0
     max_estimated_fee_sol_per_tx: float = 0.065
     max_open_retries: int = 1
     max_session_spend_sol: float = 0.12
@@ -72,13 +73,13 @@ def fee_config_from_settings(settings: Any | None = None) -> FeeGuardConfig:
         jupiter_max_priority_micro_lamports=max(0, _i("jupiter_max_priority_micro_lamports", 2_000)),
         clmm_open_compute_units=max(100_000, _i("clmm_open_compute_units", 200_000)),
         clmm_close_compute_units=max(100_000, _i("clmm_close_compute_units", 280_000)),
-        clmm_open_rent_sol=max(0.0, _f("clmm_open_rent_sol", 0.055)),
+        clmm_open_rent_sol=max(0.0, _f("clmm_open_rent_sol", 0.009)),
         clmm_close_overhead_sol=max(0.0, _f("clmm_close_overhead_sol", 0.012)),
         clmm_base_fee_sol=max(0.0, _f("clmm_base_fee_sol", 0.00002)),
         min_clmm_deposit_sol=max(0.0, _f("min_clmm_deposit_sol", 0.008)),
         min_deposit_to_fee_ratio=max(1.0, _f("min_deposit_to_fee_ratio", 4.0)),
         max_fee_pct_of_deposit=max(1.0, _f("max_fee_pct_of_deposit", 35.0)),
-        max_rent_escrow_pct_of_deposit=max(1.0, min(100.0, _f("max_rent_escrow_pct_of_deposit", 10.0))),
+        max_rent_escrow_pct_of_deposit=max(1.0, min(100.0, _f("max_rent_escrow_pct_of_deposit", 50.0))),
         max_estimated_fee_sol_per_tx=max(0.0, _f("max_estimated_fee_sol_per_tx", 0.065)),
         max_open_retries=max(1, _i("max_open_retries", 1)),
         max_session_spend_sol=max(0.0, _f("max_session_spend_sol", 0.12)),
@@ -115,20 +116,24 @@ def estimate_clmm_open_cost_sol(
     micro = cap_priority_micro(priority_micro, cfg)
     units = cfg.clmm_open_compute_units
     pri = priority_fee_sol(micro, units)
-    rent = cfg.clmm_open_rent_sol
+    recoverable_rent = cfg.clmm_open_rent_sol
     base = cfg.clmm_base_fee_sol
-    total = rent + pri + base
-    pct = (100.0 * total / deposit_sol) if deposit_sol > 0 else 999.0
+    network_only = pri + base
+    total_wallet_sol_need = recoverable_rent + network_only
+    pct = (100.0 * network_only / deposit_sol) if deposit_sol > 0 else 999.0
     return {
         "operation": "clmm_open",
         "deposit_sol": round(deposit_sol, 6),
         "priority_micro_lamports": micro,
         "compute_units": units,
         "priority_fee_sol": round(pri, 6),
-        "rent_sol": round(rent, 6),
+        "rent_sol": round(recoverable_rent, 6),
+        "recoverable_rent_sol": round(recoverable_rent, 6),
         "base_fee_sol": round(base, 6),
-        "estimated_total_sol": round(total, 6),
+        "estimated_total_sol": round(total_wallet_sol_need, 6),
+        "network_fee_sol": round(network_only, 6),
         "fee_pct_of_deposit": round(pct, 1),
+        "note": "rent_sol is recoverable on close; not burned unless tx fails",
     }
 
 
@@ -255,7 +260,7 @@ def assert_clmm_open_allowed(
         raise FeeGuardBlockedError(
             f"Fee guard: deposit ~${dep_usd:.2f} is below min_lp_deposit_usd "
             f"({cfg.min_lp_deposit_usd:.2f}). Sub-${cfg.min_lp_deposit_usd:.2f} CLMM opens "
-            "show as 8¢ positions after ~0.042 SOL rent — raise size or close zombies first."
+            "show tiny notional after failed txs — raise size or close zombies first."
         )
 
     if dep < cfg.block_deposits_below_sol:
@@ -280,8 +285,8 @@ def assert_clmm_open_allowed(
             f"Fee guard: estimated tx cost {total:.4f} SOL exceeds "
             f"max_estimated_fee_sol_per_tx {cfg.max_estimated_fee_sol_per_tx}."
         )
-    # Rent (~0.042 SOL) dominates tiny deposits; pct check only when deposit covers rent.
-    if dep >= cfg.clmm_open_rent_sol and pct > cfg.max_fee_pct_of_deposit:
+    # Network fees vs deposit; recoverable rent is not a burn.
+    if dep >= cfg.clmm_open_rent_sol * 2 and pct > cfg.max_fee_pct_of_deposit:
         raise FeeGuardBlockedError(
             f"Fee guard: fees+rent would be ~{pct:.0f}% of deposit "
             f"(max {cfg.max_fee_pct_of_deposit:.0f}%). "
@@ -335,17 +340,23 @@ def sanitize_clmm_payload(script_name: str, payload: dict[str, Any], *, settings
             if k in out
         }
         assert_clmm_open_allowed(dep, settings=settings, priority_micro=micro, open_kwargs=open_kw or None)
-    elif script_name in ("close_position.mjs", "burn_position_nft.mjs"):
-        out["compute_units"] = cfg.clmm_close_compute_units
+    elif script_name in ("close_position.mjs", "burn_position_nft.mjs", "harvest_clmm_fees.mjs"):
+        out["compute_units"] = cfg.clmm_close_compute_units if script_name != "harvest_clmm_fees.mjs" else 200_000
         assert_clmm_close_allowed(settings=settings, priority_micro=micro)
-        if script_name == "close_position.mjs":
+        if script_name in ("close_position.mjs", "harvest_clmm_fees.mjs"):
             out["jupiter_priority_micro_lamports"] = min(
                 cfg.jupiter_max_priority_micro_lamports,
                 int(out.get("jupiter_priority_micro_lamports") or cfg.jupiter_max_priority_micro_lamports),
             )
     elif script_name == "swap_sol_to_pay.mjs":
-        lamports = int(out.get("amount_lamports") or 0)
-        assert_swap_allowed(lamports / 1_000_000_000, settings=settings)
+        from raydium_lp1.routes import WSOL_MINT
+
+        inp_mint = str(out.get("input_mint") or WSOL_MINT)
+        if inp_mint == WSOL_MINT:
+            lamports = int(out.get("amount_lamports") or out.get("amount_raw") or 0)
+            assert_swap_allowed(lamports / 1_000_000_000, settings=settings)
+        else:
+            assert_swap_allowed(max(0.002, float(cfg.clmm_base_fee_sol) * 2), settings=settings)
         out["jupiter_priority_micro_lamports"] = min(
             cfg.jupiter_max_priority_micro_lamports,
             int(out.get("jupiter_priority_micro_lamports") or cfg.jupiter_max_priority_micro_lamports),
@@ -374,7 +385,11 @@ def guard_onchain_fee(operation: str, **context: Any) -> dict[str, Any] | None:
         assert_swap_allowed(float(dep))
         _check_session_budget(cfg, cfg.clmm_base_fee_sol * 2)
         return None
-    if "close" in operation.lower() or script == "close_position.mjs":
+    if (
+        "close" in operation.lower()
+        or script in ("close_position.mjs", "harvest_clmm_fees.mjs")
+        or "harvest" in operation.lower()
+    ):
         return assert_clmm_close_allowed(priority_micro=context.get("priority_micro"))
     _check_session_budget(cfg, cfg.clmm_base_fee_sol)
     return None
@@ -397,7 +412,13 @@ def note_broadcast_result(script_name: str, result: dict[str, Any], estimate: di
         return
     if result.get("confirmed") is False:
         return
-    if not result.get("signature") and not result.get("tx") and not result.get("txId"):
+    sig = (
+        result.get("signature")
+        or result.get("tx")
+        or result.get("txId")
+        or result.get("harvest_signature")
+    )
+    if not sig:
         return
     est_sol = float((estimate or {}).get("estimated_total_sol") or 0)
     if est_sol <= 0:

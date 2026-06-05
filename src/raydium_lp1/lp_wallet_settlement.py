@@ -6,7 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 REPO = Path(__file__).resolve().parent.parent.parent
 WSOL = "So11111111111111111111111111111111111111112"
@@ -103,13 +103,15 @@ def fund_usdc_from_sol_if_needed(
 
 def settle_wallet_after_trade(
     *,
+    pool: Mapping[str, Any] | None = None,
+    config: Any | None = None,
     fund_usdc_target: float | None = None,
     sol_price_usd: float | None = None,
     fee_settings: dict[str, Any] | None = None,
     keep_mints: frozenset[str] | None = None,
     sweep_junk: bool = True,
 ) -> dict[str, Any]:
-    """Run after any live LP close/open: optional SOL→USDC top-up, then junk→SOL sweep."""
+    """After LP trade: optional stable top-up; sweep junk → pay leg (never sweep pay/alt as junk)."""
 
     from raydium_lp1.raydium_clmm import wallet_balance
 
@@ -123,7 +125,16 @@ def settle_wallet_after_trade(
         if not out["usdc_funding"].get("ok"):
             out["ok"] = False
     if sweep_junk:
-        out["junk_sweep"] = sweep_junk_to_sol(keep_mints=keep_mints)
+        from raydium_lp1.lp_junk_to_pay import junk_sweep_to_pay_enabled, sweep_junk_to_pay_leg
+
+        if pool is not None and junk_sweep_to_pay_enabled(config):
+            out["junk_sweep"] = sweep_junk_to_pay_leg(
+                pool=pool,
+                config=config,
+                keep_mints=keep_mints,
+            )
+        else:
+            out["junk_sweep"] = sweep_junk_to_sol(keep_mints=keep_mints)
     else:
         out["junk_sweep"] = {"ok": True, "skipped": True}
     if not out["junk_sweep"].get("ok") and out["junk_sweep"].get("sweeps"):

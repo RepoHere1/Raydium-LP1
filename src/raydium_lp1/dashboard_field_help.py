@@ -235,9 +235,9 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "35% default; micro deposits fail this check on purpose.",
     ),
     "max_rent_escrow_pct_of_deposit": (
-        "Hard cap on estimated non-recoverable tick-array rent as % of LP deposit (pre-trade). "
+        "Cap on estimated non-recoverable tick-array rent only (recoverable position rent excluded). "
         "Blocks literal full-range style traps before broadcast.",
-        "10% default — never let sunk escrow exceed one-tenth of deposit. Raise only for large positions.",
+        "Default 50%. On active pools sunk rent is usually $0.",
     ),
     "spend_less_get_more_enabled": (
         "SPEND LESS=GET MORE planner on every LIVE open and detective scan/LIVE top pick.",
@@ -298,7 +298,9 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
     "lp_active_strategy": (
         "centered_tight_range: narrow band on spot. asymmetric_single_asset: one-sided band (bullish above / bearish below). "
         "volatility_atr_width: width from day min/max swing. trailing_dynamic_skew: band skewed with momentum. "
-        "standard_full_range: wide centered band (max 80% width, not literal min/max ticks). auto_volatility_pick: chooses tight vs ATR from churn. "
+        "standard_full_range: wide centered band (max 80% width, not literal min/max ticks). "
+        "brainiac_cursor_success_80_skewed_no_escrow: BRAINIAC-CURSOR-SUCCESS — 80% skewed straddle, two-sided inventory, no fake escrow. "
+        "auto_volatility_pick: chooses tight vs ATR from churn. "
         "LIVE opens use this setting on the next CLMM deposit (see LP style column on dashboard).",
         "Change before each experiment; dashboard groups LIVE fills by lp_style_label for comparison.",
     ),
@@ -340,10 +342,19 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "stable balance is below deposit size (+ buffer). SOL pay legs skip swapping.",
         "Turn off only if you pre-fund stables manually. Applies to all LIVE opens including manual trades from ANOMALIES.",
     ),
+    "lp_sweep_junk_to_pay_leg": (
+        "When on (default), post-trade and close trash sweeps route stray SPL into the pool pay-type "
+        "(SOL/USDC/USDT from resolve_pay_mint) — never into the non-pay pair token.",
+        "Turn off to fall back to legacy sweep-to-SOL script without pool-aware pay leg.",
+    ),
+    "lp_junker_symbols": (
+        "Deprecated for pair logic: non-pay token is auto-detected as the other pool mint. "
+        "Leave empty; pay-type is never treated as junker.",
+        "Optional override list only for unusual cases.",
+    ),
     "lp_close_sweep_trash_to_sol": (
-        "When on (default), after every CLMM close, non-stable tokens received (memecoin / trash legs) "
-        "are swapped to SOL via Jupiter immediately.",
-        "USDC/USDT/USD1 are kept; unsellable trash stops after 2 attempts to limit fee waste.",
+        "When on (default), after every CLMM close, stray legs swap via Jupiter into pay-type.",
+        "Pay-type and both pair mints are kept; unsellable trash stops after lp_close_trash_swap_attempts.",
     ),
     "lp_close_trash_swap_attempts": (
         "How many Jupiter swap attempts per trash mint after a close (default 2). "
@@ -396,7 +407,7 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
         "Higher = safer depth; lower = more candidates but thinner books.",
     ),
     "super_brainiac_deposit_usd": (
-        "USD size for experiment LIVE opens (default $3). Uses pay-token-only + fee guard.",
+        "USD size for experiment LIVE opens (default $3.50). Uses pay-token-only + fee guard.",
         "Does not bypass manual-live or session fee caps.",
     ),
     "super_brainiac_target_apr_pct": (

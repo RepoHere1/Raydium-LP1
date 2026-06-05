@@ -1,0 +1,31 @@
+{
+  "_readme": "Copy to config/brainiac_wizard_last.json — the wizard writes this file. Pool id is never stored.",
+  "_wizard_version": 2,
+  "deposit_usd": 1.0,
+  "fund_non_pay_fraction": 0.35,
+  "sol_price_usd": 0,
+  "wide_width_pct": 80,
+  "min_in_range_factor": 0.55,
+  "run_pretrade": true,
+  "reset_fee_session": false,
+  "skip_fund_swap": false,
+  "skip_settle_after": false,
+  "apply_brainiac_strategy": true,
+  "dry_run_preview_only": false,
+  "use_auto_live_policy": true,
+  "_field_descriptions": {
+    "pool_id": "Raydium CLMM pool address. Not saved — always prompts ENTER_POOL_ADDRESS_HERE.",
+    "deposit_usd": "USD notional for the open (USDC on USDC pools; converted to SOL on SOL pools).",
+    "fund_non_pay_fraction": "Pay→alt fund fraction (default 0.35 on deposits under $3).",
+    "sol_price_usd": "SOL/USD for reports; 0 = use settings.json.",
+    "wide_width_pct": "Total band width % for Brainiac skew grid (default 80).",
+    "min_in_range_factor": "Block open if pretrade in-range factor is below this (default 0.55); 0 = off.",
+    "run_pretrade": "Wallet/pool/SPEND LESS analysis before signing.",
+    "reset_fee_session": "Clear fee_session_ledger attempt counter (default no).",
+    "skip_fund_swap": "Skip pay→non-pay funding when alt is already in wallet (default yes).",
+    "skip_settle_after": "Skip post-open sweep of junk to pay-type.",
+    "apply_brainiac_strategy": "Patch settings.json for Brainiac LIVE (Python).",
+    "use_auto_live_policy": "SUPER-BRAINIAC auto policy after pool id entered.",
+    "dry_run_preview_only": "Plan + pretrade only; no on-chain txs."
+  }
+}

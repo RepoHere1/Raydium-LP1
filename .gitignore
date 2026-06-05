@@ -1,6 +1,7 @@
 .env
 secrets/
 config/settings.json
+config/brainiac_wizard_last.json
 reports/
 __pycache__/
 *.py[cod]

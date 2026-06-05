@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -821,6 +821,11 @@ def main(argv: list[str] | None = None) -> int:
                 return
             if path == "/api/super-brainiac/scan":
                 try:
+                    body = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+                except json.JSONDecodeError as exc:
+                    self._send_json(400, {"error": f"invalid JSON: {exc}"})
+                    return
+                try:
                     from raydium_lp1.super_brainiac.possibilities import (
                         load_brainiac_config,
                         scan_brainiac_universe,
@@ -828,6 +833,11 @@ def main(argv: list[str] | None = None) -> int:
                     )
 
                     cfg, scanner = load_brainiac_config(paths.settings_path)
+                    dep_raw = body.get("deposit_usd") or body.get("input_amount_usd")
+                    if dep_raw not in (None, ""):
+                        dep_usd = float(dep_raw)
+                        if dep_usd > 0:
+                            cfg = replace(cfg, deposit_usd=dep_usd)
                     report = scan_brainiac_universe(cfg=cfg, scanner=scanner)
                     rpath = write_brainiac_report(report, cfg)
                     self._send_json(200, {"ok": True, "report_path": str(rpath), "report": report})
@@ -853,6 +863,44 @@ def main(argv: list[str] | None = None) -> int:
                         settings_path=paths.settings_path,
                         deposit_usd=dep_usd,
                     )
+                except Exception as exc:
+                    self._send_json(500, {"error": str(exc)})
+                    return
+                self._send_json(200 if result.get("ok") else 502, result)
+                return
+            if path == "/api/lp/harvest-fees":
+                try:
+                    body = json.loads(raw_body.decode("utf-8"))
+                except json.JSONDecodeError as exc:
+                    self._send_json(400, {"error": f"invalid JSON: {exc}"})
+                    return
+                if str(body.get("confirm", "")).upper() != "LIVE":
+                    self._send_json(400, {"error": "POST confirm=LIVE required"})
+                    return
+                try:
+                    settings = load_settings_json(paths.settings_path)
+                    from raydium_lp1.lp_harvest_fees import (
+                        harvest_all_open_position_fees,
+                        harvest_clmm_position_fees,
+                    )
+
+                    nft = str(body.get("position_nft_mint") or "").strip()
+                    pool_id = str(body.get("pool_id") or "").strip() or None
+                    if nft:
+                        result = harvest_clmm_position_fees(
+                            nft,
+                            config=settings,
+                            fee_guard_settings=settings,
+                        )
+                    else:
+                        result = harvest_all_open_position_fees(
+                            config=settings,
+                            pool_id=pool_id,
+                            fee_guard_settings=settings,
+                        )
+                except ModeBlockedError as exc:
+                    self._send_json(403, {"error": str(exc)})
+                    return
                 except Exception as exc:
                     self._send_json(500, {"error": str(exc)})
                     return

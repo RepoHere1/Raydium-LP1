@@ -21,7 +21,12 @@ from urllib.request import Request, urlopen
 
 from raydium_lp1.http_json import load_json_from_urlopen_response
 
-JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
+# lite-api first (matches raydium_clmm_node); legacy v6 host often fails DNS on some networks
+JUPITER_QUOTE_URLS: tuple[str, ...] = (
+    "https://lite-api.jup.ag/swap/v1/quote",
+    "https://quote-api.jup.ag/v6/quote",
+)
+JUPITER_QUOTE_URL = JUPITER_QUOTE_URLS[-1]  # backward compat for callers importing the constant
 RAYDIUM_COMPUTE_URL = "https://transaction-v1.raydium.io/compute/swap-base-in"
 
 WSOL_MINT = "So11111111111111111111111111111111111111112"
@@ -168,7 +173,7 @@ def check_jupiter_route(
     fetcher: HttpFetcher | None = None,
     max_price_impact_pct: float | None = None,
 ) -> dict[str, object]:
-    """Probe Jupiter v6 ``/quote`` for ``token_mint -> target_mint``."""
+    """Probe Jupiter quote APIs for ``token_mint -> target_mint`` (lite-api, then v6)."""
 
     fetch = fetcher or _default_fetch_json
     params = {
@@ -179,11 +184,25 @@ def check_jupiter_route(
         "onlyDirectRoutes": "false",
         "swapMode": "ExactIn",
     }
-    url = f"{JUPITER_QUOTE_URL}?{urlencode(params)}"
-    try:
-        payload = fetch(url)
-    except RuntimeError as exc:
-        return {"source": "jupiter", "ok": False, "error": str(exc), "url": url}
+    errors: list[str] = []
+    last_url = ""
+    payload: dict | None = None
+    for base in JUPITER_QUOTE_URLS:
+        last_url = f"{base}?{urlencode(params)}"
+        try:
+            payload = fetch(last_url)
+            if _truthy_route(payload):
+                break
+        except RuntimeError as exc:
+            errors.append(f"{base}: {exc}")
+            payload = None
+    if payload is None and errors:
+        return {
+            "source": "jupiter",
+            "ok": False,
+            "error": "; ".join(errors),
+            "url": last_url,
+        }
     ok = _truthy_route(payload)
     impact = _extract_price_impact_pct(payload) if isinstance(payload, dict) else None
     record: dict[str, object] = {
@@ -191,8 +210,10 @@ def check_jupiter_route(
         "ok": ok,
         "out_amount": _extract_out_amount(payload) if isinstance(payload, dict) else None,
         "price_impact_pct": impact,
-        "url": url,
+        "url": last_url,
     }
+    if not ok and errors:
+        record["error"] = "; ".join(errors)
     if (
         ok
         and max_price_impact_pct is not None

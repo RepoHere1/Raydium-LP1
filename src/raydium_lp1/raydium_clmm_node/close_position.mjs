@@ -1,9 +1,11 @@
 /**
- * close_position.mjs v0.5 — close + collect + sweep trash tokens → SOL.
+ * close_position.mjs v0.6 — close + collect + burn NFT + sweep trash → SOL.
  *
- * Universal rule: after close, swap any non-SOL / non-stable (USDC, USDT, USD1)
- * received on the pool legs to SOL via Jupiter, up to trash_swap_max_attempts (default 2).
- * If still unsellable, record abandoned and stop (no further fee burns).
+ * Universal rules:
+ * 1. After remove-liquidity, if the position NFT still exists with liquidity 0,
+ *    run an explicit closePosition (burn) so Raydium UI does not show $0 ghosts.
+ * 2. After close, swap any non-SOL / non-stable (USDC, USDT, USD1) received on the
+ *    pool legs to SOL via Jupiter, up to trash_swap_max_attempts (default 2).
  */
 
 import {
@@ -115,16 +117,72 @@ async function jupiterSwap({
   return { signature: sig, in_amount: quote.inAmount, out_amount: quote.outAmount };
 }
 
-function isTrashMint(mint) {
-  return mint && mint !== WSOL_MINT && !KEEP_MINTS.has(mint);
+function buildTrashKeepSet(inp) {
+  const keep = new Set(KEEP_MINTS);
+  if (Array.isArray(inp.trash_keep_mints)) {
+    for (const m of inp.trash_keep_mints) {
+      if (m) keep.add(String(m));
+    }
+  }
+  return keep;
+}
+
+function isTrashMint(mint, keepSet) {
+  return Boolean(mint) && !keepSet.has(mint);
+}
+
+async function findOwnerPosition(raydium, nftMint) {
+  const allPositions = await raydium.clmm.getOwnerPositionInfo({});
+  return allPositions.find((p) => p?.nftMint?.toBase58?.() === nftMint.toBase58()) ?? null;
+}
+
+/** Burn empty NFT still owned after decreaseLiquidity (Raydium ghost rows). */
+async function ensureBurnEmptyNft({
+  raydium, connection, inp, nftMint, poolInfo, poolKeys,
+}) {
+  if (inp.keep_position || inp.ensure_burn_nft === false) {
+    return { performed: false, reason: inp.keep_position ? 'keep_position' : 'ensure_burn_disabled' };
+  }
+  const still = await findOwnerPosition(raydium, nftMint);
+  if (!still) {
+    return { performed: false, already_gone: true, reason: 'nft_not_in_wallet' };
+  }
+  const liquidity = new BN(still.liquidity.toString());
+  if (!liquidity.isZero()) {
+    return {
+      performed: false,
+      reason: 'liquidity_nonzero',
+      liquidity: liquidity.toString(),
+    };
+  }
+  const { execute } = await raydium.clmm.closePosition({
+    poolInfo,
+    poolKeys,
+    ownerPosition: still,
+    txVersion: TxVersion.V0,
+    computeBudgetConfig: {
+      units: Number(inp.burn_compute_units ?? inp.compute_units ?? 200_000),
+      microLamports: Number(inp.priority_fee_micro_lamports ?? 2_000),
+    },
+  });
+  const { txId } = await execute({ sendAndConfirm: false });
+  await pollConfirm(connection, txId);
+  const after = await findOwnerPosition(raydium, nftMint);
+  return {
+    performed: true,
+    burn_signature: txId,
+    nft_still_present: Boolean(after),
+    note: 'burned empty position NFT (liquidity was 0)',
+  };
 }
 
 async function sweepTrashLegs({
-  connection, owner, legs, slippageBps, priorityMicro, maxAttempts,
+  connection, owner, legs, slippageBps, priorityMicro, maxAttempts, trashOutputMint, keepSet,
 }) {
+  const outputMint = trashOutputMint || WSOL_MINT;
   const results = [];
   for (const { mint, amountRaw, label } of legs) {
-    if (!isTrashMint(mint) || Number(amountRaw) <= TRASH_DUST_RAW) {
+    if (!isTrashMint(mint, keepSet) || Number(amountRaw) <= TRASH_DUST_RAW) {
       results.push({
         mint, label, performed: false, reason: 'not_trash_or_below_dust', amount_raw: String(amountRaw),
       });
@@ -137,7 +195,7 @@ async function sweepTrashLegs({
         const r = await jupiterSwap({
           connection, owner,
           inputMint: mint,
-          outputMint: WSOL_MINT,
+          outputMint: outputMint,
           amountRaw,
           slippageBps,
           priorityMicro,
@@ -182,8 +240,7 @@ async function main() {
   }
   const nftMint = new PublicKey(inp.position_nft_mint);
 
-  const allPositions = await raydium.clmm.getOwnerPositionInfo({});
-  const me = allPositions.find((p) => p?.nftMint?.toBase58?.() === nftMint.toBase58());
+  const me = await findOwnerPosition(raydium, nftMint);
   if (!me) {
     return finish({
       ok: false,
@@ -204,6 +261,8 @@ async function main() {
   );
   const sweepTrash = inp.sweep_trash_to_sol !== false;
   const maxAttempts = Math.max(1, Number(inp.trash_swap_max_attempts ?? 2));
+  const trashKeep = buildTrashKeepSet(inp);
+  const trashOutputMint = String(inp.trash_output_mint || WSOL_MINT);
 
   let closeResult;
   if (liquidity.isZero() && !inp.keep_position) {
@@ -252,11 +311,32 @@ async function main() {
       slippageBps,
       priorityMicro,
       maxAttempts,
+      trashOutputMint,
+      keepSet: trashKeep,
       legs: [
         { mint: mintA, amountRaw: closeResult.amount_a_received, label: 'mintA' },
         { mint: mintB, amountRaw: closeResult.amount_b_received, label: 'mintB' },
       ],
     });
+  }
+
+  let nftBurn = {
+    performed: false,
+    reason: 'not_requested',
+  };
+  if (!inp.keep_position && inp.ensure_burn_nft !== false) {
+    try {
+      nftBurn = await ensureBurnEmptyNft({
+        raydium,
+        connection,
+        inp,
+        nftMint,
+        poolInfo,
+        poolKeys,
+      });
+    } catch (e) {
+      nftBurn = { performed: false, error: String(e), reason: 'burn_failed' };
+    }
   }
 
   const anyAbandoned = trashSwaps.some((s) => s.abandoned_unsellable);
@@ -270,8 +350,11 @@ async function main() {
     fees_a_claimed: closeResult.fees_a_claimed,
     fees_b_claimed: closeResult.fees_b_claimed,
     position_closed: closeResult.position_closed,
+    position_nft_burned: Boolean(nftBurn.performed) && !nftBurn.nft_still_present,
+    nft_burn: nftBurn,
     note: closeResult.note,
     sweep_trash_to_sol: sweepTrash,
+    trash_output_mint: trashOutputMint,
     trash_swap_max_attempts: maxAttempts,
     trash_swaps: trashSwaps,
     payout_swap: {

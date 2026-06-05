@@ -87,6 +87,13 @@
     #err { color:#c02626; margin:.5rem 0; font-size:.85rem; }
     #err:empty { display:none; }
     .muted { color:var(--m); font-size:.82rem; margin:.35rem 0; }
+    .open-econ-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:.65rem; margin:.65rem 0 0; }
+    .open-econ-card { border:1px solid #fcd34d; border-radius:10px; background:#fffbeb; padding:.65rem .75rem; font-size:.8rem; }
+    .open-econ-card h4 { margin:0 0 .35rem; font-size:.85rem; color:#92400e; }
+    .open-econ-card .be-line { font-weight:800; color:#b45309; }
+    .open-econ-card dl { display:grid; grid-template-columns:auto 1fr; gap:.12rem .5rem; margin:.35rem 0 0; }
+    .open-econ-card dt { color:var(--m); font-size:.68rem; text-transform:uppercase; }
+    .open-econ-card dd { margin:0; font-weight:600; }
   </style>
 </head>
 <body class="view-demo">
@@ -116,6 +123,7 @@
         <div class="tbl-wrap"><h3>Live opens</h3><table><thead><tr>
           <th>#</th><th>Pair</th><th>APR</th><th>TVL</th><th>Vol24</th><th>Status</th><th>LP style</th><th>Pool</th><th>Fees</th>
         </tr></thead><tbody id="tb-live"></tbody></table></div>
+        <div id="live-open-econ"></div>
       </section>
       <section class="zone zone-demo">
         <h2>DRY_RUN wallet &amp; paper trades <span class="pill">paper</span></h2>
@@ -123,6 +131,7 @@
         <div class="tbl-wrap"><h3>Would open in LIVE</h3><table><thead><tr>
           <th>#</th><th>Pair</th><th>APR</th><th>TVL</th><th>Vol24</th><th>Action</th><th>Pool</th><th>Fees</th>
         </tr></thead><tbody id="tb-demo"></tbody></table></div>
+        <div id="demo-open-econ"></div>
       </section>
     </div>
     <h2>Candidate pools (scanner shortlist)</h2>
@@ -145,6 +154,6 @@
   </main>
   <script src="/mode_shared.js?v=20260601"></script>
   <script src="/lp1_copy.js?v=20260607"></script>
-  <script src="/positions_client.js?v=20260610"></script>
+  <script src="/positions_client.js?v=20260528econ"></script>
 </body>
 </html>

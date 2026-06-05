@@ -24,6 +24,8 @@ from raydium_lp1.super_brainiac.create_pool_analysis import analyze_create_pool_
 
 REPO = Path(__file__).resolve().parents[3]
 DEFAULT_REPORT_PATH = REPO / "reports" / "super_brainiac_latest.json"
+# Leaderboard rows always get Jupiter route probes (dashboard Routes column).
+LEADERBOARD_ROUTE_ROWS = 12
 
 # Plain-language logic blocks for dashboard (editable via settings keys below).
 LOGIC_DOCS: dict[str, Any] = {
@@ -66,7 +68,8 @@ LOGIC_DOCS: dict[str, Any] = {
         "opens with super_brainiac_deposit_usd using normal pay-token, fee-guard, and manual-live rules."
     ),
     "spend_less_get_more": (
-        "SPEND LESS=GET MORE runs on every detective scan and LIVE open: estimates sunk rent vs deposit, "
+        "SPEND LESS=GET MORE runs on every detective scan and LIVE open: Raydium-style rent "
+        "(recoverable ~0.008 SOL; sunk tick-array usually $0 on active pools) vs deposit, "
         "wallet headroom, clamps deposit when auto_clamp is on, and can fall back from wide band to "
         "single-sided on SOL/alt when micro deposits fail the rent cap."
     ),
@@ -77,7 +80,7 @@ LOGIC_DOCS: dict[str, Any] = {
 class BrainiacConfig:
     enabled: bool = True
     min_liquidity_usd: float = 5000.0
-    deposit_usd: float = 3.0
+    deposit_usd: float = 3.5
     target_apr_pct: float = 999.99
     auto_open_live: bool = False
     scan_pages: int = 8
@@ -124,7 +127,7 @@ class BrainiacConfig:
         return cls(
             enabled=_b("super_brainiac_enabled", True),
             min_liquidity_usd=_f("super_brainiac_min_liquidity_usd", 5000.0),
-            deposit_usd=_f("super_brainiac_deposit_usd", 3.0),
+            deposit_usd=_f("super_brainiac_deposit_usd", 3.5),
             target_apr_pct=_f("super_brainiac_target_apr_pct", 999.99),
             auto_open_live=_b("super_brainiac_auto_open_live", False),
             scan_pages=max(1, min(50, _i("super_brainiac_scan_pages", 8))),
@@ -230,8 +233,8 @@ def pool_age_hours(pool: Mapping[str, Any]) -> float | None:
 
 def _width_efficiency(width_pct: float, placement: str) -> float:
     w = max(4.0, float(width_pct))
-    if placement in ("wide_band", "full_range"):
-        return 0.35
+    if placement in ("wide_band", "full_range", "brainiac_skewed_wide"):
+        return 0.38 if placement == "brainiac_skewed_wide" else 0.35
     if placement in ("single_above", "single_below"):
         return min(2.2, 1.15 / (w / 100.0))
     return min(2.5, 1.35 / (w / 100.0))
@@ -250,7 +253,12 @@ def in_range_factor(
     pmin = float(day.get("priceMin") or 0)
     pmax = float(day.get("priceMax") or 0)
 
-    if placement in ("wide_band", "full_range"):
+    if placement in ("wide_band", "full_range", "brainiac_skewed_wide"):
+        if placement == "brainiac_skewed_wide" and spot is not None and pmin > 0 and pmax > pmin:
+            lo, hi = lp_range_planner.asymmetric_quote_band(spot, width_pct, skew)
+            overlap = max(0.0, min(hi, pmax) - max(lo, pmin))
+            span = pmax - pmin
+            return max(0.75, min(0.98, overlap / span * 0.95 + 0.05)) if span > 0 else 0.88
         return 0.82
 
     if spot is None or pmin <= 0 or pmax <= pmin:
@@ -320,6 +328,8 @@ def pool_passes_universe(
     pool: Mapping[str, Any],
     cfg: BrainiacConfig,
     scanner: ScannerConfig,
+    *,
+    check_routes: bool = True,
 ) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     pid = str(pool.get("program_id") or "")
@@ -345,26 +355,27 @@ def pool_passes_universe(
         if not shape.get("ok"):
             reasons.append(str(shape.get("reason") or "not PAY/ALT pair"))
 
-    bases = tuple(s.upper() for s in sorted(scanner.allowed_quote_symbols))
-    impact = cfg.max_route_price_impact_pct if cfg.max_route_price_impact_pct > 0 else 0.0
-    if cfg.require_sell_route:
-        sell = routes.check_pool_sellability(
-            dict(pool),
-            base_symbols=bases,
-            sources=scanner.route_sources,
-            max_route_price_impact_pct=impact,
-        )
-        if not sell.ok:
-            reasons.extend(sell.reasons[:2])
-    if cfg.require_buy_route:
-        buy_ok, buy_reasons = check_pool_buy_routes(
-            pool,
-            base_symbols=bases,
-            sources=scanner.route_sources,
-            max_route_price_impact_pct=impact,
-        )
-        if not buy_ok:
-            reasons.extend(buy_reasons[:2])
+    if check_routes:
+        bases = tuple(s.upper() for s in sorted(scanner.allowed_quote_symbols))
+        impact = cfg.max_route_price_impact_pct if cfg.max_route_price_impact_pct > 0 else 0.0
+        if cfg.require_sell_route:
+            sell = routes.check_pool_sellability(
+                dict(pool),
+                base_symbols=bases,
+                sources=scanner.route_sources,
+                max_route_price_impact_pct=impact,
+            )
+            if not sell.ok:
+                reasons.extend(sell.reasons[:2])
+        if cfg.require_buy_route:
+            buy_ok, buy_reasons = check_pool_buy_routes(
+                pool,
+                base_symbols=bases,
+                sources=scanner.route_sources,
+                max_route_price_impact_pct=impact,
+            )
+            if not buy_ok:
+                reasons.extend(buy_reasons[:2])
     pay = resolve_pay_mint(pool, scanner)
     if pay is None and scanner.lp_open_pay_token_only:
         reasons.append("no SOL/USDC/USDT pay leg")
@@ -379,19 +390,36 @@ def score_strategy_for_pool(
     scanner: ScannerConfig,
 ) -> dict[str, Any]:
     mom = pool.get("momentum") if isinstance(pool.get("momentum"), dict) else None
-    plan = build_open_order(
-        pool,
-        mom,
-        strategy_id=strategy_id,
-        default_width_pct=float(getattr(scanner, "lp_default_range_width_pct", 20.0) or 20.0),
-        skew_use_momentum=bool(getattr(scanner, "lp_skew_use_momentum", True)),
-    )
-    sid = str(plan.get("strategy_id") or strategy_id)
-    width = float(plan.get("width_pct") or 20.0)
-    skew = float(plan.get("skew") or 0.0)
+    sid = str(strategy_id or "")
+    if sid == lp_order_strategies.STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+        from raydium_lp1.lp_brainiac_cursor_success import optimal_skew_for_pool
+
+        width = 80.0
+        skew, _, _ = optimal_skew_for_pool(pool, width_pct=width, seed_skew=0.0)
+        plan = {
+            "strategy_id": sid,
+            "width_pct": width,
+            "skew": skew,
+            "band": {"placement": "brainiac_skewed_wide"},
+        }
+    else:
+        plan = build_open_order(
+            pool,
+            mom,
+            strategy_id=strategy_id,
+            default_width_pct=float(getattr(scanner, "lp_default_range_width_pct", 20.0) or 20.0),
+            skew_use_momentum=bool(getattr(scanner, "lp_skew_use_momentum", True)),
+        )
+        sid = str(plan.get("strategy_id") or strategy_id)
+        width = float(plan.get("width_pct") or 20.0)
+        skew = float(plan.get("skew") or 0.0)
 
     placement = "centered"
-    if sid == lp_order_strategies.STRATEGY_FULL_RANGE:
+    if sid == lp_order_strategies.STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+        placement = "brainiac_skewed_wide"
+        width = float(plan.get("width_pct") or 80.0)
+        skew = float(plan.get("skew") or 0.0)
+    elif sid == lp_order_strategies.STRATEGY_FULL_RANGE:
         placement = "wide_band"
     elif sid == lp_order_strategies.STRATEGY_ASYMMETRIC or (
         sid == lp_order_strategies.STRATEGY_TRAILING_SKEW and abs(skew) >= 0.08
@@ -439,8 +467,9 @@ def score_pool(
     *,
     cfg: BrainiacConfig,
     scanner: ScannerConfig,
+    check_routes: bool = True,
 ) -> dict[str, Any] | None:
-    ok, reasons = pool_passes_universe(pool, cfg, scanner)
+    ok, reasons = pool_passes_universe(pool, cfg, scanner, check_routes=check_routes)
     if not ok:
         return None
     strategies = [score_strategy_for_pool(pool, sid, cfg=cfg, scanner=scanner) for sid in ALL_STRATEGY_IDS]
@@ -463,7 +492,25 @@ def score_pool(
         "best_strategy": best,
         "strategy_ranking": sorted(strategies, key=lambda s: -float(s.get("brainiac_score") or 0))[:4],
         "universe_ok": True,
+        "routes_probed": check_routes,
+        "routes_verified": True if check_routes else None,
         "reject_reasons": reasons,
+    }
+
+
+def _probe_pool_routes(
+    pool: Mapping[str, Any],
+    row: Mapping[str, Any],
+    *,
+    cfg: BrainiacConfig,
+    scanner: ScannerConfig,
+) -> dict[str, Any]:
+    route_ok, route_reasons = pool_passes_universe(pool, cfg, scanner, check_routes=True)
+    return {
+        **dict(row),
+        "routes_probed": True,
+        "routes_verified": route_ok,
+        "route_reject_reasons": [] if route_ok else route_reasons[:2],
     }
 
 
@@ -533,27 +580,69 @@ def scan_brainiac_universe(
             -float(p.get("volume_24h_usd") or 0) / max(1.0, float(p.get("liquidity_usd") or 1)),
         ),
     )
+    rank_cap = min(len(prefiltered), max(50, min(150, cfg.scan_pages * 18)))
     route_cap = max(20, min(80, cfg.scan_pages * 12))
 
-    scored: list[dict[str, Any]] = []
+    ranked_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     rejected = len(pools_raw) - len(prefiltered)
-    for pool in prefiltered[:route_cap]:
-        row = score_pool(pool, cfg=cfg, scanner=scanner)
+    for pool in prefiltered[:rank_cap]:
+        row = score_pool(pool, cfg=cfg, scanner=scanner, check_routes=False)
         if row:
-            scored.append(row)
+            ranked_pairs.append((pool, row))
         else:
             rejected += 1
-    rejected += max(0, len(prefiltered) - route_cap)
+    rejected += max(0, len(prefiltered) - rank_cap)
 
-    scored.sort(
-        key=lambda r: (
-            -float((r.get("best_strategy") or {}).get("brainiac_score") or 0),
-            float(r.get("pool_age_hours") if r.get("pool_age_hours") is not None else 1e9),
+    ranked_pairs.sort(
+        key=lambda pr: (
+            -float((pr[1].get("best_strategy") or {}).get("brainiac_score") or 0),
+            float(pr[1].get("pool_age_hours") if pr[1].get("pool_age_hours") is not None else 1e9),
         ),
     )
 
-    top = scored[0] if scored else None
-    if top:
+    route_probes = 0
+    route_verified_count = 0
+    live_pick: dict[str, Any] | None = None
+
+    def _remember_live(updated: dict[str, Any]) -> None:
+        nonlocal route_verified_count, live_pick
+        if updated.get("routes_verified"):
+            route_verified_count += 1
+            if live_pick is None:
+                live_pick = updated
+
+    # Pass 1: always probe top leaderboard rows (dashboard Routes column).
+    for idx in range(min(LEADERBOARD_ROUTE_ROWS, len(ranked_pairs))):
+        pool, row = ranked_pairs[idx]
+        if row.get("routes_probed"):
+            updated = dict(row)
+        else:
+            updated = _probe_pool_routes(pool, row, cfg=cfg, scanner=scanner)
+            route_probes += 1
+        ranked_pairs[idx] = (pool, updated)
+        _remember_live(updated)
+
+    # Pass 2: probe remaining ranked pools until we have a LIVE pick or exhaust the list.
+    for idx, (pool, row) in enumerate(ranked_pairs):
+        if row.get("routes_probed"):
+            if row.get("routes_verified") and live_pick is None:
+                live_pick = dict(row)
+            continue
+        if live_pick is not None:
+            break
+        updated = _probe_pool_routes(pool, row, cfg=cfg, scanner=scanner)
+        route_probes += 1
+        ranked_pairs[idx] = (pool, updated)
+        _remember_live(updated)
+
+    scored = [row for _, row in ranked_pairs]
+    score_leader = scored[0] if scored else None
+    top = live_pick if live_pick is not None else (
+        {**score_leader, "routes_verified": False} if score_leader else None
+    )
+    def _annotate_pick(pick: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not pick:
+            return None
         try:
             from raydium_lp1 import wallet as wallet_mod
             from raydium_lp1.scanner import assess_capacity
@@ -564,8 +653,8 @@ def scan_brainiac_universe(
             cap = assess_capacity(scanner, w)
             bal = float((cap.get("balance") or {}).get("sol") or 0.0)
             sl_settings = load_settings_json(spath)
-            top = annotate_brainiac_pick(
-                top,
+            return annotate_brainiac_pick(
+                pick,
                 deposit_usd=cfg.deposit_usd,
                 balance_sol=bal,
                 reserve_sol=float(getattr(scanner, "reserve_sol", 0.002) or 0.002),
@@ -573,7 +662,13 @@ def scan_brainiac_universe(
                 scanner=scanner,
             )
         except Exception as exc:
-            top = {**top, "spend_less_get_more_error": str(exc)}
+            return {**pick, "spend_less_get_more_error": str(exc)}
+
+    score_leader = _annotate_pick(score_leader)
+    live_pick = _annotate_pick(live_pick)
+    top = live_pick if live_pick is not None else (
+        {**score_leader, "routes_verified": False} if score_leader else None
+    )
 
     duration = round(time.time() - t0, 2)
     return {
@@ -582,7 +677,9 @@ def scan_brainiac_universe(
         "scan_duration_sec": duration,
         "scan_message": (
             f"Scanned {len(pools_raw)} pools in {duration}s; "
-            f"{len(scored)} PAY/ALT candidates scored (route cap {route_cap})."
+            f"{len(scored)} PAY/ALT ranked (fee model), "
+            f"{route_verified_count} with Jupiter routes for LIVE "
+            f"(probed {route_probes}, top {LEADERBOARD_ROUTE_ROWS} rows for Routes column)."
         ),
         "config": {
             "min_liquidity_usd": cfg.min_liquidity_usd,
@@ -593,10 +690,15 @@ def scan_brainiac_universe(
         },
         "pools_fetched": len(pools_raw),
         "prefiltered_count": len(prefiltered),
+        "rank_cap": rank_cap,
         "route_check_cap": route_cap,
+        "route_probes": route_probes,
+        "route_verified_count": route_verified_count,
         "candidates_scored": len(scored),
         "rejected_count": rejected,
         "errors": errors,
+        "score_leader": score_leader,
+        "live_pick": live_pick,
         "top_pick": top,
         "leaderboard": scored[:25],
         "logic_docs": LOGIC_DOCS,
@@ -619,6 +721,11 @@ def pick_open_target(
     top = report.get("top_pick")
     if not isinstance(top, dict):
         return None, "no pool passed SUPER-BRAINIAC filters"
+    if top.get("routes_verified") is not True:
+        reasons = top.get("route_reject_reasons") or []
+        hint = reasons[0] if reasons else "no Jupiter buy/sell route"
+        label = top.get("pair_label") or top.get("pair") or "top pool"
+        return None, f"{label} not route-verified ({hint})"
     best = top.get("best_strategy") if isinstance(top.get("best_strategy"), dict) else {}
     score = float(best.get("brainiac_score") or 0)
     conf = float(best.get("confidence") or 0)

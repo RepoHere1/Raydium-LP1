@@ -101,7 +101,7 @@ class LpPayMintTests(unittest.TestCase):
         self.assertTrue(style.open_kwargs.get("pay_mint_only"))
         self.assertIn("pay SOL only", style.lp_style_label)
 
-    def test_full_range_straddles_spot_with_pay_sol(self) -> None:
+    def test_wide_band_straddles_spot_with_pay_sol(self) -> None:
         pool = {
             "mint_a": "So11111111111111111111111111111111111111112",
             "mint_b": "Alt",
@@ -116,10 +116,11 @@ class LpPayMintTests(unittest.TestCase):
             allowed_quote_symbols={"SOL", "USDC", "USDT"},
         )
         style = resolve_live_open_style(cfg, pool)
-        self.assertEqual(style.placement, "full_range")
+        self.assertEqual(style.placement, "wide_band")
         self.assertIsNone(style.open_kwargs.get("single_side"))
-        self.assertLessEqual(float(style.open_kwargs.get("tick_lower_pct_below") or 99), 4.0)
-        self.assertGreaterEqual(float(style.open_kwargs.get("tick_upper_pct_above") or 0), 40)
+        self.assertTrue(style.open_kwargs.get("wide_range"))
+        self.assertFalse(style.open_kwargs.get("full_range"))
+        self.assertIn("tick_lower_pct_below", style.open_kwargs)
         self.assertIsNotNone(style.open_kwargs.get("input_mint"))
 
     def test_pay_error_message(self) -> None:

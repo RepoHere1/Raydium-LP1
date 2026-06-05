@@ -105,6 +105,18 @@ function tokenBalanceRaw(raydium, mintStr) {
   return total;
 }
 
+/** SPL balance + native SOL when mint is WSOL (Raydium SOL pools use WSOL mint id). */
+async function tokenBalanceRawWithSol(raydium, connection, owner, mintStr, reserveLamports = 12_000_000) {
+  let bal = tokenBalanceRaw(raydium, mintStr);
+  if (mintStr === WSOL_MINT) {
+    const lamports = await connection.getBalance(owner.publicKey);
+    const spendable = Math.max(0, lamports - Number(reserveLamports || 0));
+    const nativeBn = new BN(String(spendable));
+    if (nativeBn.gt(bal)) bal = nativeBn;
+  }
+  return bal;
+}
+
 async function fundOtherLegIfNeeded({
   raydium, connection, owner, payMintStr, otherMintStr, otherAmountMax, slippageBps, priorityMicro,
 }) {
@@ -394,8 +406,9 @@ async function fitFullRangeWalletInventory({
   if (!(budgetUsd > 0) || !(spot > 0)) return null;
 
   await refreshOwnerTokenAccounts(raydium, connection, owner);
-  let zincBal = tokenBalanceRaw(raydium, mintAStr);
-  let usdcBal = tokenBalanceRaw(raydium, mintBStr);
+  const reserveLamports = Number(inp.min_open_lamports ?? 12_000_000);
+  let zincBal = await tokenBalanceRawWithSol(raydium, connection, owner, mintAStr, reserveLamports);
+  let usdcBal = await tokenBalanceRawWithSol(raydium, connection, owner, mintBStr, reserveLamports);
   const decA = poolInfo.mintA?.decimals ?? 9;
   const decB = poolInfo.mintB?.decimals ?? 6;
 
@@ -403,7 +416,9 @@ async function fitFullRangeWalletInventory({
   const targetZincRaw = new BN(
     Math.max(1, Math.floor((targetZincUsd / spot) * 10 ** decA))
   );
-  if (zincBal.lt(targetZincRaw) && usdcBal.gt(new BN(200_000))) {
+  const payLegBal = mintBStr === WSOL_MINT ? usdcBal : (mintAStr === WSOL_MINT ? zincBal : usdcBal);
+  const payLegMin = mintBStr === WSOL_MINT || mintAStr === WSOL_MINT ? new BN(5_000_000) : new BN(200_000);
+  if (zincBal.lt(targetZincRaw) && payLegBal.gt(payLegMin)) {
     const deficit = targetZincRaw.sub(zincBal).muln(108).divn(100);
     try {
       await jupiterSwap({
@@ -416,8 +431,8 @@ async function fitFullRangeWalletInventory({
         swapMode: 'ExactOut',
       });
       await refreshOwnerTokenAccounts(raydium, connection, owner);
-      zincBal = tokenBalanceRaw(raydium, mintAStr);
-      usdcBal = tokenBalanceRaw(raydium, mintBStr);
+      zincBal = await tokenBalanceRawWithSol(raydium, connection, owner, mintAStr, reserveLamports);
+      usdcBal = await tokenBalanceRawWithSol(raydium, connection, owner, mintBStr, reserveLamports);
     } catch (_) { /* fit loop may still swap */ }
   }
 
@@ -461,7 +476,7 @@ async function fitFullRangeWalletInventory({
       let needOther = order.tryBaseIn
         ? (probe.amountSlippageB?.amount ?? new BN(0))
         : (probe.amountSlippageA?.amount ?? new BN(0));
-      let haveOtherNow = tokenBalanceRaw(raydium, order.otherMint);
+      let haveOtherNow = await tokenBalanceRawWithSol(raydium, connection, owner, order.otherMint, reserveLamports);
       const payMintStr = order.tryBaseIn ? mintAStr : mintBStr;
       const payBalNow = order.tryBaseIn ? zincBal : usdcBal;
       if (needOther.gt(haveOtherNow)) {
@@ -477,7 +492,7 @@ async function fitFullRangeWalletInventory({
             swapMode: 'ExactOut',
           });
           await refreshOwnerTokenAccounts(raydium, connection, owner);
-          haveOtherNow = tokenBalanceRaw(raydium, order.otherMint);
+          haveOtherNow = await tokenBalanceRawWithSol(raydium, connection, owner, order.otherMint, reserveLamports);
         } catch (_) {
           const swapIn = payBalNow.muln(40).divn(100);
           if (swapIn.lte(new BN(0))) {
@@ -495,7 +510,7 @@ async function fitFullRangeWalletInventory({
               swapMode: 'ExactIn',
             });
             await refreshOwnerTokenAccounts(raydium, connection, owner);
-            haveOtherNow = tokenBalanceRaw(raydium, order.otherMint);
+            haveOtherNow = await tokenBalanceRawWithSol(raydium, connection, owner, order.otherMint, reserveLamports);
           } catch (e2) {
             depositRaw = depositRaw.muln(88).divn(100);
             continue;
@@ -684,8 +699,12 @@ async function main() {
     inp.slippage_bps ?? (wideRange ? 2500 : (inp.single_side ? 100 : 800))
   );
 
+  const useWalletInventory = Boolean(
+    inp.wallet_inventory_full_range || inp.wallet_inventory_wide_range
+  );
+
   let band = null;
-  if (wideRange && (inp.wallet_inventory_wide_range || inp.wallet_inventory_full_range)) {
+  if (useWalletInventory) {
     const inputMintStr0 = String(inp.input_mint || '');
     const mintAStr0 = String(poolInfo.mintA.address ?? poolInfo.mintA.address?.toString?.() ?? '');
     const baseIn0 =
@@ -936,14 +955,15 @@ async function main() {
   }
 
   await refreshOwnerTokenAccounts(raydium, connection, owner);
-  const haveA = tokenBalanceRaw(raydium, mintAStr);
-  const haveB = tokenBalanceRaw(raydium, mintBStr);
+  const reserveLamports = Number(inp.min_open_lamports ?? 12_000_000);
+  const haveA = await tokenBalanceRawWithSol(raydium, connection, owner, mintAStr, reserveLamports);
+  const haveB = await tokenBalanceRawWithSol(raydium, connection, owner, mintBStr, reserveLamports);
   const inputMintStrCap = String(inp.input_mint || '');
   const payWithNativeSol = inputMintStrCap === WSOL_MINT;
   let baseAmount = inputAmount;
   if (payWithNativeSol) {
     const lamportsNow = await connection.getBalance(owner.publicKey);
-    const reserveLamports = Number(inp.min_open_lamports ?? 25_000_000);
+    const reserveLamports = Number(inp.min_open_lamports ?? 12_000_000);
     const spendable = Math.max(0, lamportsNow - reserveLamports);
     const capNative = new BN(String(spendable));
     if (baseAmount.gt(capNative)) baseAmount = capNative;
@@ -970,7 +990,8 @@ async function main() {
     });
   }
   if (otherAmountMax.gt(new BN(0))) {
-    otherAmountMax = otherAmountMax.muln(105).divn(100);
+    const slipBoost = useWalletInventory ? 112 : 105;
+    otherAmountMax = otherAmountMax.muln(slipBoost).divn(100);
   }
 
   const inputMintStr = String(inp.input_mint || '');
@@ -989,14 +1010,14 @@ async function main() {
   try {
     const lamportsNow = await connection.getBalance(owner.publicKey);
     const minLamports = Number(
-      inp.min_open_lamports ?? 25_000_000
+      inp.min_open_lamports ?? 12_000_000
     );
     if (lamportsNow < minLamports) {
       return finish({
         ok: false,
-        error: `insufficient SOL for CLMM open rent (have ${lamportsNow}, need ${minLamports})`,
+        error: `insufficient SOL for CLMM open (have ${lamportsNow}, need ${minLamports})`,
         lamports: lamportsNow,
-        hint: 'Keep ~0.03+ SOL free; Token-2022 NFT avoids Metaplex metadata rent',
+        hint: 'Keep ~0.012+ SOL for position rent (recoverable on close) + tx fee; active pools rarely pay new tick-array rent',
       });
     }
 

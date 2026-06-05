@@ -13,6 +13,7 @@ Public functions:
     close_position(position_nft_mint, slippage_bps=100, keep_position=False,
                    ensure_burn_nft=True, priority_fee_micro_lamports=50_000) -> dict
     burn_position_nft(position_nft_mint, priority_fee_micro_lamports=50_000) -> dict
+    harvest_clmm_fees(position_nft_mint, ...) -> dict
     quote_sell(input_mint, output_mint, amount_raw,
                slippage_bps=100, max_impact_pct=5.0) -> dict
     wallet_balance() -> dict   # SOL + USDC + WSOL snapshot, no spend
@@ -39,6 +40,7 @@ _ONCHAIN_SPEND_SCRIPTS = frozenset({
     "open_position.mjs",
     "close_position.mjs",
     "burn_position_nft.mjs",
+    "harvest_clmm_fees.mjs",
     "swap_sol_to_pay.mjs",
 })
 
@@ -73,10 +75,20 @@ def _run_script(script_name: str, payload: dict, timeout: float = 60.0) -> dict:
         from raydium_lp1.fee_guard import FeeGuardBlockedError, note_broadcast_result, sanitize_clmm_payload
         from raydium_lp1.live_guard import guard_onchain
 
+        fee_settings = payload.get("_fee_guard_settings")
         if script_name == "open_position.mjs":
             dep = payload.get("input_amount_human")
         elif script_name == "swap_sol_to_pay.mjs":
-            dep = int(payload.get("amount_lamports") or 0) / 1_000_000_000
+            from raydium_lp1.routes import WSOL_MINT
+
+            inp_mint = str(payload.get("input_mint") or WSOL_MINT)
+            if inp_mint == WSOL_MINT:
+                dep = int(payload.get("amount_lamports") or payload.get("amount_raw") or 0) / 1_000_000_000
+            else:
+                from raydium_lp1.fee_guard import fee_config_from_settings
+
+                cfg_swap = fee_config_from_settings(fee_settings)
+                dep = max(0.002, float(cfg_swap.clmm_base_fee_sol) * 2)
         else:
             dep = None
         fee_settings = payload.pop("_fee_guard_settings", None)
@@ -265,7 +277,10 @@ def close_position(*,
                    payout_as: str | None = "SOL",
                    sweep_trash_to_sol: bool = True,
                    trash_swap_max_attempts: int = 2,
+                   trash_output_mint: str | None = None,
+                   trash_keep_mints: list[str] | None = None,
                    priority_fee_micro_lamports: int | None = None,
+                   fee_guard_settings: dict | None = None,
                    timeout: float = 120.0) -> dict:
     """Close (decrease to 0 + collect) a CLMM position; burn empty NFT by default.
 
@@ -278,7 +293,7 @@ def close_position(*,
     """
     from raydium_lp1.fee_guard import cap_priority_micro, fee_config_from_settings
 
-    cfg = fee_config_from_settings()
+    cfg = fee_config_from_settings(fee_guard_settings)
     pri = cap_priority_micro(priority_fee_micro_lamports, cfg)
     return _run_script("close_position.mjs", {
         "position_nft_mint":          position_nft_mint,
@@ -290,7 +305,46 @@ def close_position(*,
         "trash_swap_max_attempts":    max(1, int(trash_swap_max_attempts)),
         "priority_fee_micro_lamports":pri,
         "jupiter_priority_micro_lamports": cfg.jupiter_max_priority_micro_lamports,
+        **({"trash_output_mint": trash_output_mint} if trash_output_mint else {}),
+        **({"trash_keep_mints": list(trash_keep_mints)} if trash_keep_mints else {}),
+        **({"_fee_guard_settings": fee_guard_settings} if fee_guard_settings is not None else {}),
     }, timeout=timeout)
+
+
+def harvest_clmm_fees(
+    *,
+    position_nft_mint: str,
+    slippage_bps: int = 100,
+    trash_output_mint: str | None = None,
+    trash_keep_mints: list[str] | None = None,
+    sweep_non_pay_to_pay_type: bool = True,
+    use_sol_balance: bool | None = None,
+    priority_fee_micro_lamports: int | None = None,
+    fee_guard_settings: dict | None = None,
+    timeout: float = 120.0,
+) -> dict:
+    """Harvest accrued fees (liquidity unchanged); sweep non-pay fees to pay-type."""
+
+    from raydium_lp1.fee_guard import cap_priority_micro, fee_config_from_settings
+
+    cfg = fee_config_from_settings(fee_guard_settings)
+    pri = cap_priority_micro(priority_fee_micro_lamports, cfg)
+    return _run_script(
+        "harvest_clmm_fees.mjs",
+        {
+            "position_nft_mint": position_nft_mint,
+            "slippage_bps": int(slippage_bps),
+            "priority_fee_micro_lamports": pri,
+            "compute_units": 200_000,
+            "sweep_non_pay_to_pay_type": bool(sweep_non_pay_to_pay_type),
+            "jupiter_priority_micro_lamports": cfg.jupiter_max_priority_micro_lamports,
+            **({"trash_output_mint": trash_output_mint} if trash_output_mint else {}),
+            **({"trash_keep_mints": list(trash_keep_mints)} if trash_keep_mints else {}),
+            **({"use_sol_balance": use_sol_balance} if use_sol_balance is not None else {}),
+            **({"_fee_guard_settings": fee_guard_settings} if fee_guard_settings is not None else {}),
+        },
+        timeout=timeout,
+    )
 
 
 def burn_position_nft(*,
@@ -338,21 +392,45 @@ def swap_sol_for_pay_token(
 ) -> dict:
     """Swap native SOL → pay stable (USDC/USDT/USD1) via Jupiter before CLMM open."""
 
+    from raydium_lp1.routes import WSOL_MINT
+
+    return swap_tokens(
+        input_mint=WSOL_MINT,
+        output_mint=output_mint,
+        amount_raw=int(amount_lamports),
+        slippage_bps=slippage_bps,
+        priority_fee_micro_lamports=priority_fee_micro_lamports,
+        timeout=timeout,
+    )
+
+
+def swap_tokens(
+    *,
+    input_mint: str,
+    output_mint: str,
+    amount_raw: int | str,
+    slippage_bps: int = 150,
+    priority_fee_micro_lamports: int | None = None,
+    timeout: float = 90.0,
+) -> dict:
+    """Jupiter ExactIn between two mints (pay leg → alt leg, etc.)."""
+
     from raydium_lp1.fee_guard import cap_priority_micro, fee_config_from_settings
+    from raydium_lp1.routes import WSOL_MINT
 
     cfg = fee_config_from_settings()
     pri = cap_priority_micro(priority_fee_micro_lamports, cfg)
-    return _run_script(
-        "swap_sol_to_pay.mjs",
-        {
-            "output_mint": output_mint,
-            "amount_lamports": int(amount_lamports),
-            "slippage_bps": int(slippage_bps),
-            "priority_fee_micro_lamports": pri,
-            "jupiter_priority_micro_lamports": cfg.jupiter_max_priority_micro_lamports,
-        },
-        timeout=timeout,
-    )
+    payload: dict[str, Any] = {
+        "input_mint": str(input_mint),
+        "output_mint": str(output_mint),
+        "amount_raw": str(int(amount_raw)),
+        "slippage_bps": int(slippage_bps),
+        "priority_fee_micro_lamports": pri,
+        "jupiter_priority_micro_lamports": cfg.jupiter_max_priority_micro_lamports,
+    }
+    if str(input_mint) == WSOL_MINT and "amount_lamports" not in payload:
+        payload["amount_lamports"] = int(amount_raw)
+    return _run_script("swap_sol_to_pay.mjs", payload, timeout=timeout)
 
 
 def wallet_balance(timeout: float = 20.0) -> dict:

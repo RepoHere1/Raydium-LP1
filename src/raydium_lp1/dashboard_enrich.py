@@ -302,6 +302,27 @@ def enrich_dashboard_payload(data: dict[str, Any], settings_path: Path) -> dict[
         row.setdefault("simulated", False)
         if row.get("position_nft_mint") and not row.get("action"):
             row["action"] = "live_clmm"
+    sol_px_econ = 180.0
+    try:
+        from raydium_lp1.fee_guard import fee_config_from_settings
+        from raydium_lp1.scanner import ScannerConfig
+
+        cfg_e = ScannerConfig.from_file(settings_path)
+        sol_px_econ = float(fee_config_from_settings(cfg_e).sol_price_usd or 180.0)
+    except Exception:
+        pass
+    try:
+        from raydium_lp1.lp_position_economics import OPEN_ECONOMICS_TIPS, enrich_positions
+
+        live_open = enrich_positions(live_open, sol_price_usd=sol_px_econ)
+        demo_open = enrich_positions(list(out.get("demo_open_positions") or []), sol_price_usd=sol_px_econ)
+        out["demo_open_positions"] = demo_open
+        demo_trades = enrich_positions(list(out.get("demo_simulated_trades") or []), sol_price_usd=sol_px_econ)
+        out["demo_simulated_trades"] = demo_trades
+        out["open_economics_tips"] = list(OPEN_ECONOMICS_TIPS)
+    except Exception as exc:
+        out["open_economics_tips"] = []
+        out["open_economics_enrich_error"] = str(exc)
     out["live_open_positions"] = live_open
     out["active_positions_count"] = len(live_open)
     live_wc = dict(out["live_wallet_capacity"])
@@ -325,6 +346,17 @@ def enrich_dashboard_payload(data: dict[str, Any], settings_path: Path) -> dict[
             out["rpc_health"] = check_rpc_urls(list(config.solana_rpc_urls))
         except Exception:
             pass
+
+    try:
+        from raydium_lp1 import emergency
+        from raydium_lp1.settings_io import load_settings_json
+
+        alerts_path = Path(
+            str(load_settings_json(settings_path).get("emergency_alerts_path", "reports/alerts.json"))
+        )
+        out["emergency_banner"] = emergency.latest_emergency_close_banner(alerts_path)
+    except Exception:
+        out["emergency_banner"] = None
 
     out["feed_refreshed_at"] = _now_iso()
     return out

@@ -52,12 +52,23 @@ def strategy_cards_for_ui() -> list[dict[str, Any]]:
             "when_to_use": "Enable lp_skew_use_momentum; hot-tier pools.",
         },
         "standard_full_range": {
-            "band_hint": "Wide / passive",
+            "band_hint": "Wide band (max 80%)",
             "summary": (
-                "CPMM-like wide CLMM span. Lower fee intensity per dollar but simpler and "
-                "almost always in range."
+                "Centered CLMM band up to 80% width around spot — not literal pool min/max ticks. "
+                "Lower SOL rent than true full range; can go out of range on large moves."
             ),
-            "when_to_use": "When you cannot monitor; not for max APR hunting.",
+            "when_to_use": "Set-and-forget-ish without ~0.15 SOL tick-array rent on tiny deposits.",
+        },
+        "brainiac_cursor_success_80_skewed_no_escrow": {
+            "band_hint": "80% skewed (Brainiac grid)",
+            "summary": (
+                "Reasoning-based order type: Brainiac scores the pool, skews 80% width to 24h "
+                "range overlap, two-sided inventory, pay-type-only sweeps/funding, recoverable rent."
+            ),
+            "when_to_use": (
+                "Pay-type + memecoin CLMM pairs when UI APR is misleading; need both legs in wallet "
+                "and settlement routed to pay-type (SOL/USDC/USDT), not the non-pay token."
+            ),
         },
     }
 

@@ -151,6 +151,9 @@ def open_clmm_candidate(
     strategy_id: str | None = None,
     fee_guard_settings: dict[str, Any] | None = None,
     sol_price_usd: float | None = None,
+    open_deposit_usd: float | None = None,
+    band_tick_steps_cap: int | None = None,
+    skip_wallet_settlement: bool = False,
 ) -> dict[str, Any]:
 
     try:
@@ -221,9 +224,21 @@ def open_clmm_candidate(
     reserve = float(config.reserve_sol)
 
     from raydium_lp1.lp_open_style import resolve_live_open_style
+    from raydium_lp1.lp_order_strategies import STRATEGY_BRAINIAC_CURSOR_SUCCESS
     from raydium_lp1.lp_pay_mint import pay_mint_open_error, pay_token_only_enabled, resolve_pay_mint
 
-    lp_style = resolve_live_open_style(config, pool)
+    active_sid = str(strategy_id or getattr(config, "lp_active_strategy", "") or "")
+    if active_sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+        force_pay_token_only = False
+        wallet_inventory_full_range = True
+
+    dep_usd_for_style = float(open_deposit_usd or input_amount_usd or 0) or None
+    lp_style = resolve_live_open_style(
+        config,
+        pool,
+        open_deposit_usd=dep_usd_for_style,
+        band_tick_steps_cap=band_tick_steps_cap,
+    )
     style_open = dict(lp_style.open_kwargs)
 
     if pay_token_only_enabled(config):
@@ -300,7 +315,12 @@ def open_clmm_candidate(
             lp_skew_use_momentum=True,
             lp_planning_enabled=True,
         )
-        lp_style = resolve_live_open_style(config, pool)
+        lp_style = resolve_live_open_style(
+            config,
+            pool,
+            open_deposit_usd=dep_usd_for_style,
+            band_tick_steps_cap=band_tick_steps_cap,
+        )
         style_open = dict(lp_style.open_kwargs)
         open_kwargs = _build_clmm_open_kwargs(
             style_open,
@@ -352,6 +372,10 @@ def open_clmm_candidate(
             open_kwargs=open_kwargs,
         )
         open_cost_sol = float(fee_est.get("estimated_total_sol") or 0.055)
+        if sl.sol_need_est > 0:
+            # Pay-token funding precheck: legacy fee_est rent_sol (~0.055) over-reserves SOL
+            # vs SPEND LESS rent model (~0.02–0.03 on small asymmetric opens).
+            open_cost_sol = min(open_cost_sol, float(sl.sol_need_est) + 0.005)
     except FeeGuardBlockedError as exc:
         return {
             "ok": False,
@@ -417,6 +441,24 @@ def open_clmm_candidate(
 
     result: dict[str, Any] = {"ok": False, "error": "open not attempted"}
     retry_extras: list[dict[str, Any]] = [{}]
+    wide_pay_only_fallback = False
+    if (
+        style_open.get("wide_range")
+        and style_open.get("pay_mint_only")
+        and pay_res is not None
+    ):
+        w = float(style_open.get("wide_range_width_pct") or 80)
+        retry_extras.append(
+            {
+                "single_side": "above" if pay_res.pay_is_mint_a else "below",
+                "single_side_start_pct": float(style_open.get("single_side_start_pct") or 0.5),
+                "single_side_width_pct": w,
+                "wide_range": False,
+                "full_range": False,
+                "literal_pool_full_range": False,
+                "band_tick_steps": max(15, int(style_open.get("band_tick_steps") or 42)),
+            }
+        )
     if fee_cfg.max_open_retries > 1 and style_open.get("single_side"):
         w = float(style_open.get("single_side_width_pct") or lp_style.width_pct)
         retry_extras.append(
@@ -437,21 +479,27 @@ def open_clmm_candidate(
             }
         )
 
-    for extra in retry_extras[: max(1, fee_cfg.max_open_retries)]:
+    max_attempts = max(len(retry_extras), max(1, fee_cfg.max_open_retries))
+    for idx, extra in enumerate(retry_extras[:max_attempts]):
         attempt = {**open_kwargs, **extra}
         result = raydium_clmm.open_position(**attempt, fee_guard_settings=fee_settings)
         if result.get("ok"):
+            if idx > 0 and extra.get("single_side"):
+                wide_pay_only_fallback = True
+                result["wide_pay_only_single_side_fallback"] = True
             break
         if result.get("fee_guard"):
             break
-        if not fee_cfg.allow_fee_retry_after_failed_tx:
+        if not fee_cfg.allow_fee_retry_after_failed_tx and (idx + 1) >= len(
+            retry_extras[:max_attempts]
+        ):
             break
     if not result.get("ok"):
         err = result.get("error") or (result.get("clmm") or {}).get("confirm_error")
         if err and "Custom" in str(err):
             result["hint"] = (
-                "On-chain tx failed (often insufficient SOL for NFT rent + tick accounts). "
-                "Keep ~0.04–0.06 SOL in wallet for a 0.005 SOL CLMM open, not just the deposit size."
+                "On-chain tx failed (often insufficient SOL for position rent + tx fee). "
+                "Keep ~0.02–0.03 SOL in wallet; position rent is recoverable on close."
             )
         out = {
             "ok": False,
@@ -460,12 +508,23 @@ def open_clmm_candidate(
             "fee_guard_estimate": fee_est,
             "spend_less_get_more": spend_plan,
         }
-        return attach_post_open_analysis(
+        out = attach_post_open_analysis(
             out,
             plan=sl,
             deposit_usd=sl.effective_deposit_usd,
             settings=fee_settings,
         )
+        try:
+            from raydium_lp1.lp_position_economics import record_failed_open_from_result
+
+            record_failed_open_from_result(
+                str(pool.get("id") or ""),
+                out,
+                sol_price=float(sol_price_usd or fee_cfg.sol_price_usd or 180.0),
+            )
+        except Exception:
+            pass
+        return out
 
     row = {
         "opened_at": _now_iso(),
@@ -474,6 +533,7 @@ def open_clmm_candidate(
         "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
         "apr": pool.get("apr"),
         "liquidity_usd": pool.get("liquidity_usd"),
+        "fee_24h_usd": pool.get("fee_24h_usd"),
         "input_amount_sol": dep_sol_for_guard,
         "input_amount_human": deposit_human,
         "input_pay_symbol": getattr(pay_res, "pay_symbol", None) if pay_res else None,
@@ -484,7 +544,16 @@ def open_clmm_candidate(
         "momentum": pool.get("momentum"),
         **lp_style.to_position_fields(),
     }
-    _append_active_position(row)
+    if wide_pay_only_fallback:
+        row["wide_pay_only_single_side_fallback"] = True
+        row["lp_open_note"] = (
+            "Wide 80% straddle needs ALT leg; opened single-sided SOL band at same width "
+            "(standard_full_range pay-only)."
+        )
+    if spend_plan is not None:
+        row["spend_less_get_more"] = spend_plan
+    if funding_result is not None:
+        row["pay_funding"] = funding_result
     out_ok: dict[str, Any] = {
         "ok": True,
         "position": row,
@@ -494,15 +563,50 @@ def open_clmm_candidate(
     }
     if funding_result is not None:
         out_ok["pay_funding"] = funding_result
+    from raydium_lp1.lp_brainiac_cursor_success import (
+        STRATEGY_BRAINIAC_CURSOR_SUCCESS,
+        settle_wallet_after_brainiac_trade,
+    )
+    from raydium_lp1.lp_junk_to_pay import keep_mints_for_pool
     from raydium_lp1.lp_wallet_settlement import settle_wallet_after_trade
 
-    out_ok["wallet_settlement"] = settle_wallet_after_trade(sol_price_usd=sol_price_usd, fee_settings=fee_settings)
-    return attach_post_open_analysis(
+    if str(strategy_id or "").strip() == STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+        if not skip_wallet_settlement:
+            out_ok["wallet_settlement"] = settle_wallet_after_brainiac_trade(
+                pool,
+                config,
+                sol_price_usd=sol_price_usd,
+                fee_settings=fee_settings,
+            )
+    else:
+        out_ok["wallet_settlement"] = settle_wallet_after_trade(
+            pool=pool,
+            config=config,
+            sol_price_usd=sol_price_usd,
+            fee_settings=fee_settings,
+            keep_mints=keep_mints_for_pool(pool, config),
+        )
+    out_ok = attach_post_open_analysis(
         out_ok,
         plan=sl,
         deposit_usd=sl.effective_deposit_usd,
         settings=fee_settings,
     )
+    if out_ok.get("spend_less_cost_analysis"):
+        row["spend_less_cost_analysis"] = out_ok["spend_less_cost_analysis"]
+    from raydium_lp1.lp_position_economics import (
+        build_open_cost_summary,
+        failed_attempts_usd_for_pool,
+    )
+
+    row["open_economics"] = build_open_cost_summary(
+        row,
+        sol_price_usd=sol_price_usd,
+        failed_attempts_usd=failed_attempts_usd_for_pool(str(pool.get("id") or "")),
+    )
+    _append_active_position(row)
+    out_ok["position"] = row
+    return out_ok
 
 
 def _append_active_position(row: dict[str, Any]) -> None:

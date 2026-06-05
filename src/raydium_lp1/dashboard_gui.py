@@ -112,6 +112,13 @@ def _collect_settings_patch(widgets: dict[str, tk.Widget]) -> dict[str, Any]:
             "lp_close_trash_swap_attempts",
             "manual_live_min_pool_liquidity_usd",
             "manual_live_max_route_price_impact_pct",
+            "super_brainiac_min_liquidity_usd",
+            "super_brainiac_deposit_usd",
+            "super_brainiac_target_apr_pct",
+            "super_brainiac_prefer_fee_pct_min",
+            "super_brainiac_prefer_fee_pct_max",
+            "super_brainiac_min_confidence",
+            "super_brainiac_continuous_interval_sec",
         ):
             try:
                 patch[key] = float(val) if "." in val else int(val)

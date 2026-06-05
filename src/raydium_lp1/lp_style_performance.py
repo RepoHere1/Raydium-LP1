@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Mapping
 
+from raydium_lp1.lp_full_range import clmm_position_in_range
+
 
 def _parse_ts(raw: Any) -> datetime | None:
     if not raw:
@@ -16,25 +18,13 @@ def _parse_ts(raw: Any) -> datetime | None:
         return None
 
 
-def _in_range_from_clmm(clmm: Mapping[str, Any]) -> bool | None:
-    lo = clmm.get("tick_lower")
-    hi = clmm.get("tick_upper")
-    cur = clmm.get("tick_current")
-    if lo is None or hi is None or cur is None:
-        return None
-    try:
-        return int(lo) <= int(cur) <= int(hi)
-    except (TypeError, ValueError):
-        return None
-
-
 def _position_metrics(row: Mapping[str, Any]) -> dict[str, Any]:
     clmm = row.get("clmm_result") if isinstance(row.get("clmm_result"), dict) else {}
     opened = _parse_ts(row.get("opened_at"))
     age_h = None
     if opened:
         age_h = round((datetime.now(UTC) - opened).total_seconds() / 3600.0, 2)
-    in_range = _in_range_from_clmm(clmm)
+    in_range = clmm_position_in_range(row, clmm) if clmm else None
     fees = row.get("fees_collected_usd")
     try:
         fees_f = float(fees) if fees is not None else 0.0

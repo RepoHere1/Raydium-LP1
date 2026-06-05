@@ -7,6 +7,7 @@
   "scripts": {
     "open":  "node open_position.mjs",
     "close": "node close_position.mjs",
+    "burn":  "node burn_position_nft.mjs",
     "quote": "node quote_sell.mjs"
   },
   "dependencies": {

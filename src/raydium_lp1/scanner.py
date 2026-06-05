@@ -98,6 +98,9 @@ class ScannerConfig:
     emergency_alerts_path: str = "reports/alerts.json"
     emergency_base_symbol: str = "SOL"
     emergency_max_slippage_pct: float = 0.30
+    emergency_route_watch_enabled: bool = True
+    emergency_route_checks_per_day: int = 5
+    emergency_route_watch_state_path: str = "reports/emergency_route_watch.json"
     position_size_sol: float = 0.1
     reserve_sol: float = 0.02
     network: str = networks.NETWORK_SOLANA
@@ -152,6 +155,8 @@ class ScannerConfig:
     lp_pay_funding_sol_price_usd: float = 0.0
     lp_close_sweep_trash_to_sol: bool = True
     lp_close_trash_swap_attempts: int = 2
+    lp_sweep_junk_to_pay_leg: bool = True
+    lp_junker_symbols: tuple[str, ...] = ()
     blocked_pool_ids: set[str] = field(default_factory=set)
     lp_full_range_parallel: bool = False
     lp_full_range_budget_fraction: float = 0.25
@@ -237,6 +242,18 @@ class ScannerConfig:
             emergency_max_slippage_pct=float(
                 raw_with_strategy.get("emergency_max_slippage_pct", 0.30)
             ),
+            emergency_route_watch_enabled=bool(
+                raw_with_strategy.get("emergency_route_watch_enabled", True)
+            ),
+            emergency_route_checks_per_day=int(
+                raw_with_strategy.get("emergency_route_checks_per_day", 5)
+            ),
+            emergency_route_watch_state_path=str(
+                raw_with_strategy.get(
+                    "emergency_route_watch_state_path",
+                    "reports/emergency_route_watch.json",
+                )
+            ),
             position_size_sol=float(raw_with_strategy.get("position_size_sol", 0.1)),
             reserve_sol=float(raw_with_strategy.get("reserve_sol", 0.02)),
             network=networks.normalize_network(str(raw_with_strategy.get("network", "solana"))),
@@ -292,6 +309,12 @@ class ScannerConfig:
             lp_pay_funding_sol_price_usd=float(raw_with_strategy.get("lp_pay_funding_sol_price_usd", 0.0)),
             lp_close_sweep_trash_to_sol=bool(raw_with_strategy.get("lp_close_sweep_trash_to_sol", True)),
             lp_close_trash_swap_attempts=int(raw_with_strategy.get("lp_close_trash_swap_attempts", 2)),
+            lp_sweep_junk_to_pay_leg=bool(raw_with_strategy.get("lp_sweep_junk_to_pay_leg", True)),
+            lp_junker_symbols=tuple(
+                str(x).strip().upper()
+                for x in (raw_with_strategy.get("lp_junker_symbols") or [])
+                if str(x).strip()
+            ),
             blocked_pool_ids=set(raw_with_strategy.get("blocked_pool_ids", [])),
             lp_full_range_parallel=bool(raw_with_strategy.get("lp_full_range_parallel", False)),
             lp_full_range_budget_fraction=float(raw_with_strategy.get("lp_full_range_budget_fraction", 0.25)),
@@ -1106,6 +1129,7 @@ def scan(
 
     health_summary = {"healthy": 0, "warning": 0, "critical": 0}
     triggered_alerts: list[dict[str, Any]] = []
+    route_watch_report: dict[str, Any] = {}
     assessments: list[Any] = []
     if config.track_liquidity_health and candidates:
         history_path = Path(config.liquidity_history_path)
@@ -1251,6 +1275,17 @@ def scan(
         )
         triggered_alerts = [alert.to_dict() for alert in alerts]
 
+    if config.emergency_close_enabled and getattr(config, "emergency_route_watch_enabled", True):
+        from raydium_lp1.emergency_route_watch import run_route_watch_pass
+
+        try:
+            route_watch_report = run_route_watch_pass(
+                config=config,
+                execute_live=not config.dry_run,
+            )
+        except Exception as exc:
+            route_watch_report = {"ok": False, "error": str(exc)}
+
     wallet_capacity_info = assess_capacity(config, wallet_config, rpc_post=rpc_post)
     max_positions = int(wallet_capacity_info["capacity"]["max_positions"]) if wallet_config is not None else None
     # UI always gets the full filter-pass list; wallet cap applies only to executable subset.
@@ -1320,6 +1355,7 @@ def scan(
         "health_summary": health_summary,
         "emergency_close_enabled": config.emergency_close_enabled,
         "triggered_alerts": triggered_alerts,
+        "route_watch": route_watch_report,
         "use_robust_routing": config.use_robust_routing,
         "route_cache_stats": robust_routes.get_global_cache().stats(),
         "wallet_capacity": wallet_capacity_info,

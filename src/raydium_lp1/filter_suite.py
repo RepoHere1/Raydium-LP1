@@ -4,24 +4,6 @@ filter_suite v1.0 — composable filter chain for Raydium LP candidates.
 Ported from FutureGMGN's filter_suite.py, adapted for Raydium-LP1's
 domain (LP pools instead of prediction-market trades). Filters are pure
 functions: input = candidate dict, output = {pass: bool, reason: str}.
-
-A "candidate" is a Raydium pool the bot is considering opening a position on:
-  {
-    pool_id:       str,
-    mint_a_symbol: str,  mint_b_symbol: str,
-    tvl_usd:       float,
-    fees_24h_usd:  float,
-    apr_pct:       float,
-    spread_bps:    float,
-    spot_price:    float,
-    reward_emissions: list,   # if non-empty, may trigger SDK bug RAY-10
-    age_days:      int,
-    ...
-  }
-
-Composable: chain filters via `run_chain(cands, [f1, f2, f3])` — first
-filter to reject short-circuits. Returns the full reject reason for
-the UI's reject-feed (mirrors QL's reject_log pattern).
 """
 
 from __future__ import annotations
@@ -36,8 +18,6 @@ REJECT_LOG_PATH = REPO / "rejects.json"
 
 FilterFn = Callable[[dict, dict], dict]   # (cand, cfg) -> {pass, reason}
 
-
-# ---- individual filters --------------------------------------------------
 
 def filter_min_tvl(cand: dict, cfg: dict) -> dict:
     """Reject pools with TVL below threshold (avoids slippage spirals)."""
@@ -58,8 +38,7 @@ def filter_min_apr(cand: dict, cfg: dict) -> dict:
 
 
 def filter_max_spread(cand: dict, cfg: dict) -> dict:
-    """Reject pools where current bid/ask spread is wider than threshold.
-       Wide spread = thin orderbook = bad slippage on close."""
+    """Reject pools where current bid/ask spread is wider than threshold."""
     max_bps = float(cfg.get("max_spread_bps", 50))
     spread = float(cand.get("spread_bps", 0))
     if spread > max_bps:
@@ -77,8 +56,7 @@ def filter_pool_age(cand: dict, cfg: dict) -> dict:
 
 
 def filter_token_allowlist(cand: dict, cfg: dict) -> dict:
-    """If allowlist is non-empty, both mints must be in it.
-       Empty allowlist = pass-through (no token restriction)."""
+    """If allowlist is non-empty, both mints must be in it."""
     allow = set(cfg.get("token_allowlist", []) or [])
     if not allow:
         return {"pass": True, "reason": "no allowlist"}
@@ -104,9 +82,7 @@ def filter_token_denylist(cand: dict, cfg: dict) -> dict:
 
 
 def filter_no_reward_pool(cand: dict, cfg: dict) -> dict:
-    """If set, reject pools with active reward emissions. Workaround for
-       Raydium SDK v0.2.49 Custom:6030 bug on decrease_liquidity_v2 (RAY-10).
-       Default OFF — once the SDK ships a fix, this filter goes inactive."""
+    """If set, reject pools with active reward emissions (RAY-10 SDK workaround)."""
     require_no_rewards = bool(cfg.get("reject_reward_emissions", False))
     if not require_no_rewards:
         return {"pass": True, "reason": "rewards filter off"}
@@ -118,9 +94,15 @@ def filter_no_reward_pool(cand: dict, cfg: dict) -> dict:
     return {"pass": True, "reason": "no active rewards"}
 
 
+def filter_token_safety(cand: dict, cfg: dict) -> dict:
+    """On-chain mint safety (freeze/mint authority, Token-2022 hidden tax / hook).
+       DEFAULT OFF — enable via token_safety_enabled. Logic in token_safety.py."""
+    from raydium_lp1.token_safety import filter_token_safety as _ts
+    return _ts(cand, cfg)
+
+
 def filter_volume_fee_ratio(cand: dict, cfg: dict) -> dict:
-    """Sanity check: 24h volume / TVL ratio shouldn't be absurd.
-       Too low = dead pool, no fees. Too high = wash trading / unstable."""
+    """Sanity check: 24h volume / TVL ratio shouldn't be absurd."""
     min_ratio = float(cfg.get("min_24h_vol_tvl_ratio", 0.05))
     max_ratio = float(cfg.get("max_24h_vol_tvl_ratio", 50.0))
     tvl = float(cand.get("tvl_usd", 1))
@@ -135,8 +117,6 @@ def filter_volume_fee_ratio(cand: dict, cfg: dict) -> dict:
     return {"pass": True, "reason": f"vol/tvl ratio {ratio:.2f} healthy"}
 
 
-# ---- chain runner -------------------------------------------------------
-
 DEFAULT_CHAIN: list[FilterFn] = [
     filter_pool_age,
     filter_min_tvl,
@@ -146,20 +126,18 @@ DEFAULT_CHAIN: list[FilterFn] = [
     filter_token_denylist,
     filter_token_allowlist,
     filter_no_reward_pool,
+    filter_token_safety,
 ]
 
 
 def run_chain(candidate: dict, cfg: dict,
               chain: list[FilterFn] | None = None) -> dict:
-    """Run filters in order, short-circuit on first reject.
-       Returns {pass: bool, reason: str, rule: str, candidate: dict}."""
     chain = chain or DEFAULT_CHAIN
     for fn in chain:
         try:
             r = fn(candidate, cfg)
         except Exception as e:
-            return {"pass": False,
-                    "reason": f"filter {fn.__name__} crashed: {e}",
+            return {"pass": False, "reason": f"filter {fn.__name__} crashed: {e}",
                     "rule": fn.__name__, "candidate": candidate}
         if not r.get("pass"):
             return {"pass": False, "reason": r["reason"],
@@ -171,7 +149,6 @@ def run_chain(candidate: dict, cfg: dict,
 def filter_batch(candidates: list[dict], cfg: dict,
                  chain: list[FilterFn] | None = None,
                  record_rejects: bool = True) -> dict:
-    """Apply chain to a batch. Returns {passed, rejected, by_rule}."""
     passed: list[dict] = []
     rejected: list[dict] = []
     by_rule: dict[str, int] = {}
@@ -194,14 +171,14 @@ def filter_batch(candidates: list[dict], cfg: dict,
             ts = time.time()
             for r in rejected:
                 existing.append({
-                    "ts":         ts,
-                    "pool_id":    r["candidate"].get("pool_id", ""),
-                    "rule":       r["rule"],
-                    "reason":     r["reason"],
-                    "mint_a":     r["candidate"].get("mint_a_symbol", ""),
-                    "mint_b":     r["candidate"].get("mint_b_symbol", ""),
+                    "ts": ts,
+                    "pool_id": r["candidate"].get("pool_id", ""),
+                    "rule": r["rule"],
+                    "reason": r["reason"],
+                    "mint_a": r["candidate"].get("mint_a_symbol", ""),
+                    "mint_b": r["candidate"].get("mint_b_symbol", ""),
                 })
-            existing = existing[-2000:]   # keep last 2000
+            existing = existing[-2000:]
             tmp = str(REJECT_LOG_PATH) + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(existing, fh, indent=2)
@@ -210,22 +187,21 @@ def filter_batch(candidates: list[dict], cfg: dict,
             pass
 
     return {
-        "input":    len(candidates),
-        "passed":   len(passed),
+        "input": len(candidates),
+        "passed": len(passed),
         "rejected": len(rejected),
-        "by_rule":  by_rule,
+        "by_rule": by_rule,
         "pass_list": passed,
-        "rejects":   rejected,
+        "rejects": rejected,
     }
 
 
 def status() -> dict:
-    """Doctor-callable health probe."""
     return {
-        "module":       "filter_suite",
+        "module": "filter_suite",
         "filter_count": len(DEFAULT_CHAIN),
-        "filters":      [f.__name__ for f in DEFAULT_CHAIN],
-        "reject_log":   str(REJECT_LOG_PATH),
+        "filters": [f.__name__ for f in DEFAULT_CHAIN],
+        "reject_log": str(REJECT_LOG_PATH),
         "reject_log_exists": REJECT_LOG_PATH.exists(),
     }
 
@@ -235,29 +211,6 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "status":
         print(json.dumps(status(), indent=2))
-    elif cmd == "test":
-        # Smoke test with a fake candidate
-        cand = {
-            "pool_id":           "test123",
-            "mint_a_symbol":     "SOL", "mint_b_symbol": "USDC",
-            "tvl_usd":           5_000_000,
-            "fees_24h_usd":      2_000,
-            "apr_pct":           14.6,
-            "spread_bps":        8,
-            "volume_24h_usd":    500_000,
-            "age_days":          90,
-            "reward_emissions":  [],
-        }
-        cfg = {
-            "min_pool_tvl_usd": 100_000,
-            "min_apr_pct":      5.0,
-            "max_spread_bps":   50,
-            "min_pool_age_days": 1,
-            "token_allowlist":  [],
-            "token_denylist":   [],
-            "reject_reward_emissions": False,
-        }
-        print(json.dumps(run_chain(cand, cfg), indent=2))
     else:
-        print("usage: filter_suite.py [status|test]")
+        print("usage: filter_suite.py [status]")
         sys.exit(2)

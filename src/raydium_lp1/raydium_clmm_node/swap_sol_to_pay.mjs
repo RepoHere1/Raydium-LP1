@@ -73,8 +73,19 @@ async function main() {
   const outputMint = String(inp.output_mint || '');
   const amountLamports = Number(inp.amount_lamports || 0);
   if (!outputMint) return finish({ ok: false, error: 'output_mint required' });
-  if (!Number.isFinite(amountLamports) || amountLamports <= 0) {
-    return finish({ ok: false, error: 'amount_lamports must be > 0' });
+  const inputMint = String(inp.input_mint || WSOL_MINT);
+  const amountRaw = inp.amount_raw != null
+    ? String(Math.floor(Number(inp.amount_raw)))
+    : String(Math.floor(amountLamports));
+
+  if (inputMint === WSOL_MINT) {
+    if (!Number.isFinite(amountLamports) || amountLamports <= 0) {
+      if (!inp.amount_raw || Number(inp.amount_raw) <= 0) {
+        return finish({ ok: false, error: 'amount_lamports must be > 0 for SOL input' });
+      }
+    }
+  } else if (!amountRaw || Number(amountRaw) <= 0) {
+    return finish({ ok: false, error: 'amount_raw must be > 0 for SPL input' });
   }
 
   const { owner, connection } = await bootRaydium(inp);
@@ -86,9 +97,9 @@ async function main() {
   const swap = await jupiterSwap({
     connection,
     owner,
-    inputMint: WSOL_MINT,
+    inputMint,
     outputMint,
-    amountRaw: Math.floor(amountLamports),
+    amountRaw,
     slippageBps,
     priorityMicro,
   });
@@ -96,7 +107,7 @@ async function main() {
   return finish({
     ok: true,
     signature: swap.signature,
-    input_mint: WSOL_MINT,
+    input_mint: inputMint,
     output_mint: outputMint,
     in_amount: swap.in_amount,
     out_amount: swap.out_amount,
