@@ -170,8 +170,9 @@ def _confirm_error_hint(confirm_error: Any) -> str | None:
         return None
     if "Custom" in raw and ("1" in raw or "6017" in raw):
         return (
-            "Raydium rejected the open (insufficient SOL lamports or deposit too small for this band). "
-            "Top up to ~0.08 SOL total, try $2–3 deposit, or use a less skewed band."
+            "Raydium rejected the open (deposit too small for two-sided band or insufficient SOL). "
+            "Sub-$2 opens now auto-switch to pay-only single-sided — pull latest and retry; "
+            "or raise deposit to $2+ for two-sided skew."
         )
     return f"On-chain failure: {raw[:200]}"
 
@@ -208,11 +209,13 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
 
     from raydium_lp1.fee_guard import reset_session_ledger, session_summary
     from raydium_lp1.lp_brainiac_cursor_success import (
+        MICRO_DEPOSIT_PAY_ONLY_USD,
         STRATEGY_BRAINIAC_CURSOR_SUCCESS,
         apply_brainiac_fee_and_settlement_settings,
         fee_settings_for_brainiac_procedure,
         fund_non_pay_leg_if_needed,
         open_clmm_with_brainiac_cursor_success,
+        resolve_brainiac_live_auto_policy,
     )
     from raydium_lp1.lp_junk_to_pay import settlement_policy_for_pool
     from raydium_lp1.lp_pay_mint import resolve_pay_mint
@@ -340,13 +343,28 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
                 "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
             }
 
-    fund = fund_non_pay_leg_if_needed(
-        pool,
-        target_non_pay_usd=req.deposit_usd * req.fund_non_pay_fraction,
-        config=sc,
-        sol_price_usd=sol_px,
-        user_skip_fund_swap=req.skip_fund_swap,
+    auto_policy = resolve_brainiac_live_auto_policy(
+        req.deposit_usd, pool=pool, settings=fee
     )
+    prefer_pay_only = bool(auto_policy.prefer_pay_only_open)
+    if prefer_pay_only:
+        fund = {
+            "ok": True,
+            "skipped": True,
+            "reason": "micro_pay_only_single_sided",
+            "note": (
+                f"Deposit ${req.deposit_usd:.2f} < ${MICRO_DEPOSIT_PAY_ONLY_USD:.0f}: "
+                "pay-only open — no alt-leg fund swap."
+            ),
+        }
+    else:
+        fund = fund_non_pay_leg_if_needed(
+            pool,
+            target_non_pay_usd=req.deposit_usd * req.fund_non_pay_fraction,
+            config=sc,
+            sol_price_usd=sol_px,
+            user_skip_fund_swap=req.skip_fund_swap,
+        )
     if not fund.get("ok"):
         return {
             "ok": False,
@@ -461,7 +479,11 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
         "non_pay_symbol": pay.alt_symbol,
         "settlement_policy": settlement,
         "placement": {
-            "style": "two-sided wallet_inventory (Brainiac 80% skewed)",
+            "style": (
+                "pay-only single-sided (micro deposit)"
+                if prefer_pay_only
+                else "two-sided wallet_inventory (Brainiac 80% skewed)"
+            ),
             "skew": plan.get("skew"),
             "tick_lower_pct_below": plan.get("tick_lower_pct_below"),
             "tick_upper_pct_above": plan.get("tick_upper_pct_above"),

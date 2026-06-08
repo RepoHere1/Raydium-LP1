@@ -154,6 +154,7 @@ def open_clmm_candidate(
     open_deposit_usd: float | None = None,
     band_tick_steps_cap: int | None = None,
     skip_wallet_settlement: bool = False,
+    brainiac_micro_pay_only: bool = False,
 ) -> dict[str, Any]:
 
     try:
@@ -228,9 +229,13 @@ def open_clmm_candidate(
     from raydium_lp1.lp_pay_mint import pay_mint_open_error, pay_token_only_enabled, resolve_pay_mint
 
     active_sid = str(strategy_id or getattr(config, "lp_active_strategy", "") or "")
-    if active_sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+    brainiac_micro = bool(brainiac_micro_pay_only)
+    if active_sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS and not brainiac_micro:
         force_pay_token_only = False
         wallet_inventory_full_range = True
+    elif active_sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS and brainiac_micro:
+        force_pay_token_only = True
+        wallet_inventory_full_range = False
 
     dep_usd_for_style = float(open_deposit_usd or input_amount_usd or 0) or None
     lp_style = resolve_live_open_style(
@@ -239,14 +244,23 @@ def open_clmm_candidate(
         open_deposit_usd=dep_usd_for_style,
         band_tick_steps_cap=band_tick_steps_cap,
     )
-    style_open = dict(lp_style.open_kwargs)
-
     if pay_token_only_enabled(config):
         pay_res = resolve_pay_mint(pool, config)
         if pay_res is None:
             return {"ok": False, "error": pay_mint_open_error(pool, config)}
     else:
         pay_res = resolve_pay_mint(pool, config)
+
+    style_open = dict(lp_style.open_kwargs)
+    if brainiac_micro and pay_res is not None:
+        from raydium_lp1.lp_brainiac_cursor_success import brainiac_micro_pay_only_kwargs
+
+        style_open = brainiac_micro_pay_only_kwargs(
+            pay_res,
+            width_pct=float(lp_style.width_pct),
+            deposit_usd=float(dep_usd_for_style or input_amount_usd or 0.25),
+            band_tick_steps_cap=band_tick_steps_cap,
+        )
 
     from raydium_lp1.settings_io import load_settings_json
 
@@ -482,15 +496,37 @@ def open_clmm_candidate(
                 "band_tick_steps": int(style_open.get("band_tick_steps", 10)) + 4,
             }
         )
+    if (
+        use_inventory
+        and pay_res is not None
+        and active_sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS
+        and not brainiac_micro
+    ):
+        from raydium_lp1.lp_brainiac_cursor_success import brainiac_micro_pay_only_kwargs
+
+        retry_extras.append(
+            brainiac_micro_pay_only_kwargs(
+                pay_res,
+                width_pct=float(lp_style.width_pct),
+                deposit_usd=float(dep_usd_for_style or input_amount_usd or 0.25),
+                band_tick_steps_cap=band_tick_steps_cap,
+            )
+        )
 
     max_attempts = max(len(retry_extras), max(1, fee_cfg.max_open_retries))
     for idx, extra in enumerate(retry_extras[:max_attempts]):
         attempt = {**open_kwargs, **extra}
         result = raydium_clmm.open_position(**attempt, fee_guard_settings=fee_settings)
         if result.get("ok"):
-            if idx > 0 and extra.get("single_side"):
+            if idx > 0 and (
+                extra.get("single_side")
+                or extra.get("pay_mint_only")
+                or not extra.get("wallet_inventory_full_range", True)
+            ):
                 wide_pay_only_fallback = True
                 result["wide_pay_only_single_side_fallback"] = True
+                if active_sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+                    result["brainiac_micro_pay_only_fallback"] = True
             break
         if result.get("fee_guard"):
             break
@@ -501,10 +537,16 @@ def open_clmm_candidate(
     if not result.get("ok"):
         err = result.get("error") or (result.get("clmm") or {}).get("confirm_error")
         if err and "Custom" in str(err):
-            result["hint"] = (
-                "On-chain tx failed (often insufficient SOL for position rent + tx fee). "
-                "Keep ~0.02–0.03 SOL in wallet; position rent is recoverable on close."
-            )
+            if use_inventory and active_sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS:
+                result["hint"] = (
+                    "Two-sided open rejected on-chain (deposit too small for skewed band). "
+                    "Retry with pay-only single-sided or raise deposit to $2+."
+                )
+            else:
+                result["hint"] = (
+                    "On-chain tx failed (often insufficient SOL for position rent + tx fee). "
+                    "Keep ~0.02–0.03 SOL in wallet; position rent is recoverable on close."
+                )
         out = {
             "ok": False,
             "error": err or "CLMM open failed",
