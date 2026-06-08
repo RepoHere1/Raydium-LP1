@@ -69,9 +69,11 @@ class FeeGuardTests(unittest.TestCase):
         note_broadcast_result(
             "open_position.mjs",
             {"ok": True, "signature": "abc", "confirmed": True},
-            {"estimated_total_sol": 0.042},
+            {"estimated_total_sol": 0.042, "network_fee_sol": 0.00002},
         )
-        self.assertEqual(len(_load_ledger().get("attempts") or []), 1)
+        led = _load_ledger()
+        self.assertEqual(len(led.get("attempts") or []), 1)
+        self.assertAlmostEqual(float(led.get("spent_sol_est") or 0), 0.00002, places=6)
 
     def test_sanitize_payload_open(self) -> None:
         out = sanitize_clmm_payload(

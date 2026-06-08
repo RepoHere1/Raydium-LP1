@@ -782,9 +782,14 @@ class RaydiumDashboardGui(tk.Tk):
             return
 
         def work() -> dict[str, Any]:
-            from raydium_lp1.live_executor import open_clmm_candidate
+            from raydium_lp1.lp_live_router import execute_strategy_live_open
+            from raydium_lp1.settings_io import load_settings_json
 
-            return open_clmm_candidate()
+            settings = load_settings_json(REPO_ROOT / "config" / "settings.json")
+            return execute_strategy_live_open(
+                strategy_id=str(settings.get("lp_active_strategy") or ""),
+                fee_guard_settings=settings,
+            )
 
         def done(exc: Exception | None, r: Any) -> None:
             if exc:

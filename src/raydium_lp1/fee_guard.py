@@ -443,7 +443,9 @@ def note_broadcast_result(script_name: str, result: dict[str, Any], estimate: di
     )
     if not sig:
         return
-    est_sol = float((estimate or {}).get("estimated_total_sol") or 0)
+    est_sol = float((estimate or {}).get("network_fee_sol") or 0)
+    if est_sol <= 0:
+        est_sol = float((estimate or {}).get("estimated_total_sol") or 0)
     if est_sol <= 0:
         cfg = fee_config_from_settings()
         if script_name == "open_position.mjs":

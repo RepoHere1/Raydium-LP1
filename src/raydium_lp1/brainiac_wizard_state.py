@@ -214,7 +214,7 @@ def apply_auto_policy_to_answers(pool_id: str, answers: BrainiacWizardAnswers) -
         pool = {"id": pool_id}
     auto = resolve_brainiac_live_auto_policy(answers.deposit_usd, pool=pool)
     answers.fund_non_pay_fraction = auto.fund_non_pay_fraction
-    answers.skip_fund_swap = auto.skip_fund_swap
+    answers.skip_fund_swap = auto.skip_fund_swap or auto.prefer_pay_only_open
     answers.skip_settle_after = auto.skip_settle_after
     answers.reset_fee_session = auto.reset_fee_session
     answers.min_in_range_factor = auto.min_in_range_factor
@@ -225,9 +225,10 @@ def apply_auto_policy_to_answers(pool_id: str, answers: BrainiacWizardAnswers) -
     for line in auto.notes:
         safe = line.replace("\u2192", "->").replace("\u2014", "-")
         print(f"  - {safe}")
+    pay_only = " pay_only=True" if auto.prefer_pay_only_open else ""
     print(
-        f"  fund={auto.fund_non_pay_fraction:.2f} skip_fund={auto.skip_fund_swap} "
-        f"min_ir={auto.min_in_range_factor} reset_ledger={auto.reset_fee_session}\n"
+        f"  fund={auto.fund_non_pay_fraction:.2f} skip_fund={answers.skip_fund_swap} "
+        f"min_ir={auto.min_in_range_factor} reset_ledger={auto.reset_fee_session}{pay_only}\n"
     )
     return answers
 

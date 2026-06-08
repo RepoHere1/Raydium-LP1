@@ -230,6 +230,16 @@ def open_clmm_candidate(
 
     active_sid = str(strategy_id or getattr(config, "lp_active_strategy", "") or "")
     brainiac_micro = bool(brainiac_micro_pay_only)
+    dep_auto_micro = float(open_deposit_usd or input_amount_usd or 0)
+    if (
+        active_sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS
+        and dep_auto_micro > 0
+        and not brainiac_micro
+    ):
+        from raydium_lp1.lp_brainiac_cursor_success import MICRO_DEPOSIT_PAY_ONLY_USD
+
+        if dep_auto_micro < MICRO_DEPOSIT_PAY_ONLY_USD:
+            brainiac_micro = True
     if active_sid == STRATEGY_BRAINIAC_CURSOR_SUCCESS and not brainiac_micro:
         force_pay_token_only = False
         wallet_inventory_full_range = True

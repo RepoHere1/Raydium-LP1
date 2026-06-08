@@ -20,6 +20,7 @@ from raydium_lp1.lp_full_range import (
 )
 from raydium_lp1.lp_order_strategies import (
     STRATEGY_ASYMMETRIC,
+    STRATEGY_ATR_WIDTH,
     STRATEGY_AUTO,
     STRATEGY_BRAINIAC_CURSOR_SUCCESS,
     STRATEGY_CENTERED_TIGHT,
@@ -138,6 +139,15 @@ def resolve_live_open_style(
             }
     elif sid == STRATEGY_CENTERED_TIGHT:
         half = max(3.0, width / 2.0)
+        placement = "centered"
+        open_kwargs = {
+            "single_side": None,
+            "tick_lower_pct_below": half,
+            "tick_upper_pct_above": half,
+            "band_tick_steps": steps,
+        }
+    elif sid == STRATEGY_ATR_WIDTH:
+        half = max(4.0, width / 2.0)
         placement = "centered"
         open_kwargs = {
             "single_side": None,

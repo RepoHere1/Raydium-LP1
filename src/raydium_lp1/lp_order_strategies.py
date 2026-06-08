@@ -263,5 +263,13 @@ def build_open_order(
         "skew_notes": skew_notes,
         "band": band,
         "execution": "paper_ready",
-        "live_hook": "raydium_clmm.open_position",
+        "live_hook": "raydium_lp1.live_executor.open_clmm_candidate",
     }
+
+
+def live_execution_path(strategy_id: str) -> str:
+    """Return the Python module path used for LIVE opens of this strategy."""
+
+    from raydium_lp1.lp_live_router import live_hook_for_strategy
+
+    return live_hook_for_strategy(strategy_id)

@@ -28,8 +28,13 @@ def main() -> int:
     from dataclasses import replace
 
     from raydium_lp1.fee_guard import reset_session_ledger
-    from raydium_lp1.live_executor import live_readiness_check, open_clmm_candidate
-    from raydium_lp1.lp_order_strategies import ALL_STRATEGY_IDS, STRATEGY_FULL_RANGE
+    from raydium_lp1.live_executor import live_readiness_check
+    from raydium_lp1.lp_live_router import execute_strategy_live_open
+    from raydium_lp1.lp_order_strategies import (
+        ALL_STRATEGY_IDS,
+        STRATEGY_BRAINIAC_CURSOR_SUCCESS,
+        STRATEGY_FULL_RANGE,
+    )
     from raydium_lp1.lp_selection import fetch_pool_by_id
     from raydium_lp1.scanner import ScannerConfig, assess_capacity, load_dotenv
     from raydium_lp1.settings_io import load_settings_json
@@ -61,17 +66,15 @@ def main() -> int:
     rankings.sort(key=lambda s: -float(s.get("brainiac_score") or 0))
 
     best = rankings[0] if rankings else {}
-    forced_wide = args.strategy.strip() or STRATEGY_FULL_RANGE
-    if not args.strategy.strip():
-        # User asked 80% wide: use wide band; brainiac informs placement note from top scorer.
-        strategy_id = STRATEGY_FULL_RANGE
+    forced = args.strategy.strip()
+    if not forced:
+        strategy_id = STRATEGY_BRAINIAC_CURSOR_SUCCESS
         brainiac_note = (
-            f"Fee-model leader: {best.get('strategy_id')} "
-            f"(score {best.get('brainiac_score')}, in_range {best.get('in_range_factor')}, "
-            f"placement {best.get('placement')}). Opening centered {args.width_pct}% wide per request."
+            f"Brainiac 80% skew grid (fee-model leader: {best.get('strategy_id')} "
+            f"score {best.get('brainiac_score')}, in_range {best.get('in_range_factor')})."
         )
     else:
-        strategy_id = forced_wide
+        strategy_id = forced
         brainiac_note = f"Forced strategy {strategy_id}"
 
     width_for_style = float(args.width_pct)
@@ -175,10 +178,10 @@ def main() -> int:
 
     reset_session_ledger()
     half = float(args.width_pct) / 2.0
-    result = open_clmm_candidate(
+    result = execute_strategy_live_open(
         pool_id=args.pool_id.strip(),
-        input_amount_usd=sl.effective_deposit_usd,
-        force_pay_token_only=True,
+        deposit_usd=float(sl.effective_deposit_usd),
+        force_pay_token_only=True if strategy_id != STRATEGY_BRAINIAC_CURSOR_SUCCESS else None,
         strategy_id=strategy_id,
         tick_lower_pct_below=half,
         tick_upper_pct_above=half,

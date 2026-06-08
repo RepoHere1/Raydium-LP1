@@ -220,6 +220,24 @@ def validate_settings(strategy_id: str, settings: dict) -> dict:
             "strategy": {"id": s["id"], "name": s["name"]}}
 
 
+# Map legacy UI strategy ids → lp_order_strategies.ALL_STRATEGY_IDS (LIVE wiring).
+LEGACY_TO_LP_ORDER_STRATEGY: dict[str, str] = {
+    "range_order": "asymmetric_single_asset",
+    "dynamic_range_width": "volatility_atr_width",
+    "momentum_anchored": "trailing_dynamic_skew",
+    "fee_tier_arbitrage": "auto_volatility_pick",
+    "bin_density_cvp": "centered_tight_range",
+    "jit_lp": "asymmetric_single_asset",
+}
+
+
+def resolve_lp_order_strategy_id(strategy_id: str) -> str:
+    """Normalize legacy registry ids to lp_order_strategies ids for LIVE opens."""
+
+    sid = (strategy_id or "").strip()
+    return LEGACY_TO_LP_ORDER_STRATEGY.get(sid, sid)
+
+
 def to_ui_json() -> str:
     """Serializable form for the settings UI (drops Python-only fields)."""
     return json.dumps([
