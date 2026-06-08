@@ -60,6 +60,7 @@ KNOWN_SETTINGS_KEYS: tuple[str, ...] = (
     "min_deposit_to_fee_ratio",
     "max_fee_pct_of_deposit",
     "max_rent_escrow_pct_of_deposit",
+    "no_escrow_paid_policy",
     "lp_rent_conservative_estimates",
     "spend_less_get_more_enabled",
     "spend_less_auto_clamp_deposit",

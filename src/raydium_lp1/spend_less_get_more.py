@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from raydium_lp1.fee_guard import FeeGuardBlockedError, assert_clmm_open_allowed, fee_config_from_settings
+from raydium_lp1.no_escrow_policy import SUNK_RENT_EPSILON_SOL, normalize_settings_no_escrow
 from raydium_lp1.lp_full_range import is_wide_band_open_kwargs, open_kwargs_for_wide_band
 from raydium_lp1.lp_order_strategies import (
     STRATEGY_ASYMMETRIC,
@@ -35,7 +36,7 @@ class SpendLessConfig:
 
     @classmethod
     def from_settings(cls, settings: Any | None) -> SpendLessConfig:
-        g = settings if isinstance(settings, dict) else {}
+        g = normalize_settings_no_escrow(settings)
 
         def _b(key: str, default: bool) -> bool:
             return bool(g.get(key, default))
@@ -201,8 +202,9 @@ def analyze_open_plan(
     strategy_id: str | None = None,
     sol_price_usd: float | None = None,
 ) -> SpendLessPlan:
-    """Plan an open under rent cap + wallet headroom; may propose clamp or style fallback."""
+    """Plan an open under rent cap + wallet headroom; may propose clamp (no wide fallback)."""
 
+    settings = normalize_settings_no_escrow(settings)
     sl_cfg = SpendLessConfig.from_settings(settings)
     fee_cfg = fee_config_from_settings(settings)
     px = float(sol_price_usd or fee_cfg.sol_price_usd or 180.0)
@@ -296,11 +298,12 @@ def analyze_open_plan(
     dep_sol_eff = effective_usd / px if px > 0 else 0.0
     est_eff = _rent_est(dep_sol_eff, effective_kw, settings, pay_needs_ata=pay_needs_ata)
     if est_eff.literal_pool_ticks:
-        blocks.append("Literal pool full range is disabled (use wide band max 80%).")
-    elif est_eff.sunk_sol_est > 0.004 and est_eff.sunk_pct_of_deposit > max_pct + 1e-9:
+        blocks.append("NO ESCROW PAID: literal pool full range is disabled (use wide band max 80%).")
+    elif est_eff.sunk_sol_est > SUNK_RENT_EPSILON_SOL or est_eff.new_tick_arrays_est > 0:
         blocks.append(
-            f"Sunk rent ~{est_eff.sunk_pct_of_deposit:.1f}% of ${effective_usd:.2f} deposit "
-            f"(max {max_pct:.1f}%). Need ~${min_usd_rent:.0f}+ or narrower band."
+            f"NO ESCROW PAID: band may require new tick-array rent "
+            f"(~{est_eff.sunk_sol_est:.4f} SOL sunk est. on ${effective_usd:.2f} deposit). "
+            "Use a busier pool or narrower band."
         )
 
     sol_need = _sol_need(

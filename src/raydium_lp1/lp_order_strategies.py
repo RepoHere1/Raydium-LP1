@@ -2,6 +2,9 @@
 
 Official-style strategy IDs aligned with Raydium concentrated liquidity (CLMM) practice.
 Each strategy returns a JSON plan usable in demo simulation and live execution hooks.
+
+**Permanent NO ESCROW PAID** (`no_escrow_policy`): every strategy blocks sunk tick-array rent
+(~0.072 SOL per new array). Recoverable position NFT rent (~0.008 SOL) is required and returned on close.
 """
 
 from __future__ import annotations

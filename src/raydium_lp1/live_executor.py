@@ -250,7 +250,11 @@ def open_clmm_candidate(
 
     from raydium_lp1.settings_io import load_settings_json
 
-    fee_settings: Any = fee_guard_settings if fee_guard_settings is not None else load_settings_json(settings_path)
+    from raydium_lp1.no_escrow_policy import normalize_settings_no_escrow
+
+    fee_settings = normalize_settings_no_escrow(
+        fee_guard_settings if fee_guard_settings is not None else load_settings_json(settings_path)
+    )
     fee_cfg = fee_config_from_settings(fee_settings)
     sol_px_guard = float(sol_price_usd or fee_cfg.sol_price_usd or 180.0)
 

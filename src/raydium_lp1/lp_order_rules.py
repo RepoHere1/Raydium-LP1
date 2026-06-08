@@ -1,12 +1,12 @@
 """Universal LP open/close order rules (ONE PAY funding, trash→SOL sweep, abandoned pools).
 
 Buy / open rules (enforced before any live CLMM open):
+- **NO ESCROW PAID** (`no_escrow_policy`) — permanent, all order types. Zero sunk tick-array
+  rent (~0.072 SOL per new array). Recoverable position NFT rent (~0.008 SOL) is allowed.
 - **SPEND LESS=GET MORE** (`spend_less_get_more.analyze_open_plan`) — wallet headroom, rent cap,
-  optional deposit clamp, wide→single-sided fallback; runs before broadcast.
-- Run ``lp_rent_escrow.estimate_open_rent_escrow`` via ``fee_guard.assert_clmm_open_allowed``.
-- Block only on **material sunk** rent (new tick arrays), not recoverable position rent.
-  Cap: ``max_rent_escrow_pct_of_deposit`` (default 50% of deposit on sunk only).
-- Literal pool min/max full range is always blocked regardless of cap.
+  optional deposit clamp; wide→single-sided fallback is disabled under NO ESCROW policy.
+- Run ``lp_rent_escrow`` via ``fee_guard.assert_clmm_open_allowed`` on every broadcast path.
+- Literal pool min/max full range is always blocked.
 """
 
 from __future__ import annotations

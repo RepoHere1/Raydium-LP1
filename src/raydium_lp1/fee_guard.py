@@ -56,7 +56,9 @@ def fee_config_from_settings(settings: Any | None = None) -> FeeGuardConfig:
         from raydium_lp1.settings_io import load_settings_json
 
         settings = load_settings_json(REPO / "config" / "settings.json")
-    g = settings if isinstance(settings, dict) else {}
+    from raydium_lp1.no_escrow_policy import normalize_settings_no_escrow
+
+    g = normalize_settings_no_escrow(settings if isinstance(settings, dict) else {})
 
     def _b(key: str, default: bool) -> bool:
         return bool(g.get(key, default))
@@ -235,19 +237,32 @@ def assert_clmm_open_allowed(
 ) -> dict[str, Any]:
     """Raise if this open is economically unsafe; return cost estimate dict."""
 
-    cfg = fee_config_from_settings(settings)
+    from raydium_lp1.no_escrow_policy import assert_no_escrow_paid, normalize_settings_no_escrow
+
+    normalized = normalize_settings_no_escrow(settings)
+    cfg = fee_config_from_settings(normalized)
     est = estimate_clmm_open_cost_sol(cfg, deposit_sol=deposit_sol, priority_micro=priority_micro)
     rent_est = None
     if open_kwargs is not None:
         from raydium_lp1.lp_rent_escrow import assert_rent_escrow_allowed
 
+        policy_check = assert_no_escrow_paid(
+            deposit_sol=deposit_sol,
+            open_kwargs=open_kwargs,
+            settings=normalized,
+            priority_micro=priority_micro,
+        )
         rent_est = assert_rent_escrow_allowed(
             deposit_sol=deposit_sol,
             open_kwargs=open_kwargs,
-            settings=settings,
+            settings=normalized,
             priority_micro=priority_micro,
         )
-        est = {**est, "rent_escrow": rent_est.to_dict()}
+        est = {
+            **est,
+            "rent_escrow": rent_est.to_dict(),
+            "no_escrow_policy": policy_check.get("no_escrow_policy"),
+        }
     if not cfg.enabled:
         return est
 

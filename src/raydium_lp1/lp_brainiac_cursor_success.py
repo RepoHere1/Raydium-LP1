@@ -515,15 +515,14 @@ def open_kwargs_from_plan(
 def fee_settings_for_brainiac_procedure(base: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Fee guard + SPEND LESS knobs used on the successful rebalance."""
 
+    from raydium_lp1.no_escrow_policy import normalize_settings_no_escrow
     from raydium_lp1.settings_io import load_settings_json
 
-    s = dict(base or load_settings_json(REPO / "config" / "settings.json"))
+    s = normalize_settings_no_escrow(dict(base or load_settings_json(REPO / "config" / "settings.json")))
     s["fee_guard_enabled"] = True
-    s["lp_rent_conservative_estimates"] = False
     s["max_session_tx_attempts"] = max(24, int(s.get("max_session_tx_attempts") or 5))
     s["max_session_spend_sol"] = max(0.4, float(s.get("max_session_spend_sol") or 0.12))
     s["max_rent_escrow_pct_of_deposit"] = max(15.0, float(s.get("max_rent_escrow_pct_of_deposit") or 10))
-    s["spend_less_auto_fallback_from_wide"] = False
     s["spend_less_on_chain_rent_buffer_sol"] = min(
         0.02, float(s.get("spend_less_on_chain_rent_buffer_sol") or 0.05)
     )
