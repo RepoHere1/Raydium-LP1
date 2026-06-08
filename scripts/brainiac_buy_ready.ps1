@@ -145,6 +145,13 @@ if (-not (Test-Path -LiteralPath $wizPath)) {
     }
 }
 
+# 8) Fix common LIVE blockers (Node + RPC)
+$fixBlockers = Join-Path $PSScriptRoot "fix_live_blockers.ps1"
+if (Test-Path -LiteralPath $fixBlockers) {
+    Write-Step "Checking Node + RPC blockers..."
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $fixBlockers -SkipNpm:$(-not (Get-Command npm -ErrorAction SilentlyContinue))
+}
+
 Write-Host ""
 Write-Host "=== BRAINIAC BUY (from this folder) ===" -ForegroundColor Green
 Write-Host "  .\brainiac_buy.cmd YOUR_POOL_ID 1" -ForegroundColor Cyan

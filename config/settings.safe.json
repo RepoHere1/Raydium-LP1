@@ -94,5 +94,9 @@
   "lp_full_range_budget_fraction": 0.25,
   "lp_main_budget_fraction": 0.75,
   "lp_max_positions_per_mint": 2,
-  "solana_rpc_urls": []
+  "solana_rpc_urls": [
+    "https://api.mainnet-beta.solana.com",
+    "https://solana-rpc.publicnode.com",
+    "https://solana.drpc.org"
+  ]
 }
