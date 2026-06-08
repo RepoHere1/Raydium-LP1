@@ -371,7 +371,7 @@ def sanitize_clmm_payload(script_name: str, payload: dict[str, Any], *, settings
             lamports = int(out.get("amount_lamports") or out.get("amount_raw") or 0)
             assert_swap_allowed(lamports / 1_000_000_000, settings=settings)
         else:
-            assert_swap_allowed(max(0.002, float(cfg.clmm_base_fee_sol) * 2), settings=settings)
+            assert_jupiter_token_swap_allowed(settings=settings)
         out["jupiter_priority_micro_lamports"] = min(
             cfg.jupiter_max_priority_micro_lamports,
             int(out.get("jupiter_priority_micro_lamports") or cfg.jupiter_max_priority_micro_lamports),
@@ -396,9 +396,16 @@ def guard_onchain_fee(operation: str, **context: Any) -> dict[str, Any] | None:
             priority_micro=context.get("priority_micro"),
             open_kwargs=context.get("open_kwargs"),
         )
-    if dep is not None and (script == "swap_sol_to_pay.mjs" or "swap" in operation.lower()):
-        assert_swap_allowed(float(dep))
-        _check_session_budget(cfg, cfg.clmm_base_fee_sol * 2)
+    if script == "swap_sol_to_pay.mjs" or "swap" in operation.lower():
+        from raydium_lp1.routes import WSOL_MINT
+
+        inp_mint = str(context.get("input_mint") or WSOL_MINT)
+        if inp_mint != WSOL_MINT:
+            assert_jupiter_token_swap_allowed(settings=context.get("settings"))
+        elif dep is not None:
+            assert_swap_allowed(float(dep), settings=context.get("settings"))
+        else:
+            _check_session_budget(cfg, cfg.clmm_base_fee_sol * 2)
         return None
     if (
         "close" in operation.lower()
@@ -461,6 +468,15 @@ def fee_guard_readiness_blockers(settings: Any | None = None) -> list[str]:
             f"(cap {cfg.max_session_spend_sol})"
         )
     return out
+
+
+def assert_jupiter_token_swap_allowed(*, settings: Any | None = None) -> None:
+    """USDC/USDT/etc → alt Jupiter swaps: only network fee + session cap (not SOL min size)."""
+
+    cfg = fee_config_from_settings(settings)
+    if not cfg.enabled:
+        return
+    _check_session_budget(cfg, cfg.clmm_base_fee_sol * 2)
 
 
 def assert_swap_allowed(amount_sol: float, *, settings: Any | None = None) -> None:

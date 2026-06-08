@@ -91,6 +91,19 @@ class FeeGuardTests(unittest.TestCase):
         self.assertLessEqual(out["priority_fee_micro_lamports"], 2000)
         self.assertIn("compute_units", out)
 
+    def test_sanitize_usdc_jupiter_swap_not_blocked(self) -> None:
+        usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        out = sanitize_clmm_payload(
+            "swap_sol_to_pay.mjs",
+            {
+                "input_mint": usdc,
+                "output_mint": "FRE3HQDTWuhLAvWKapwLMzbw3ZSMdh76CXQqBw2bEJeV",
+                "amount_raw": "378000",
+            },
+            settings={"fee_guard_enabled": True, "block_deposits_below_sol": 0.006},
+        )
+        self.assertEqual(out["input_mint"], usdc)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -76,19 +76,17 @@ def _run_script(script_name: str, payload: dict, timeout: float = 60.0) -> dict:
         from raydium_lp1.live_guard import guard_onchain
 
         fee_settings = payload.get("_fee_guard_settings")
+        swap_inp_mint = None
         if script_name == "open_position.mjs":
             dep = payload.get("input_amount_human")
         elif script_name == "swap_sol_to_pay.mjs":
             from raydium_lp1.routes import WSOL_MINT
 
-            inp_mint = str(payload.get("input_mint") or WSOL_MINT)
-            if inp_mint == WSOL_MINT:
+            swap_inp_mint = str(payload.get("input_mint") or WSOL_MINT)
+            if swap_inp_mint == WSOL_MINT:
                 dep = int(payload.get("amount_lamports") or payload.get("amount_raw") or 0) / 1_000_000_000
             else:
-                from raydium_lp1.fee_guard import fee_config_from_settings
-
-                cfg_swap = fee_config_from_settings(fee_settings)
-                dep = max(0.002, float(cfg_swap.clmm_base_fee_sol) * 2)
+                dep = None
         else:
             dep = None
         fee_settings = payload.pop("_fee_guard_settings", None)
@@ -113,6 +111,7 @@ def _run_script(script_name: str, payload: dict, timeout: float = 60.0) -> dict:
                 f"Raydium CLMM {script_name}",
                 script_name=script_name,
                 deposit_sol=dep,
+                input_mint=swap_inp_mint if script_name == "swap_sol_to_pay.mjs" else None,
                 priority_micro=payload.get("priority_fee_micro_lamports"),
                 settings=fee_settings,
                 open_kwargs=open_kw or None,
