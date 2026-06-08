@@ -91,6 +91,22 @@ class FeeGuardTests(unittest.TestCase):
         self.assertLessEqual(out["priority_fee_micro_lamports"], 2000)
         self.assertIn("compute_units", out)
 
+    def test_usdc_pay_one_dollar_not_blocked_by_sol_floor(self) -> None:
+        cfg = fee_config_from_settings(
+            {
+                "fee_guard_enabled": True,
+                "block_deposits_below_sol": 0.006,
+                "min_lp_deposit_usd": 0.25,
+                "sol_price_usd": 180.0,
+                "min_clmm_deposit_sol": 0.008,
+                "clmm_open_rent_sol": 0.009,
+                "max_fee_pct_of_deposit": 90.0,
+            }
+        )
+        dep_sol_equiv = 1.0 / 180.0
+        est = assert_clmm_open_allowed(dep_sol_equiv, settings=cfg)
+        self.assertGreater(float(est["estimated_total_sol"]), 0)
+
     def test_sanitize_usdc_jupiter_swap_not_blocked(self) -> None:
         usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
         out = sanitize_clmm_payload(

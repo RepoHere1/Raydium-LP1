@@ -278,7 +278,9 @@ def assert_clmm_open_allowed(
             "show tiny notional after failed txs — raise size or close zombies first."
         )
 
-    if dep < cfg.block_deposits_below_sol:
+    usd_floor_ok = cfg.min_lp_deposit_usd > 0 and dep_usd + 1e-9 >= cfg.min_lp_deposit_usd
+    # block_deposits_below_sol targets native SOL micro-deposits — not USDC-pay opens at min_lp_deposit_usd.
+    if dep < cfg.block_deposits_below_sol and not usd_floor_ok:
         raise FeeGuardBlockedError(
             f"Fee guard: deposit {dep:.6f} SOL is below block_deposits_below_sol "
             f"({cfg.block_deposits_below_sol}). CLMM rent would eat the wallet — "
@@ -288,7 +290,6 @@ def assert_clmm_open_allowed(
         cfg.min_clmm_deposit_sol,
         total * cfg.min_deposit_to_fee_ratio,
     )
-    usd_floor_ok = cfg.min_lp_deposit_usd > 0 and dep_usd + 1e-9 >= cfg.min_lp_deposit_usd
     if not usd_floor_ok and dep < effective_min:
         raise FeeGuardBlockedError(
             f"Fee guard: deposit {dep:.4f} SOL is too small. Need ≥ {effective_min:.4f} SOL "
