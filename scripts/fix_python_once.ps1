@@ -137,12 +137,13 @@ if (Test-Path -LiteralPath $scriptsDir) {
 $newParts += $parts
 
 $newUserPath = ($newParts -join ";").TrimEnd(";")
-[Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+[Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
 
 # Refresh THIS session too
-$env:Path = "$pythonDir;$scriptsDir;" + ($env:Path -split ';' | Where-Object {
-    $_ -and $_ -ne $pythonDir -and $_ -ne $scriptsDir
-} -join ";")
+$sessionParts = $env:Path -split ';' | Where-Object {
+    $_ -and ($_ -ne $pythonDir) -and ($_ -ne $scriptsDir)
+}
+$env:Path = ($pythonDir + ';' + $scriptsDir + ';' + ($sessionParts -join ';')).TrimEnd(';')
 
 Write-Ok "User PATH updated (permanent). Python is first in line."
 
