@@ -129,7 +129,7 @@ class BrainiacWizardAnswers:
     fund_non_pay_fraction: float = 0.35
     sol_price_usd: float = 0.0
     wide_width_pct: float = 80.0
-    min_in_range_factor: float = 0.55
+    min_in_range_factor: float = 0.50
     run_pretrade: bool = True
     pre_live_consensus_scans: int = 5
     pre_live_scan_delay_sec: float = 2.0

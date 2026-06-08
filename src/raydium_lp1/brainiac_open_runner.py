@@ -218,7 +218,13 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
         pretrade = run_pretrade_analysis(req.pool_id, req.deposit_usd)
         if req.min_in_range_factor > 0:
             ir = float((pretrade.get("placement") or {}).get("in_range_factor") or 0)
-            if ir < req.min_in_range_factor:
+            if ir <= 0 and pretrade.get("ok") is False:
+                # Pretrade script failed or returned no placement — do not treat as ir=0 block.
+                pretrade.setdefault(
+                    "warning",
+                    "in_range_factor check skipped (pretrade incomplete); consensus/plan still runs",
+                )
+            elif ir < req.min_in_range_factor:
                 return {
                     "ok": False,
                     "error": (
@@ -226,6 +232,7 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
                         "(wizard block)"
                     ),
                     "pretrade_analysis": pretrade,
+                    "hint": "Lower min_in_range_factor in wizard (e.g. 0.50) or pick a pool with higher overlap.",
                 }
 
     sess_before = session_summary()
