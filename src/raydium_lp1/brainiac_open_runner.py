@@ -164,6 +164,18 @@ def apply_brainiac_strategy_ps1() -> dict[str, Any]:
     return apply_brainiac_strategy_settings()
 
 
+def _confirm_error_hint(confirm_error: Any) -> str | None:
+    raw = str(confirm_error or "")
+    if not raw:
+        return None
+    if "Custom" in raw and ("1" in raw or "6017" in raw):
+        return (
+            "Raydium rejected the open (insufficient SOL lamports or deposit too small for this band). "
+            "Top up to ~0.08 SOL total, try $2–3 deposit, or use a less skewed band."
+        )
+    return f"On-chain failure: {raw[:200]}"
+
+
 def _slim_consensus_for_report(consensus: dict[str, Any]) -> dict[str, Any]:
     if not consensus or consensus.get("skipped"):
         return consensus
@@ -347,6 +359,27 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
             "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
         }
 
+    before_open = wallet_balance()
+    sol_now = float(before_open.get("sol_balance") or 0)
+    reserve_sol = float(getattr(sc, "reserve_sol", 0.05) or 0.05)
+    min_sol_open = max(reserve_sol + 0.025, 0.055)
+    if sol_now + 1e-9 < min_sol_open:
+        return {
+            "ok": False,
+            "error": (
+                f"wallet SOL {sol_now:.4f} too low for CLMM open "
+                f"(need ~{min_sol_open:.3f} SOL for rent + tx fees; Custom:1 otherwise)"
+            ),
+            "hint": "Top up SOL (~0.03–0.05 more), then retry. USDC/GDER legs are ready.",
+            "pretrade_analysis": pretrade,
+            "pre_live_consensus": _slim_consensus_for_report(consensus),
+            "fund_non_pay": fund,
+            "pay_funding": pay_funding,
+            "pool_id": req.pool_id,
+            "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
+            "balance_sol": sol_now,
+        }
+
     result = open_clmm_with_brainiac_cursor_success(
         pool_id=req.pool_id,
         input_amount_usd=req.deposit_usd,
@@ -443,6 +476,7 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
             "error": result.get("error"),
             "clmm_error": (result.get("clmm") or {}).get("error"),
             "confirm_error": (result.get("clmm") or {}).get("confirm_error"),
+            "confirm_hint": _confirm_error_hint((result.get("clmm") or {}).get("confirm_error")),
             "signature": sig,
             "nft": nft,
             "wallet_settlement": wallet_settlement or result.get("wallet_settlement"),
