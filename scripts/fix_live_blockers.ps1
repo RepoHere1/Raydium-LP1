@@ -107,10 +107,15 @@ if ($ResolvedPythonExe -and (Test-Path -LiteralPath $settingsPath)) {
     $env:PYTHONPATH = Join-Path $RepoRoot "src"
     $tmpJson = [System.IO.Path]::GetTempFileName() + ".urls.json"
     try {
-        ($DefaultRpcs | ConvertTo-Json -Compress) | Set-Content -Path $tmpJson -Encoding UTF8
+        $jsonBody = ($DefaultRpcs | ConvertTo-Json -Compress)
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($tmpJson, $jsonBody, $utf8NoBom)
         & $ResolvedPythonExe @ResolvedPythonArgs scripts\apply_rpc_urls_to_settings.py --settings $settingsPath --urls-json $tmpJson
         if ($LASTEXITCODE -eq 0) {
             Write-Ok "settings.json solana_rpc_urls updated (3 public endpoints)"
+        }
+        else {
+            Write-Warn "apply_rpc_urls failed - run set_helius_rpc.ps1 if you use Helius"
         }
     }
     finally {
@@ -147,6 +152,6 @@ if ($ResolvedPythonExe) {
 }
 
 Write-Host ""
-Write-Host "Helius (faster, optional): get free key at helius.dev, then run:" -ForegroundColor DarkGray
-Write-Host "  .\scripts\rpc_wizard.ps1" -ForegroundColor DarkGray
+Write-Host "Helius (recommended):" -ForegroundColor DarkGray
+Write-Host '  powershell -File .\scripts\set_helius_rpc.ps1 -ApiKey YOUR_HELIUS_KEY' -ForegroundColor DarkGray
 Write-Host ""
