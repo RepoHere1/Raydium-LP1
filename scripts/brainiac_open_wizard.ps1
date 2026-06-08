@@ -34,9 +34,15 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $RepoRoot
 $env:PYTHONPATH = Join-Path $RepoRoot "src"
 
-$py = Get-Command python -ErrorAction SilentlyContinue
-if (-not $py) { $py = Get-Command py -ErrorAction Stop; $pyExe = "py"; $pyArgs = @("-3") }
-else { $pyExe = "python"; $pyArgs = @() }
+. (Join-Path $PSScriptRoot "_resolve_python.ps1")
+if (-not $ResolvedPythonExe) {
+    Write-Host "[!!] Python not found. Run once:" -ForegroundColor Yellow
+    Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File `"$RepoRoot\scripts\fix_python_once.ps1`"" -ForegroundColor White
+    Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File `"$RepoRoot\scripts\brainiac_buy_ready.ps1`"" -ForegroundColor White
+    exit 1
+}
+$pyExe = $ResolvedPythonExe
+$pyArgs = $ResolvedPythonArgs
 
 $script = Join-Path $RepoRoot "scripts\brainiac_open_wizard.py"
 $argsList = @($script)
