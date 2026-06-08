@@ -129,6 +129,8 @@ elseif (-not $ResolvedPythonExe) {
 }
 
 # --- Re-check readiness ---
+$readyToSign = $false
+$heliusConfigured = $false
 if ($ResolvedPythonExe) {
     $env:PYTHONPATH = Join-Path $RepoRoot "src"
     $pyReady = 'import json; from raydium_lp1.live_executor import live_readiness_check; print(json.dumps(live_readiness_check()))'
@@ -137,7 +139,9 @@ if ($ResolvedPythonExe) {
         $ready = $readyRaw | ConvertFrom-Json
         Write-Host ""
         if ($ready.ready_to_sign) {
-            Write-Ok "LIVE readiness: ready_to_sign - you can run brainiac_buy.cmd"
+            $readyToSign = $true
+            Write-Ok "LIVE readiness: ready_to_sign"
+            Write-Host "  Run: .\brainiac_buy.cmd YOUR_POOL_ID 1" -ForegroundColor Cyan
         }
         else {
             Write-Warn "Remaining blockers:"
@@ -151,7 +155,16 @@ if ($ResolvedPythonExe) {
     }
 }
 
-Write-Host ""
-Write-Host "Helius (recommended):" -ForegroundColor DarkGray
-Write-Host '  powershell -File .\scripts\set_helius_rpc.ps1 -ApiKey YOUR_HELIUS_KEY' -ForegroundColor DarkGray
+if (Test-Path -LiteralPath $envPath) {
+    $envCheck = Get-Content -LiteralPath $envPath -Raw -Encoding UTF8
+    if ($envCheck -match "helius-rpc\.com") {
+        $heliusConfigured = $true
+    }
+}
+
+if (-not $heliusConfigured -and -not $readyToSign) {
+    Write-Host ""
+    Write-Host "Save Helius key once (opens Notepad):" -ForegroundColor Yellow
+    Write-Host "  .\save_helius.cmd" -ForegroundColor Cyan
+}
 Write-Host ""
