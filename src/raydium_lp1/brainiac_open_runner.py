@@ -164,6 +164,19 @@ def apply_brainiac_strategy_ps1() -> dict[str, Any]:
     return apply_brainiac_strategy_settings()
 
 
+def _confirm_error_hint(confirm_error: Any) -> str | None:
+    raw = str(confirm_error or "")
+    if not raw:
+        return None
+    if "Custom" in raw and ("1" in raw or "6017" in raw):
+        return (
+            "Raydium rejected the open (deposit too small for two-sided band or insufficient SOL). "
+            "Sub-$2 opens now auto-switch to pay-only single-sided — pull latest and retry; "
+            "or raise deposit to $2+ for two-sided skew."
+        )
+    return f"On-chain failure: {raw[:200]}"
+
+
 def _slim_consensus_for_report(consensus: dict[str, Any]) -> dict[str, Any]:
     if not consensus or consensus.get("skipped"):
         return consensus
@@ -196,11 +209,13 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
 
     from raydium_lp1.fee_guard import reset_session_ledger, session_summary
     from raydium_lp1.lp_brainiac_cursor_success import (
+        MICRO_DEPOSIT_PAY_ONLY_USD,
         STRATEGY_BRAINIAC_CURSOR_SUCCESS,
         apply_brainiac_fee_and_settlement_settings,
         fee_settings_for_brainiac_procedure,
         fund_non_pay_leg_if_needed,
         open_clmm_with_brainiac_cursor_success,
+        resolve_brainiac_live_auto_policy,
     )
     from raydium_lp1.lp_junk_to_pay import settlement_policy_for_pool
     from raydium_lp1.lp_pay_mint import resolve_pay_mint
@@ -218,7 +233,13 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
         pretrade = run_pretrade_analysis(req.pool_id, req.deposit_usd)
         if req.min_in_range_factor > 0:
             ir = float((pretrade.get("placement") or {}).get("in_range_factor") or 0)
-            if ir < req.min_in_range_factor:
+            if ir <= 0 and pretrade.get("ok") is False:
+                # Pretrade script failed or returned no placement — do not treat as ir=0 block.
+                pretrade.setdefault(
+                    "warning",
+                    "in_range_factor check skipped (pretrade incomplete); consensus/plan still runs",
+                )
+            elif ir < req.min_in_range_factor:
                 return {
                     "ok": False,
                     "error": (
@@ -226,6 +247,7 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
                         "(wizard block)"
                     ),
                     "pretrade_analysis": pretrade,
+                    "hint": "Lower min_in_range_factor in wizard (e.g. 0.50) or pick a pool with higher overlap.",
                 }
 
     sess_before = session_summary()
@@ -321,13 +343,28 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
                 "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
             }
 
-    fund = fund_non_pay_leg_if_needed(
-        pool,
-        target_non_pay_usd=req.deposit_usd * req.fund_non_pay_fraction,
-        config=sc,
-        sol_price_usd=sol_px,
-        user_skip_fund_swap=req.skip_fund_swap,
+    auto_policy = resolve_brainiac_live_auto_policy(
+        req.deposit_usd, pool=pool, settings=fee
     )
+    prefer_pay_only = bool(auto_policy.prefer_pay_only_open)
+    if prefer_pay_only:
+        fund = {
+            "ok": True,
+            "skipped": True,
+            "reason": "micro_pay_only_single_sided",
+            "note": (
+                f"Deposit ${req.deposit_usd:.2f} < ${MICRO_DEPOSIT_PAY_ONLY_USD:.0f}: "
+                "pay-only open — no alt-leg fund swap."
+            ),
+        }
+    else:
+        fund = fund_non_pay_leg_if_needed(
+            pool,
+            target_non_pay_usd=req.deposit_usd * req.fund_non_pay_fraction,
+            config=sc,
+            sol_price_usd=sol_px,
+            user_skip_fund_swap=req.skip_fund_swap,
+        )
     if not fund.get("ok"):
         return {
             "ok": False,
@@ -338,6 +375,27 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
             "pre_live_consensus": _slim_consensus_for_report(consensus),
             "pool_id": req.pool_id,
             "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
+        }
+
+    before_open = wallet_balance()
+    sol_now = float(before_open.get("sol_balance") or 0)
+    reserve_sol = float(getattr(sc, "reserve_sol", 0.05) or 0.05)
+    min_sol_open = max(reserve_sol + 0.025, 0.055)
+    if sol_now + 1e-9 < min_sol_open:
+        return {
+            "ok": False,
+            "error": (
+                f"wallet SOL {sol_now:.4f} too low for CLMM open "
+                f"(need ~{min_sol_open:.3f} SOL for rent + tx fees; Custom:1 otherwise)"
+            ),
+            "hint": "Top up SOL (~0.03–0.05 more), then retry. USDC/GDER legs are ready.",
+            "pretrade_analysis": pretrade,
+            "pre_live_consensus": _slim_consensus_for_report(consensus),
+            "fund_non_pay": fund,
+            "pay_funding": pay_funding,
+            "pool_id": req.pool_id,
+            "pair": f"{pool.get('mint_a_symbol')}/{pool.get('mint_b_symbol')}",
+            "balance_sol": sol_now,
         }
 
     result = open_clmm_with_brainiac_cursor_success(
@@ -421,7 +479,11 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
         "non_pay_symbol": pay.alt_symbol,
         "settlement_policy": settlement,
         "placement": {
-            "style": "two-sided wallet_inventory (Brainiac 80% skewed)",
+            "style": (
+                "pay-only single-sided (micro deposit)"
+                if prefer_pay_only
+                else "two-sided wallet_inventory (Brainiac 80% skewed)"
+            ),
             "skew": plan.get("skew"),
             "tick_lower_pct_below": plan.get("tick_lower_pct_below"),
             "tick_upper_pct_above": plan.get("tick_upper_pct_above"),
@@ -436,6 +498,7 @@ def execute_brainiac_open(req: BrainiacOpenRequest) -> dict[str, Any]:
             "error": result.get("error"),
             "clmm_error": (result.get("clmm") or {}).get("error"),
             "confirm_error": (result.get("clmm") or {}).get("confirm_error"),
+            "confirm_hint": _confirm_error_hint((result.get("clmm") or {}).get("confirm_error")),
             "signature": sig,
             "nft": nft,
             "wallet_settlement": wallet_settlement or result.get("wallet_settlement"),

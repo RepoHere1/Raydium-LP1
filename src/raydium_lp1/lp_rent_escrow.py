@@ -12,7 +12,8 @@
 - ``0.072 SOL × 15–55%`` “sunk” tick arrays on every band shape regardless of pool state.
 - ``max_rent_escrow_pct_of_deposit`` blocked micro deposits using that fiction.
 
-Use ``lp_rent_conservative_estimates: true`` in settings only if you want the old pessimistic model.
+**Permanent policy:** ``no_escrow_policy`` hardwires zero sunk tick-array rent for every order type.
+``lp_rent_conservative_estimates`` in settings is ignored (always false).
 """
 
 from __future__ import annotations
@@ -91,8 +92,9 @@ class RentEscrowEstimate:
 
 
 def _rent_conservative_mode(settings: Any | None) -> bool:
-    g = settings if isinstance(settings, dict) else {}
-    return bool(g.get("lp_rent_conservative_estimates", False))
+    """Legacy pessimistic model — permanently disabled (NO ESCROW PAID policy)."""
+
+    return False
 
 
 def _placement_from_kwargs(open_kwargs: Mapping[str, Any] | None) -> str:
@@ -294,35 +296,22 @@ def assert_rent_escrow_allowed(
     priority_micro: int | None = None,
     pay_needs_ata: bool = False,
 ) -> RentEscrowEstimate:
-    """Raise only on literal full range or material *sunk* rent vs deposit cap."""
+    """Raise on any sunk tick-array escrow (permanent NO ESCROW PAID policy)."""
 
-    cfg = fee_config_from_settings(settings)
-    est = estimate_open_rent_escrow(
+    from raydium_lp1.no_escrow_policy import assert_no_escrow_paid, normalize_settings_no_escrow
+
+    normalized = normalize_settings_no_escrow(settings)
+    assert_no_escrow_paid(
         deposit_sol=deposit_sol,
         open_kwargs=open_kwargs,
-        settings=settings,
+        settings=normalized,
         priority_micro=priority_micro,
         pay_needs_ata=pay_needs_ata,
     )
-    if not cfg.enabled:
-        return est
-
-    max_pct = float(cfg.max_rent_escrow_pct_of_deposit)
-    if est.literal_pool_ticks:
-        raise FeeGuardBlockedError(
-            "Rent guard: literal pool min/max full range is disabled. "
-            f"Estimated sunk rent ~{est.sunk_sol_est:.4f} SOL (~${est.sunk_usd:.2f}) — "
-            "use standard_full_range (wide band max 80%) instead."
-        )
-
-    # Only block when there is meaningful sunk rent (new tick arrays), not recoverable escrow
-    material_sunk_sol = 0.004
-    if est.sunk_sol_est > material_sunk_sol and est.sunk_pct_of_deposit > max_pct + 1e-9:
-        raise FeeGuardBlockedError(
-            f"Rent guard: estimated non-recoverable rent ~{est.sunk_pct_of_deposit:.1f}% "
-            f"of deposit (max {max_pct:.1f}%). "
-            f"Sunk ~{est.sunk_sol_est:.4f} SOL (~${est.sunk_usd:.2f}) on ~${est.deposit_usd:.2f} deposit. "
-            f"Placement={est.placement}, band~{ _band_width_pct(open_kwargs) :.0f}% wide. "
-            "Narrow the band, use a busier pool, or lower max_rent_escrow_pct_of_deposit in settings."
-        )
-    return est
+    return estimate_open_rent_escrow(
+        deposit_sol=deposit_sol,
+        open_kwargs=open_kwargs,
+        settings=normalized,
+        priority_micro=priority_micro,
+        pay_needs_ata=pay_needs_ata,
+    )

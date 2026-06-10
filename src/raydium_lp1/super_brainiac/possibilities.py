@@ -744,8 +744,10 @@ def execute_brainiac_open(
     force: bool = True,
     deposit_usd: float | None = None,
 ) -> dict[str, Any]:
+    """Score-pick LIVE open — routes each strategy through ``lp_live_router``."""
+
     from raydium_lp1.fee_guard import FeeGuardBlockedError, reset_session_ledger
-    from raydium_lp1.live_executor import open_clmm_candidate
+    from raydium_lp1.lp_live_router import execute_strategy_live_open
     from raydium_lp1.settings_io import load_settings_json
     from raydium_lp1 import wallet as wallet_mod
     from raydium_lp1.scanner import assess_capacity
@@ -789,17 +791,19 @@ def execute_brainiac_open(
     use_usd = float(eff_dep if eff_dep is not None else dep)
     amount_sol = use_usd / sol_price
 
-    out = open_clmm_candidate(
+    out = execute_strategy_live_open(
         pool_id=pool_id,
+        deposit_usd=use_usd,
         input_amount_sol=amount_sol,
-        input_amount_usd=use_usd,
-        force_pay_token_only=True,
         strategy_id=strategy_id,
+        force_pay_token_only=True,
         fee_guard_settings=fee_settings,
         sol_price_usd=sol_price,
+        open_deposit_usd=use_usd,
     )
     if "spend_less_get_more" not in out:
         out["spend_less_get_more"] = plan.to_dict()
+    out["scored_strategy_id"] = strategy_id
     return out
 
 

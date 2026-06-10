@@ -127,7 +127,7 @@ def main() -> int:
     if sl.effective_deposit_usd < DEPOSIT_USD:
         issues.append(f"SPEND LESS may clamp deposit to ${sl.effective_deposit_usd:.2f}.")
     if not sl.ok:
-        issues.append(f"SPEND LESS blocks: {sl.blocks}")
+        issues.append(f"SPEND LESS blocks: {'; '.join(sl.block_reasons[:3])}")
     if sol < 0.12:
         issues.append(f"SOL {sol:.4f} low for rent buffer + failed-tx retries.")
         improvements.append("Keep ≥0.12 SOL headroom; position rent is recoverable but txs need native SOL.")

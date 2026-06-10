@@ -56,7 +56,9 @@ def fee_config_from_settings(settings: Any | None = None) -> FeeGuardConfig:
         from raydium_lp1.settings_io import load_settings_json
 
         settings = load_settings_json(REPO / "config" / "settings.json")
-    g = settings if isinstance(settings, dict) else {}
+    from raydium_lp1.no_escrow_policy import normalize_settings_no_escrow
+
+    g = normalize_settings_no_escrow(settings if isinstance(settings, dict) else {})
 
     def _b(key: str, default: bool) -> bool:
         return bool(g.get(key, default))
@@ -235,19 +237,32 @@ def assert_clmm_open_allowed(
 ) -> dict[str, Any]:
     """Raise if this open is economically unsafe; return cost estimate dict."""
 
-    cfg = fee_config_from_settings(settings)
+    from raydium_lp1.no_escrow_policy import assert_no_escrow_paid, normalize_settings_no_escrow
+
+    normalized = normalize_settings_no_escrow(settings)
+    cfg = fee_config_from_settings(normalized)
     est = estimate_clmm_open_cost_sol(cfg, deposit_sol=deposit_sol, priority_micro=priority_micro)
     rent_est = None
     if open_kwargs is not None:
         from raydium_lp1.lp_rent_escrow import assert_rent_escrow_allowed
 
+        policy_check = assert_no_escrow_paid(
+            deposit_sol=deposit_sol,
+            open_kwargs=open_kwargs,
+            settings=normalized,
+            priority_micro=priority_micro,
+        )
         rent_est = assert_rent_escrow_allowed(
             deposit_sol=deposit_sol,
             open_kwargs=open_kwargs,
-            settings=settings,
+            settings=normalized,
             priority_micro=priority_micro,
         )
-        est = {**est, "rent_escrow": rent_est.to_dict()}
+        est = {
+            **est,
+            "rent_escrow": rent_est.to_dict(),
+            "no_escrow_policy": policy_check.get("no_escrow_policy"),
+        }
     if not cfg.enabled:
         return est
 
@@ -263,7 +278,9 @@ def assert_clmm_open_allowed(
             "show tiny notional after failed txs — raise size or close zombies first."
         )
 
-    if dep < cfg.block_deposits_below_sol:
+    usd_floor_ok = cfg.min_lp_deposit_usd > 0 and dep_usd + 1e-9 >= cfg.min_lp_deposit_usd
+    # block_deposits_below_sol targets native SOL micro-deposits — not USDC-pay opens at min_lp_deposit_usd.
+    if dep < cfg.block_deposits_below_sol and not usd_floor_ok:
         raise FeeGuardBlockedError(
             f"Fee guard: deposit {dep:.6f} SOL is below block_deposits_below_sol "
             f"({cfg.block_deposits_below_sol}). CLMM rent would eat the wallet — "
@@ -273,7 +290,6 @@ def assert_clmm_open_allowed(
         cfg.min_clmm_deposit_sol,
         total * cfg.min_deposit_to_fee_ratio,
     )
-    usd_floor_ok = cfg.min_lp_deposit_usd > 0 and dep_usd + 1e-9 >= cfg.min_lp_deposit_usd
     if not usd_floor_ok and dep < effective_min:
         raise FeeGuardBlockedError(
             f"Fee guard: deposit {dep:.4f} SOL is too small. Need ≥ {effective_min:.4f} SOL "
@@ -356,7 +372,7 @@ def sanitize_clmm_payload(script_name: str, payload: dict[str, Any], *, settings
             lamports = int(out.get("amount_lamports") or out.get("amount_raw") or 0)
             assert_swap_allowed(lamports / 1_000_000_000, settings=settings)
         else:
-            assert_swap_allowed(max(0.002, float(cfg.clmm_base_fee_sol) * 2), settings=settings)
+            assert_jupiter_token_swap_allowed(settings=settings)
         out["jupiter_priority_micro_lamports"] = min(
             cfg.jupiter_max_priority_micro_lamports,
             int(out.get("jupiter_priority_micro_lamports") or cfg.jupiter_max_priority_micro_lamports),
@@ -381,9 +397,16 @@ def guard_onchain_fee(operation: str, **context: Any) -> dict[str, Any] | None:
             priority_micro=context.get("priority_micro"),
             open_kwargs=context.get("open_kwargs"),
         )
-    if dep is not None and (script == "swap_sol_to_pay.mjs" or "swap" in operation.lower()):
-        assert_swap_allowed(float(dep))
-        _check_session_budget(cfg, cfg.clmm_base_fee_sol * 2)
+    if script == "swap_sol_to_pay.mjs" or "swap" in operation.lower():
+        from raydium_lp1.routes import WSOL_MINT
+
+        inp_mint = str(context.get("input_mint") or WSOL_MINT)
+        if inp_mint != WSOL_MINT:
+            assert_jupiter_token_swap_allowed(settings=context.get("settings"))
+        elif dep is not None:
+            assert_swap_allowed(float(dep), settings=context.get("settings"))
+        else:
+            _check_session_budget(cfg, cfg.clmm_base_fee_sol * 2)
         return None
     if (
         "close" in operation.lower()
@@ -420,7 +443,9 @@ def note_broadcast_result(script_name: str, result: dict[str, Any], estimate: di
     )
     if not sig:
         return
-    est_sol = float((estimate or {}).get("estimated_total_sol") or 0)
+    est_sol = float((estimate or {}).get("network_fee_sol") or 0)
+    if est_sol <= 0:
+        est_sol = float((estimate or {}).get("estimated_total_sol") or 0)
     if est_sol <= 0:
         cfg = fee_config_from_settings()
         if script_name == "open_position.mjs":
@@ -446,6 +471,15 @@ def fee_guard_readiness_blockers(settings: Any | None = None) -> list[str]:
             f"(cap {cfg.max_session_spend_sol})"
         )
     return out
+
+
+def assert_jupiter_token_swap_allowed(*, settings: Any | None = None) -> None:
+    """USDC/USDT/etc → alt Jupiter swaps: only network fee + session cap (not SOL min size)."""
+
+    cfg = fee_config_from_settings(settings)
+    if not cfg.enabled:
+        return
+    _check_session_budget(cfg, cfg.clmm_base_fee_sol * 2)
 
 
 def assert_swap_allowed(amount_sol: float, *, settings: Any | None = None) -> None:

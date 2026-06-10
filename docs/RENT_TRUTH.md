@@ -29,12 +29,13 @@ None of that matches Raydium’s default path on liquid pools.
 - Default **`clmm_open_rent_sol`** = **0.009** (recoverable headroom, not 0.055 burned).
 - USDC-pay opens need **~0.02–0.03 SOL** wallet headroom, not 0.14.
 
-## Optional: old pessimistic model
+## Permanent NO ESCROW PAID policy (hardwired)
 
-In `config/settings.json`:
+`no_escrow_policy` enforces **zero sunk tick-array rent** on **every order type** and LIVE path:
 
-```json
-"lp_rent_conservative_estimates": true
-```
+- Blocks `literal_pool_full_range` and any band that estimates new tick-array cost.
+- Ignores `lp_rent_conservative_estimates` (always false).
+- Disables `spend_less_auto_fallback_from_wide` (wide→single-sided band changes).
+- Allows recoverable position NFT rent (~0.008 SOL) and network fees only.
 
-Restores the previous high sunk estimates for manual risk-aversion only.
+Settings key (informational, forced by code): `"no_escrow_paid_policy": "no_escrow_paid_permanent"`.

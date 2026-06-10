@@ -27,7 +27,8 @@ from raydium_lp1.dashboard import DEFAULT_DASHBOARD_PATH
 from raydium_lp1.dashboard_field_help import attach_field_help, attach_section_help
 from raydium_lp1.doctor_advisor import build_doctor_report, write_doctor_report
 from raydium_lp1.tune_advisor import apply_tune_items, build_tune_plan
-from raydium_lp1.live_executor import live_readiness_check, open_clmm_candidate
+from raydium_lp1.live_executor import live_readiness_check
+from raydium_lp1.lp_live_router import execute_strategy_live_open
 from raydium_lp1.dashboard_scan_runner import scan_status, start_dashboard_scan
 from raydium_lp1.live_guard import ModeBlockedError
 from raydium_lp1 import mode_toggle
@@ -930,11 +931,22 @@ def main(argv: list[str] | None = None) -> int:
                         if sol_raw not in (None, "")
                         else (dep_usd / sol_price if dep_usd else None)
                     )
-                    result = open_clmm_candidate(
-                        pool_id=str(body.get("pool_id") or "") or None,
+                    strategy_id = str(body.get("strategy_id") or settings.get("lp_active_strategy") or "").strip()
+                    pool_id = str(body.get("pool_id") or "").strip() or None
+                    brainiac_full = bool(body.get("brainiac_full_procedure") or body.get("brainiac_wizard"))
+                    if brainiac_full and not pool_id:
+                        self._send_json(400, {"error": "pool_id required for brainiac_full_procedure"})
+                        return
+                    result = execute_strategy_live_open(
+                        pool_id=pool_id,
                         input_amount_sol=amount_sol,
-                        input_amount_usd=dep_usd,
+                        deposit_usd=dep_usd,
+                        strategy_id=strategy_id or None,
                         sol_price_usd=sol_price,
+                        fee_guard_settings=settings,
+                        brainiac_full_procedure=brainiac_full,
+                        reset_fee_session=bool(body.get("reset_fee_session")),
+                        skip_fund_swap=body.get("skip_fund_swap"),
                     )
                 except (FileNotFoundError, ValueError) as exc:
                     self._send_json(400, {"error": str(exc)})

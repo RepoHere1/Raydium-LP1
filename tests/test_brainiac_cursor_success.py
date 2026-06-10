@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from raydium_lp1.lp_brainiac_cursor_success import (
+    MICRO_DEPOSIT_PAY_ONLY_USD,
     PLACEMENT_REASONING,
     SETTLEMENT_REASONING,
     STRATEGY_BRAINIAC_CURSOR_SUCCESS,
     SYNOPSIS,
     WIDE_WIDTH_PCT,
+    brainiac_micro_pay_only_kwargs,
     build_brainiac_cursor_open_plan,
     open_kwargs_from_plan,
     resolve_brainiac_live_auto_policy,
     ticks_from_skew,
 )
+from raydium_lp1.lp_pay_mint import PayMintResolution
 from raydium_lp1.lp_order_strategies import (
     ALL_STRATEGY_IDS,
     STRATEGY_BRAINIAC_CURSOR_SUCCESS as SID_OS,
@@ -78,6 +81,32 @@ def test_auto_policy_funds_when_wallet_short():
     assert auto.fund_non_pay_fraction <= 0.35
     assert auto.wide_width_pct == WIDE_WIDTH_PCT
     assert any("will fund" in n.lower() for n in auto.notes)
+
+
+def test_auto_policy_prefers_pay_only_under_two_dollars():
+    auto = resolve_brainiac_live_auto_policy(0.25)
+    assert auto.prefer_pay_only_open is True
+    assert auto.band_tick_steps_cap <= 14
+    assert any("pay-only" in n.lower() for n in auto.notes)
+
+    auto2 = resolve_brainiac_live_auto_policy(3.0)
+    assert auto2.prefer_pay_only_open is False
+
+
+def test_micro_pay_only_kwargs_single_sided_usdc():
+    pay = PayMintResolution(
+        pay_mint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        pay_symbol="USDC",
+        alt_mint="FRE3HQDTWuhLAvWKapwLMzbw3ZSMdh76CXQqBw2bEJeV",
+        alt_symbol="GDER",
+        pay_is_mint_a=False,
+    )
+    kw = brainiac_micro_pay_only_kwargs(pay, deposit_usd=0.25, band_tick_steps_cap=14)
+    assert kw["pay_mint_only"] is True
+    assert kw["wallet_inventory_full_range"] is False
+    assert kw["single_side"] == "below"
+    assert kw["band_tick_steps"] <= 14
+    assert kw["input_mint"] == pay.pay_mint
 
 
 def test_open_kwargs_cap_steps_for_one_dollar():

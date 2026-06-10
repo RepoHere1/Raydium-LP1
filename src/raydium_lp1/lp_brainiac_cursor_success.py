@@ -34,7 +34,7 @@ SYNOPSIS = (
 PLACEMENT_REASONING: tuple[str, ...] = (
     "Score the pool with SUPER-BRAINIAC; do not enter on headline APR alone.",
     "Hold total width at 80%; grid-search skew for max overlap with 24h min/max, not naive ±40%.",
-    "Open two-sided straddle from wallet inventory; refuse pay-only fallback on wide bands.",
+    "Open two-sided straddle from wallet inventory when deposit ≥ $2; micro deposits use pay-only single-sided.",
     "Use Raydium recoverable NFT rent; reject inflated tick-array escrow in fee guard.",
 )
 
@@ -54,6 +54,8 @@ LIVE_AUTO_MIN_IN_RANGE_FACTOR = 0.55
 LIVE_AUTO_WIDE_WIDTH_PCT = 80.0
 # Skip Jupiter fund only when wallet already holds this fraction of target non-pay USD.
 NON_PAY_WALLET_COVERAGE_RATIO = 0.75
+# Sub-$2 two-sided wallet_inventory often fails on-chain (Custom:1 / min liquidity per tick).
+MICRO_DEPOSIT_PAY_ONLY_USD = 2.0
 
 
 @dataclass
@@ -71,6 +73,7 @@ class BrainiacLiveAutoPolicy:
     wide_width_pct: float = LIVE_AUTO_WIDE_WIDTH_PCT
     band_tick_steps_cap: int = 32
     apply_brainiac_strategy: bool = True
+    prefer_pay_only_open: bool = False
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -86,6 +89,7 @@ class BrainiacLiveAutoPolicy:
             "wide_width_pct": self.wide_width_pct,
             "band_tick_steps_cap": self.band_tick_steps_cap,
             "apply_brainiac_strategy": self.apply_brainiac_strategy,
+            "prefer_pay_only_open": self.prefer_pay_only_open,
             "notes": list(self.notes),
         }
 
@@ -137,9 +141,13 @@ def resolve_brainiac_live_auto_policy(
 
     min_ir = float(s.get("brainiac_min_in_range_factor", LIVE_AUTO_MIN_IN_RANGE_FACTOR))
     steps_cap = 32
-    if dep < 2.0:
-        steps_cap = 18
-        notes.append("deposit < $2: cap band_tick_steps to reduce rent/probe cost.")
+    prefer_pay_only = dep < MICRO_DEPOSIT_PAY_ONLY_USD
+    if prefer_pay_only:
+        steps_cap = 14 if dep < 1.0 else 18
+        notes.append(
+            f"deposit ${dep:.2f} < ${MICRO_DEPOSIT_PAY_ONLY_USD:.0f}: "
+            "single-sided pay-only open (two-sided wallet_inventory rejected on-chain at micro size)."
+        )
     elif dep < 3.0:
         steps_cap = 24
 
@@ -167,6 +175,7 @@ def resolve_brainiac_live_auto_policy(
         wide_width_pct=LIVE_AUTO_WIDE_WIDTH_PCT,
         band_tick_steps_cap=steps_cap,
         apply_brainiac_strategy=True,
+        prefer_pay_only_open=prefer_pay_only,
         notes=notes + [
             f"pre-LIVE consensus: {int(s.get('brainiac_pre_live_consensus_scans', 5))} refreshes "
             f"({float(s.get('brainiac_pre_live_scan_delay_sec', 2.0)):.0f}s apart) before sign."
@@ -475,6 +484,40 @@ def ensure_non_pay_leg_for_two_sided_open(
     }
 
 
+def brainiac_micro_pay_only_kwargs(
+    pay_res: Any,
+    *,
+    width_pct: float = WIDE_WIDTH_PCT,
+    deposit_usd: float = 1.0,
+    band_tick_steps_cap: int | None = None,
+) -> dict[str, Any]:
+    """Single-sided pay-mint CLMM open for sub-$2 deposits (avoids two-sided Custom:1)."""
+
+    w = float(width_pct)
+    side_w = min(50.0, max(25.0, w * 0.45))
+    steps = int(max(10, min(18, round(6 + side_w * 0.35))))
+    if band_tick_steps_cap is not None:
+        steps = min(steps, int(band_tick_steps_cap))
+    if float(deposit_usd) < 1.0:
+        steps = min(steps, 14)
+    slip = 4000 if float(deposit_usd) < 1.0 else 3000
+    return {
+        "single_side": "above" if pay_res.pay_is_mint_a else "below",
+        "single_side_start_pct": 0.5,
+        "single_side_width_pct": side_w,
+        "band_tick_steps": steps,
+        "pay_mint_only": True,
+        "wallet_inventory_full_range": False,
+        "wallet_inventory_wide_range": False,
+        "wide_range": False,
+        "full_range": False,
+        "literal_pool_full_range": False,
+        "input_mint": pay_res.pay_mint,
+        "pay_symbol": pay_res.pay_symbol,
+        "slippage_bps": slip,
+    }
+
+
 def open_kwargs_from_plan(
     plan: Mapping[str, Any],
     *,
@@ -515,15 +558,15 @@ def open_kwargs_from_plan(
 def fee_settings_for_brainiac_procedure(base: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Fee guard + SPEND LESS knobs used on the successful rebalance."""
 
+    from raydium_lp1.no_escrow_policy import normalize_settings_no_escrow
     from raydium_lp1.settings_io import load_settings_json
 
-    s = dict(base or load_settings_json(REPO / "config" / "settings.json"))
+    s = normalize_settings_no_escrow(dict(base or load_settings_json(REPO / "config" / "settings.json")))
     s["fee_guard_enabled"] = True
-    s["lp_rent_conservative_estimates"] = False
     s["max_session_tx_attempts"] = max(24, int(s.get("max_session_tx_attempts") or 5))
     s["max_session_spend_sol"] = max(0.4, float(s.get("max_session_spend_sol") or 0.12))
+    s["max_open_retries"] = max(3, int(s.get("max_open_retries") or 1))
     s["max_rent_escrow_pct_of_deposit"] = max(15.0, float(s.get("max_rent_escrow_pct_of_deposit") or 10))
-    s["spend_less_auto_fallback_from_wide"] = False
     s["spend_less_on_chain_rent_buffer_sol"] = min(
         0.02, float(s.get("spend_less_on_chain_rent_buffer_sol") or 0.05)
     )
@@ -576,6 +619,12 @@ def open_clmm_with_brainiac_cursor_success(
     if skip_settle_after is not None:
         auto.skip_settle_after = bool(skip_settle_after)
 
+    dep = float(input_amount_usd)
+    if dep < MICRO_DEPOSIT_PAY_ONLY_USD:
+        auto.prefer_pay_only_open = True
+        cap = 14 if dep < 1.0 else 18
+        auto.band_tick_steps_cap = min(int(auto.band_tick_steps_cap), cap)
+
     plan = (
         dict(placement_plan)
         if placement_plan is not None
@@ -587,21 +636,26 @@ def open_clmm_with_brainiac_cursor_success(
             scanner=sc,
         )
     )
+    prefer_pay_only = bool(auto.prefer_pay_only_open)
     out = open_clmm_candidate(
         pool_id=pool_id.strip(),
         input_amount_usd=float(input_amount_usd),
-        wallet_inventory_full_range=True,
+        wallet_inventory_full_range=not prefer_pay_only,
         tick_lower_pct_below=float(plan.get("tick_lower_pct_below") or 40.0),
         tick_upper_pct_above=float(plan.get("tick_upper_pct_above") or 40.0),
-        force_pay_token_only=False,
+        force_pay_token_only=True if prefer_pay_only else False,
         strategy_id=STRATEGY_BRAINIAC_CURSOR_SUCCESS,
         fee_guard_settings=settings,
         sol_price_usd=sol_price_usd,
         open_deposit_usd=float(input_amount_usd),
         band_tick_steps_cap=auto.band_tick_steps_cap,
         skip_wallet_settlement=auto.skip_settle_after,
+        brainiac_micro_pay_only=prefer_pay_only,
     )
     out["brainiac_auto_policy"] = auto.to_dict()
+    if prefer_pay_only:
+        out["brainiac_micro_pay_only"] = True
+        out.setdefault("lp_open_note", "Micro deposit: pay-only single-sided open (no two-sided wallet_inventory).")
     out.setdefault("settlement_policy", plan.get("settlement_policy"))
     out.setdefault("reasoning", plan.get("reasoning"))
     out["placement_plan"] = {

@@ -221,9 +221,20 @@ def _live_readiness(settings: dict[str, Any]) -> dict[str, Any]:
         )
     if not clmm.get("node_modules_present") or not clmm.get("node_binary"):
         blockers.append("CLMM Node bridge not installed (nodejs + npm install in raydium_clmm_node)")
-    rpcs = settings.get("solana_rpc_urls") or []
+    from raydium_lp1 import pool_verify
+    from raydium_lp1.scanner import dedupe, split_env_list
+
+    cfg_rpcs = [str(u).strip() for u in (settings.get("solana_rpc_urls") or []) if str(u).strip()]
+    env_rpcs = split_env_list(__import__("os").environ.get("SOLANA_RPC_URLS", ""))
+    single_rpc = (__import__("os").environ.get("SOLANA_RPC_URL") or "").strip()
+    if single_rpc:
+        env_rpcs.insert(0, single_rpc)
+    rpcs = pool_verify.filter_rpc_urls(dedupe([*env_rpcs, *cfg_rpcs]), warn=False)
     if not rpcs:
-        blockers.append("no solana_rpc_urls in settings")
+        blockers.append(
+            "no Solana RPC configured — set solana_rpc_urls in settings.json "
+            "or SOLANA_RPC_URL in .env (run scripts\\fix_live_blockers.ps1)"
+        )
     try:
         from raydium_lp1.fee_guard import fee_guard_readiness_blockers
 

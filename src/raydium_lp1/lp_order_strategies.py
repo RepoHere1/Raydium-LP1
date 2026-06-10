@@ -2,6 +2,9 @@
 
 Official-style strategy IDs aligned with Raydium concentrated liquidity (CLMM) practice.
 Each strategy returns a JSON plan usable in demo simulation and live execution hooks.
+
+**Permanent NO ESCROW PAID** (`no_escrow_policy`): every strategy blocks sunk tick-array rent
+(~0.072 SOL per new array). Recoverable position NFT rent (~0.008 SOL) is required and returned on close.
 """
 
 from __future__ import annotations
@@ -260,5 +263,13 @@ def build_open_order(
         "skew_notes": skew_notes,
         "band": band,
         "execution": "paper_ready",
-        "live_hook": "raydium_clmm.open_position",
+        "live_hook": "raydium_lp1.live_executor.open_clmm_candidate",
     }
+
+
+def live_execution_path(strategy_id: str) -> str:
+    """Return the Python module path used for LIVE opens of this strategy."""
+
+    from raydium_lp1.lp_live_router import live_hook_for_strategy
+
+    return live_hook_for_strategy(strategy_id)

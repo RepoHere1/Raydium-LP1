@@ -26,7 +26,7 @@ def main() -> int:
         print(f"No {args.settings}; skipped.", file=sys.stderr)
         return 0
 
-    raw_urls = json.loads(args.urls_json.read_text(encoding="utf-8"))
+    raw_urls = json.loads(args.urls_json.read_text(encoding="utf-8-sig"))
     if not isinstance(raw_urls, list):
         print("--urls-json must contain a JSON array", file=sys.stderr)
         return 2

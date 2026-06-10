@@ -118,7 +118,8 @@ def main() -> int:
         estimate_clmm_open_cost_sol,
         fee_config_from_settings,
     )
-    from raydium_lp1.live_executor import live_readiness_check, open_clmm_candidate
+    from raydium_lp1.live_executor import live_readiness_check
+    from raydium_lp1.lp_live_router import execute_strategy_live_open
     from raydium_lp1.manual_live_open import ManualLiveBlockedError
     from raydium_lp1.mode_toggle import get_mode
     from raydium_lp1.scanner import load_dotenv
@@ -246,10 +247,10 @@ def main() -> int:
         return 0
 
     dep_usd = float(args.usd) if args.usd is not None else amount_sol * float(args.sol_price)
-    result = open_clmm_candidate(
+    result = execute_strategy_live_open(
         pool_id=pool_id,
         input_amount_sol=amount_sol,
-        input_amount_usd=(None if args.usd is None else float(args.usd)),
+        deposit_usd=(None if args.usd is None else float(args.usd)),
         force_pay_token_only=True if args.force_pay_only else None,
         strategy_id=strategy,
         fee_guard_settings=fee_settings if args.force_fee_guard else None,
